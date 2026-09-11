@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Frontline Nexus">
+  <rect width="512" height="512" rx="112" fill="#2563eb"/>
+  <g fill="#ffffff">
+    <polygon points="256,128 400,208 256,288 112,208"/>
+    <rect x="148" y="280" width="216" height="76" rx="18"/>
+  </g>
+  <g stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 400 208 L 322 274 L 302 240"/>
+  </g>
+  <circle cx="302" cy="298" r="26" fill="#ffffff"/>
+</svg>

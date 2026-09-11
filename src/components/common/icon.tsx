@@ -1,0 +1,57 @@
+import {
+  ArrowUpDown,
+  Award,
+  BarChart3,
+  Bell,
+  Building2,
+  CalendarDays,
+  ClipboardCheck,
+  CreditCard,
+  GraduationCap,
+  History,
+  Home,
+  LifeBuoy,
+  Megaphone,
+  NotebookPen,
+  Receipt,
+  RefreshCw,
+  Settings,
+  Shield,
+  Smartphone,
+  Sparkles,
+  UserCog,
+  Users,
+  Wallet,
+  type LucideIcon,
+} from "lucide-react";
+
+export const ICONS: Record<string, LucideIcon> = {
+  home: Home,
+  users: Users,
+  userCog: UserCog,
+  graduation: GraduationCap,
+  clipboard: ClipboardCheck,
+  award: Award,
+  calendar: CalendarDays,
+  notebook: NotebookPen,
+  wallet: Wallet,
+  receipt: Receipt,
+  megaphone: Megaphone,
+  sparkles: Sparkles,
+  chart: BarChart3,
+  creditCard: CreditCard,
+  settings: Settings,
+  refresh: RefreshCw,
+  building: Building2,
+  shield: Shield,
+  lifebuoy: LifeBuoy,
+  bell: Bell,
+  promotion: ArrowUpDown,
+  ussd: Smartphone,
+  audit: History,
+};
+
+export function NavIcon({ name, className }: { name: string; className?: string }) {
+  const Component = ICONS[name] ?? Home;
+  return <Component className={className} aria-hidden="true" />;
+}
