@@ -1,5 +1,4 @@
-import { USE_MOCK_ADAPTER, apiFetch, mockDelay } from "@/api/client";
-import * as mock from "@/api/mock";
+import { apiFetch } from "@/api/client";
 
 export interface ReportCardSubject {
   subject: string;
@@ -56,49 +55,5 @@ function remarkFor(average: number, attendanceRate: number): string {
 
 /** Builds a termly report card from the student's published result sheets. Sipping unavailable subjects. */
 export async function getReportCard(studentId: string): Promise<ReportCard | null> {
-  if (!USE_MOCK_ADAPTER) return apiFetch<ReportCard>(`/reports/report-cards/${studentId}`);
-  const student = mock.students.find((s) => s.id === studentId);
-  if (!student) return null;
-
-  const subjects: ReportCardSubject[] = [];
-  for (const sheet of mock.resultSheets) {
-    if (sheet.status !== "approved" && sheet.status !== "published") continue;
-    const row = sheet.rows.find((r) => r.studentId === studentId);
-    if (!row) continue;
-    const total = (row.ca1 ?? 0) + (row.ca2 ?? 0) + (row.assignment ?? 0) + (row.exam ?? 0);
-    subjects.push({
-      subject: sheet.subject,
-      ca1: row.ca1,
-      ca2: row.ca2,
-      assignment: row.assignment,
-      exam: row.exam,
-      total,
-      grade: gradeFor(total),
-    });
-  }
-
-  if (subjects.length === 0) return null;
-
-  const totalScore = subjects.reduce((sum, s) => sum + s.total, 0);
-  const average = Math.round(totalScore / subjects.length);
-  const attendanceRate = student.attendanceRate;
-
-  return {
-    student: {
-      id: student.id,
-      name: `${student.firstName} ${student.lastName}`,
-      admissionNumber: student.admissionNumber,
-      className: student.className,
-      arm: student.arm,
-      gender: student.gender,
-      attendanceRate,
-    },
-    school: { name: mock.school.name, address: `${mock.school.address}, ${mock.school.state}` },
-    session: mock.school.currentSession,
-    term: mock.school.currentTerm,
-    subjects,
-    totalScore,
-    average,
-    remark: remarkFor(average, attendanceRate),
-  };
+  return apiFetch<ReportCard>(`/reports/report-cards/${studentId}`);
 }

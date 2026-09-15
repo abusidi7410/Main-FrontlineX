@@ -1,20 +1,12 @@
-import { USE_MOCK_ADAPTER, apiFetch, mockDelay } from "@/api/client";
-import * as mock from "@/api/mock";
+import { apiFetch } from "@/api/client";
 import type { Invoice, Payment } from "@/types";
 
 export async function listInvoices(search = ""): Promise<Invoice[]> {
-  if (!USE_MOCK_ADAPTER) return apiFetch("/invoices", { query: { search } });
-  const term = search.trim().toLowerCase();
-  return mockDelay(
-    mock.invoices.filter(
-      (i) => !term || i.studentName.toLowerCase().includes(term) || i.id.includes(term),
-    ),
-  );
+  return apiFetch("/invoices", { query: { search } });
 }
 
 export async function listPayments(): Promise<Payment[]> {
-  if (!USE_MOCK_ADAPTER) return apiFetch("/payments");
-  return mockDelay(mock.payments);
+  return apiFetch("/payments");
 }
 
 export interface RecordPaymentInput {
@@ -26,31 +18,9 @@ export interface RecordPaymentInput {
 }
 
 export async function recordPayment(input: RecordPaymentInput): Promise<Payment> {
-  if (!USE_MOCK_ADAPTER) return apiFetch("/payments", { method: "POST", body: input });
-  const invoice = mock.invoices.find((i) => i.id === input.invoiceId);
-  const payment: Payment = {
-    id: `pay_${Date.now()}`,
-    invoiceId: input.invoiceId,
-    studentName: invoice?.studentName ?? "—",
-    amount: input.amount,
-    method: input.method,
-    status: input.method === "cash" ? "verified" : "pending",
-    reference: input.reference || `FN-${Date.now().toString().slice(-6)}`,
-    recordedBy: "You",
-    createdAt: new Date().toISOString(),
-  };
-  if (invoice) {
-    invoice.paid = Math.min(invoice.total, invoice.paid + input.amount);
-    invoice.status =
-      invoice.paid >= invoice.total ? "paid" : invoice.paid > 0 ? "part_paid" : "unpaid";
-  }
-  mock.payments.unshift(payment);
-  return mockDelay(payment, 700);
+  return apiFetch("/payments", { method: "POST", body: input });
 }
 
 export async function verifyPayment(id: string): Promise<Payment> {
-  if (!USE_MOCK_ADAPTER) return apiFetch(`/payments/${id}/verify`, { method: "POST" });
-  const payment = mock.payments.find((p) => p.id === id)!;
-  payment.status = "verified";
-  return mockDelay(payment, 600);
+  return apiFetch(`/payments/${id}/verify`, { method: "POST" });
 }

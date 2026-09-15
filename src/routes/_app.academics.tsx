@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ARMS } from "@/api/mock";
+import { ARMS } from "@/constants/reference";
 import {
   addClass,
   addSubject,

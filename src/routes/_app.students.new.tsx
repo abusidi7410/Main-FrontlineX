@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { Button } from "@/components/ui/button";
-import { ARMS, CLASSES } from "@/api/mock";
+import { ARMS, CLASSES } from "@/constants/reference";
 import { createStudent } from "@/services/students.service";
 import { StudentForm } from "@/features/students/student-form";
 

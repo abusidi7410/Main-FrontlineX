@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ARMS, CLASSES } from "@/api/mock";
+import { ARMS, CLASSES } from "@/constants/reference";
 import { ngPhone, requiredText } from "@/lib/validation";
 
 export const studentSchema = z.object({

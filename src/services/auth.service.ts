@@ -1,5 +1,4 @@
-import { ApiRequestError, USE_LIVE_AUTH, apiFetch, mockDelay } from "@/api/client";
-import * as mock from "@/api/mock";
+import { apiFetch } from "@/api/client";
 import { ROLE_PERMISSIONS } from "@/permissions";
 import type { AuthUser, Role, School } from "@/types";
 
@@ -70,22 +69,6 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
   },
 ];
 
-function buildSession(account: DemoAccount): Session {
-  return {
-    token: `dev.${account.role}.${Date.now()}`,
-    user: {
-      id: `usr_${account.role}`,
-      fullName: account.fullName,
-      email: account.email,
-      phone: "+2348031234567",
-      role: account.role,
-      permissions: ROLE_PERMISSIONS[account.role],
-      schoolId: account.role === "platform_manager" ? null : mock.school.id,
-    },
-    school: account.role === "platform_manager" ? null : mock.school,
-  };
-}
-
 export function readStoredSession(): Session | null {
   if (typeof window === "undefined") return null;
   try {
@@ -108,37 +91,19 @@ export function persistSession(session: Session | null) {
 }
 
 export async function login(identifier: string, password: string): Promise<Session> {
-  if (USE_LIVE_AUTH) {
-    return apiFetch<Session>("/auth/login", { method: "POST", body: { identifier, password } });
-  }
-  const account = DEMO_ACCOUNTS.find((a) => a.email === identifier.trim().toLowerCase());
-  if (!account) {
-    throw new ApiRequestError(
-      "We couldn't find an account with those details. Check your email or ask your school administrator to invite you.",
-      401,
-    );
-  }
-  if (password.length < 8) {
-    throw new ApiRequestError("That password is incorrect. Please try again.", 401);
-  }
-  return mockDelay(buildSession(account), 650);
+  return apiFetch<Session>("/auth/login", { method: "POST", body: { identifier, password } });
 }
 
 export async function requestPasswordReset(email: string): Promise<{ sent: true }> {
-  if (USE_LIVE_AUTH)
-    return apiFetch("/auth/password-reset", { method: "POST", body: { email } });
-  return mockDelay({ sent: true } as const, 700);
+  return apiFetch("/auth/password-reset", { method: "POST", body: { email } });
 }
 
 export async function resetPassword(token: string, password: string): Promise<{ ok: true }> {
-  if (USE_LIVE_AUTH)
-    return apiFetch("/auth/password-reset/confirm", { method: "POST", body: { token, password } });
-  return mockDelay({ ok: true } as const, 700);
+  return apiFetch("/auth/password-reset/confirm", { method: "POST", body: { token, password } });
 }
 
 export async function logout(): Promise<void> {
-  if (USE_LIVE_AUTH)
-    await apiFetch<void>("/auth/logout", { method: "POST" }).catch(() => undefined);
+  await apiFetch<void>("/auth/logout", { method: "POST" }).catch(() => undefined);
   persistSession(null);
 }
 
@@ -148,34 +113,12 @@ export interface ProfileUpdate {
 }
 
 export async function updateProfile(input: ProfileUpdate): Promise<AuthUser> {
-  if (USE_LIVE_AUTH)
-    return apiFetch<AuthUser>("/auth/profile", { method: "PATCH", body: input });
-  const current = readStoredSession()?.user;
-  return mockDelay(
-    {
-      id: current?.id ?? "usr_self",
-      fullName: input.fullName,
-      email: current?.email ?? "you@school.edu.ng",
-      phone: input.phone,
-      role: current?.role ?? "school_admin",
-      permissions: current?.permissions ?? [],
-      schoolId: current?.schoolId ?? mock.school.id,
-    } satisfies AuthUser,
-    550,
-  );
+  return apiFetch<AuthUser>("/auth/profile", { method: "PATCH", body: input });
 }
 
 export async function changePassword(current: string, next: string): Promise<{ ok: true }> {
-  if (USE_LIVE_AUTH)
-    return apiFetch<{ ok: true }>("/auth/change-password", {
-      method: "POST",
-      body: { current, next },
-    });
-  if (current.length < 8) {
-    throw new ApiRequestError("Your current password is incorrect.", 400);
-  }
-  if (current === next) {
-    throw new ApiRequestError("Your new password must be different from the current one.", 400);
-  }
-  return mockDelay({ ok: true } as const, 750);
+  return apiFetch<{ ok: true }>("/auth/change-password", {
+    method: "POST",
+    body: { current, next },
+  });
 }

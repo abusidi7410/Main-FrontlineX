@@ -31,7 +31,7 @@ import { HOME_BY_ROLE } from "@/permissions/navigation";
 import { ROLE_LABELS } from "@/permissions";
 import { DEMO_ACCOUNTS } from "@/services/auth.service";
 import { SUBSCRIPTION_TIERS, tierById } from "@/constants/plans";
-import { STATES } from "@/api/mock";
+import { STATES } from "@/constants/reference";
 import { emailField, ngPhone, passwordField, requiredText } from "@/lib/validation";
 import { naira } from "@/lib/format";
 import { registerSchool, verifySchoolPayment } from "@/services/school.service";

@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { ARMS, CLASSES } from "@/api/mock";
+import { ARMS, CLASSES } from "@/constants/reference";
 import type { StaffMember } from "@/types";
 
 export const CLASS_OPTIONS = CLASSES.flatMap((className) =>

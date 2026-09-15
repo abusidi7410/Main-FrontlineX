@@ -34,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CLASSES } from "@/api/mock";
+import { CLASSES } from "@/constants/reference";
 import { naira, numberFmt, percent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { listStudents, reinstateStudent, suspendStudent } from "@/services/students.service";

@@ -1,15 +1,9 @@
 /**
  * Single HTTP boundary for the whole app.
  *
- * Today `USE_MOCK_ADAPTER` is true and every service resolves against the
- * in-memory adapter in `src/api/mock`. When the Django REST API is available,
- * flip VITE_API_MODE=live (or set VITE_API_URL) and only this file changes —
- * services, hooks and UI keep their contracts.
+ * Every request hits the live Django REST API at API_BASE_URL.
  */
 export const API_BASE_URL = import.meta.env["VITE_API_URL"] ?? "/api";
-export const USE_MOCK_ADAPTER = import.meta.env["VITE_API_MODE"] !== "live";
-/** Auth/onboarding endpoints hit the real API even when VITE_API_MODE=mock. */
-export const USE_LIVE_AUTH = import.meta.env["VITE_AUTH_LIVE"] === "true" || !USE_MOCK_ADAPTER;
 
 export class ApiRequestError extends Error {
   status: number;
@@ -96,11 +90,6 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
-}
-
-/** Simulated latency for the development adapter so loading states are real. */
-export function mockDelay<T>(value: T, ms = 420): Promise<T> {
-  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
 
 export interface Paginated<T> {

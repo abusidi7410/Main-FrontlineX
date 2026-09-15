@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     # Local
     'accounts',
     'schools',
+    'records',
 ]
 
 # ── Middleware ─────────────────────────────────────────────────────────────────
