@@ -1,8 +1,12 @@
+import secrets
+
+from django.db import IntegrityError
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.models import User
 from accounts.permissions import IsSuperAdmin
 from records.models import Student
 from .models import Announcement, AuditLog, School, SchoolSubscription, SubscriptionPlan, SupportTicket
@@ -112,8 +116,8 @@ class PlatformSchoolListView(APIView):
             errors['name'] = 'School name is required.'
         if not email:
             errors['email'] = 'Contact email is required.'
-        elif School.objects.filter(email=email).exists():
-            errors['email'] = 'A school with this email already exists.'
+        elif School.objects.filter(email=email).exists() or User.objects.filter(email=email).exists():
+            errors['email'] = 'An account with this email already exists.'
         if not state:
             errors['state'] = 'State is required.'
         if not lga:
@@ -150,16 +154,50 @@ class PlatformSchoolListView(APIView):
             status=SchoolSubscription.Status.ACTIVE,
             starts_at=school.created_at,
         )
+        default_password = f"Admin@{secrets.token_hex(4)}"
+        try:
+            admin = User.objects.create_user(
+                email=email,
+                password=default_password,
+                first_name='School',
+                last_name='Admin',
+                role=User.Role.SCHOOL_ADMIN,
+                school=school,
+                is_active=True,
+            )
+        except IntegrityError:
+            return Response(
+                {
+                    'detail': 'Could not register school.',
+                    'fieldErrors': {'email': 'An account with this email already exists.'},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         AuditLog.objects.create(
             actor=f'{request.user.get_full_name()} ({request.user.email})' if request.user.get_full_name() else request.user.email,
             role=request.user.role,
             action='school.register',
             target=school.name,
-            detail='School registered by platform manager.',
+            detail='School registered by platform manager. Default admin account provisioned.',
             ip=_client_ip(request),
             severity='info',
         )
-        return Response(_platform_school_detail(school), status=status.HTTP_201_CREATED)
+        AuditLog.objects.create(
+            actor=f'{request.user.get_full_name()} ({request.user.email})' if request.user.get_full_name() else request.user.email,
+            role=request.user.role,
+            action='school.admin.provisioned',
+            target=f'{school.name} ({admin.email})',
+            detail='Default admin credentials generated; must be changed after first login.',
+            ip=_client_ip(request),
+            severity='info',
+        )
+        data = _platform_school_detail(school)
+        data['defaultCredentials'] = {
+            'email': admin.email,
+            'password': default_password,
+            'mustChangePassword': True,
+        }
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class PlatformSchoolStatusView(APIView):

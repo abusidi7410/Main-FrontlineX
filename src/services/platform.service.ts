@@ -47,9 +47,19 @@ export interface CreatePlatformSchoolInput {
 
 export type UpdatePlatformSchoolInput = Partial<CreatePlatformSchoolInput>;
 
+export interface PlatformSchoolCredentials {
+  email: string;
+  password: string;
+  mustChangePassword?: boolean;
+}
+
+export interface RegisterSchoolResponse extends PlatformSchoolDetail {
+  defaultCredentials?: PlatformSchoolCredentials;
+}
+
 export async function createPlatformSchool(
   input: CreatePlatformSchoolInput,
-): Promise<PlatformSchoolDetail> {
+): Promise<RegisterSchoolResponse> {
   return apiFetch("/platform/schools", { method: "POST", body: input });
 }
 

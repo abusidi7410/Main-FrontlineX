@@ -33,6 +33,7 @@ import {
   listPlatformSchools,
   setSchoolStatus,
   updatePlatformSchool,
+  type RegisterSchoolResponse,
 } from "@/services/platform.service";
 
 export const Route = createFileRoute("/_app/platform/schools")({
@@ -212,16 +213,20 @@ function RegisterSchoolDialog({
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(EMPTY_FORM);
+  const [created, setCreated] = useState<RegisterSchoolResponse | null>(null);
 
   useEffect(() => {
-    if (open) setForm(EMPTY_FORM);
+    if (open) {
+      setForm(EMPTY_FORM);
+      setCreated(null);
+    }
   }, [open]);
 
   const createMutation = useMutation({
     mutationFn: createPlatformSchool,
     onSuccess: (school) => {
+      setCreated(school);
       toast.success(`${school.name} registered and activated`);
-      onOpenChange(false);
       void queryClient.invalidateQueries({ queryKey: ["platform", "schools"] });
     },
     onError: async (err) => {
@@ -243,153 +248,220 @@ function RegisterSchoolDialog({
     createMutation.mutate(form);
   };
 
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error("Couldn't copy. Select the text and copy manually.");
+    }
+  };
+
+  const closeCreated = () => {
+    setCreated(null);
+    setForm(EMPTY_FORM);
+    onOpenChange(false);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(o) => (o ? undefined : closeCreated())}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="text-lg">Register a school</DialogTitle>
+          <DialogTitle className="text-lg">
+            {created ? "School registered" : "Register a school"}
+          </DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="reg-name">School name</Label>
-            <Input
-              id="reg-name"
-              className="h-11"
-              required
-              placeholder="e.g. Sunrise Academy"
-              value={form.name}
-              onChange={(e) => set("name")(e.target.value)}
-            />
+        {created ? (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              A default admin account was created. Share these credentials with the school admin —
+              the password must be changed after their first login.
+            </p>
+            {created.defaultCredentials ? (
+              <div className="space-y-3 rounded-lg border p-4">
+                <FieldRow
+                  label="Admin email"
+                  value={created.defaultCredentials.email}
+                  onCopy={() =>
+                    void copyText(created.defaultCredentials?.email ?? "", "Admin email")
+                  }
+                />
+                <FieldRow
+                  label="Default password"
+                  value={created.defaultCredentials.password}
+                  onCopy={() =>
+                    void copyText(created.defaultCredentials?.password ?? "", "Default password")
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  The admin can change this password any time from account settings after logging
+                  in.
+                </p>
+              </div>
+            ) : null}
+            <DialogFooter>
+              <Button onClick={closeCreated} className="w-full">
+                Done
+              </Button>
+            </DialogFooter>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+        ) : (
+          <form onSubmit={submit} className="space-y-4">
             <div className="space-y-2">
-              <Label>School type</Label>
-              <Select value={form.schoolType} onValueChange={set("schoolType")}>
-                <SelectTrigger className="h-11">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SCHOOL_TYPES.map((t) => (
-                    <SelectItem key={t.value} value={t.value}>
-                      {t.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="reg-tier">Plan</Label>
-              <Select value={form.tierId} onValueChange={set("tierId")}>
-                <SelectTrigger className="h-11">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SUBSCRIPTION_TIERS.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="reg-state">State</Label>
+              <Label htmlFor="reg-name">School name</Label>
               <Input
-                id="reg-state"
+                id="reg-name"
                 className="h-11"
                 required
-                placeholder="e.g. Kano"
-                value={form.state}
-                onChange={(e) => set("state")(e.target.value)}
+                placeholder="e.g. Sunrise Academy"
+                value={form.name}
+                onChange={(e) => set("name")(e.target.value)}
               />
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>School type</Label>
+                <Select value={form.schoolType} onValueChange={set("schoolType")}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SCHOOL_TYPES.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-tier">Plan</Label>
+                <Select value={form.tierId} onValueChange={set("tierId")}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SUBSCRIPTION_TIERS.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="reg-state">State</Label>
+                <Input
+                  id="reg-state"
+                  className="h-11"
+                  required
+                  placeholder="e.g. Kano"
+                  value={form.state}
+                  onChange={(e) => set("state")(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-lga">LGA</Label>
+                <Input
+                  id="reg-lga"
+                  className="h-11"
+                  required
+                  placeholder="e.g. Kano Municipal"
+                  value={form.lga}
+                  onChange={(e) => set("lga")(e.target.value)}
+                />
+              </div>
+            </div>
             <div className="space-y-2">
-              <Label htmlFor="reg-lga">LGA</Label>
+              <Label htmlFor="reg-address">Address</Label>
               <Input
-                id="reg-lga"
+                id="reg-address"
                 className="h-11"
                 required
-                placeholder="e.g. Kano Municipal"
-                value={form.lga}
-                onChange={(e) => set("lga")(e.target.value)}
+                placeholder="Street address"
+                value={form.address}
+                onChange={(e) => set("address")(e.target.value)}
               />
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="reg-address">Address</Label>
-            <Input
-              id="reg-address"
-              className="h-11"
-              required
-              placeholder="Street address"
-              value={form.address}
-              onChange={(e) => set("address")(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="reg-phone">Phone</Label>
-              <Input
-                id="reg-phone"
-                className="h-11"
-                required
-                placeholder="+234..."
-                value={form.phone}
-                onChange={(e) => set("phone")(e.target.value)}
-              />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="reg-phone">Phone</Label>
+                <Input
+                  id="reg-phone"
+                  className="h-11"
+                  required
+                  placeholder="+234..."
+                  value={form.phone}
+                  onChange={(e) => set("phone")(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-email">Contact email</Label>
+                <Input
+                  id="reg-email"
+                  type="email"
+                  className="h-11"
+                  required
+                  placeholder="info@school.edu.ng"
+                  value={form.email}
+                  onChange={(e) => set("email")(e.target.value)}
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="reg-email">Contact email</Label>
-              <Input
-                id="reg-email"
-                type="email"
-                className="h-11"
-                required
-                placeholder="info@school.edu.ng"
-                value={form.email}
-                onChange={(e) => set("email")(e.target.value)}
-              />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="reg-session">Session</Label>
+                <Input
+                  id="reg-session"
+                  className="h-11"
+                  value={form.currentSession}
+                  onChange={(e) => set("currentSession")(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-website">Website</Label>
+                <Input
+                  id="reg-website"
+                  className="h-11"
+                  placeholder="https://..."
+                  value={form.website}
+                  onChange={(e) => set("website")(e.target.value)}
+                />
+              </div>
             </div>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="reg-session">Session</Label>
-              <Input
-                id="reg-session"
-                className="h-11"
-                value={form.currentSession}
-                onChange={(e) => set("currentSession")(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="reg-website">Website</Label>
-              <Input
-                id="reg-website"
-                className="h-11"
-                placeholder="https://..."
-                value={form.website}
-                onChange={(e) => set("website")(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={createMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? "Registering…" : "Register school"}
-            </Button>
-          </DialogFooter>
-        </form>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={createMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? "Registering…" : "Register school"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function FieldRow({ label, value, onCopy }: { label: string; value: string; onCopy: () => void }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <Label>{label}</Label>
+        <Button type="button" variant="ghost" size="sm" onClick={onCopy}>
+          Copy
+        </Button>
+      </div>
+      <div className="rounded-md border bg-muted/50 px-3 py-2 font-mono text-sm">{value}</div>
+    </div>
   );
 }
 
