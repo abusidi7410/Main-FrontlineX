@@ -26,6 +26,15 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Python / Django backend
+backend/.venv/
+__pycache__/
+*.pyc
+*.pyo
+backend/*.sqlite3
+backend/media/
+backend/staticfiles/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

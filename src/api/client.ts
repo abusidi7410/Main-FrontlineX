@@ -8,6 +8,8 @@
  */
 export const API_BASE_URL = import.meta.env["VITE_API_URL"] ?? "/api";
 export const USE_MOCK_ADAPTER = import.meta.env["VITE_API_MODE"] !== "live";
+/** Auth/onboarding endpoints hit the real API even when VITE_API_MODE=mock. */
+export const USE_LIVE_AUTH = import.meta.env["VITE_AUTH_LIVE"] === "true" || !USE_MOCK_ADAPTER;
 
 export class ApiRequestError extends Error {
   status: number;
@@ -48,7 +50,8 @@ export interface RequestOptions {
 }
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const url = new URL(`${API_BASE_URL}${path}`, globalThis.location?.origin ?? "http://localhost");
+  const withSlash = path.endsWith("/") ? path : `${path}/`;
+  const url = new URL(`${API_BASE_URL}${withSlash}`, globalThis.location?.origin ?? "http://localhost");
   Object.entries(options.query ?? {}).forEach(([k, v]) => {
     if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
   });

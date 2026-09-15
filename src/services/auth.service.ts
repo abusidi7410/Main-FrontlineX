@@ -1,4 +1,4 @@
-import { ApiRequestError, USE_MOCK_ADAPTER, apiFetch, mockDelay } from "@/api/client";
+import { ApiRequestError, USE_LIVE_AUTH, apiFetch, mockDelay } from "@/api/client";
 import * as mock from "@/api/mock";
 import { ROLE_PERMISSIONS } from "@/permissions";
 import type { AuthUser, Role, School } from "@/types";
@@ -108,7 +108,7 @@ export function persistSession(session: Session | null) {
 }
 
 export async function login(identifier: string, password: string): Promise<Session> {
-  if (!USE_MOCK_ADAPTER) {
+  if (USE_LIVE_AUTH) {
     return apiFetch<Session>("/auth/login", { method: "POST", body: { identifier, password } });
   }
   const account = DEMO_ACCOUNTS.find((a) => a.email === identifier.trim().toLowerCase());
@@ -125,19 +125,19 @@ export async function login(identifier: string, password: string): Promise<Sessi
 }
 
 export async function requestPasswordReset(email: string): Promise<{ sent: true }> {
-  if (!USE_MOCK_ADAPTER)
+  if (USE_LIVE_AUTH)
     return apiFetch("/auth/password-reset", { method: "POST", body: { email } });
   return mockDelay({ sent: true } as const, 700);
 }
 
 export async function resetPassword(token: string, password: string): Promise<{ ok: true }> {
-  if (!USE_MOCK_ADAPTER)
+  if (USE_LIVE_AUTH)
     return apiFetch("/auth/password-reset/confirm", { method: "POST", body: { token, password } });
   return mockDelay({ ok: true } as const, 700);
 }
 
 export async function logout(): Promise<void> {
-  if (!USE_MOCK_ADAPTER)
+  if (USE_LIVE_AUTH)
     await apiFetch<void>("/auth/logout", { method: "POST" }).catch(() => undefined);
   persistSession(null);
 }
@@ -148,7 +148,7 @@ export interface ProfileUpdate {
 }
 
 export async function updateProfile(input: ProfileUpdate): Promise<AuthUser> {
-  if (!USE_MOCK_ADAPTER)
+  if (USE_LIVE_AUTH)
     return apiFetch<AuthUser>("/auth/profile", { method: "PATCH", body: input });
   const current = readStoredSession()?.user;
   return mockDelay(
@@ -166,7 +166,7 @@ export async function updateProfile(input: ProfileUpdate): Promise<AuthUser> {
 }
 
 export async function changePassword(current: string, next: string): Promise<{ ok: true }> {
-  if (!USE_MOCK_ADAPTER)
+  if (USE_LIVE_AUTH)
     return apiFetch<{ ok: true }>("/auth/change-password", {
       method: "POST",
       body: { current, next },

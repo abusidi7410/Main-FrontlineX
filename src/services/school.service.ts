@@ -1,4 +1,4 @@
-import { USE_MOCK_ADAPTER, apiFetch, mockDelay } from "@/api/client";
+import { USE_LIVE_AUTH, USE_MOCK_ADAPTER, apiFetch, mockDelay } from "@/api/client";
 import * as mock from "@/api/mock";
 import type {
   Announcement,
@@ -29,7 +29,7 @@ export interface OnboardingPayload {
 }
 
 export async function registerSchool(payload: OnboardingPayload) {
-  if (!USE_MOCK_ADAPTER)
+  if (USE_LIVE_AUTH)
     return apiFetch<{ schoolId: string; paymentRef: string }>("/schools/register", {
       method: "POST",
       body: payload,
@@ -41,7 +41,7 @@ export async function registerSchool(payload: OnboardingPayload) {
 }
 
 export async function verifySchoolPayment(reference: string) {
-  if (!USE_MOCK_ADAPTER)
+  if (USE_LIVE_AUTH)
     return apiFetch<{ status: "verified" | "pending" }>(`/payments/${reference}/verify`);
   return mockDelay({ status: "verified" as const }, 1600);
 }
