@@ -122,3 +122,50 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f'{self.action} → {self.target} by {self.actor}'
+
+
+class SupportTicket(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        UNDER_REVIEW = 'under_review', 'Under review'
+        VERIFIED = 'verified', 'Resolved'
+
+    school = models.ForeignKey(
+        School, on_delete=models.SET_NULL, null=True, blank=True, related_name='support_tickets',
+    )
+    requester = models.EmailField()
+    subject = models.CharField(max_length=200)
+    message = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'#{self.pk} {self.subject}'
+
+
+class Announcement(models.Model):
+    class Scope(models.TextChoices):
+        SCHOOL = 'school', 'School'
+        PLATFORM = 'platform', 'Platform'
+
+    school = models.ForeignKey(
+        School, on_delete=models.CASCADE, null=True, blank=True, related_name='announcements',
+    )
+    author = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    title = models.CharField(max_length=200)
+    body = models.TextField(blank=True, default='')
+    audience = models.JSONField(default=list, blank=True)
+    scope = models.CharField(max_length=20, choices=Scope.choices, default=Scope.PLATFORM)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
