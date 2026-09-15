@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Building2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
@@ -8,6 +9,14 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -17,8 +26,14 @@ import {
 } from "@/components/ui/select";
 import { useDebounced } from "@/hooks/use-debounced";
 import { dateFmt, naira, numberFmt } from "@/lib/format";
-import { tierById } from "@/constants/plans";
-import { listPlatformSchools, setSchoolStatus } from "@/services/platform.service";
+import { tierById, SUBSCRIPTION_TIERS } from "@/constants/plans";
+import {
+  createPlatformSchool,
+  getPlatformSchool,
+  listPlatformSchools,
+  setSchoolStatus,
+  updatePlatformSchool,
+} from "@/services/platform.service";
 
 export const Route = createFileRoute("/_app/platform/schools")({
   head: () => ({
@@ -40,10 +55,32 @@ export const Route = createFileRoute("/_app/platform/schools")({
 });
 
 const STATUSES = ["active", "trial", "grace", "pending_payment", "suspended"] as const;
+const SCHOOL_TYPES = [
+  { value: "nursery", label: "Nursery" },
+  { value: "primary", label: "Primary" },
+  { value: "secondary", label: "Secondary" },
+  { value: "mixed", label: "Mixed" },
+] as const;
+
+const EMPTY_FORM = {
+  name: "",
+  schoolType: "mixed",
+  state: "",
+  lga: "",
+  address: "",
+  phone: "",
+  email: "",
+  website: "",
+  tierId: "t100",
+  currentSession: "2026/2027",
+  currentTerm: "First Term",
+};
 
 function PlatformSchoolsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [manageId, setManageId] = useState<string | null>(null);
   const debounced = useDebounced(search, 300);
   const queryClient = useQueryClient();
 
@@ -69,7 +106,13 @@ function PlatformSchoolsPage() {
       <div className="space-y-6">
         <PageHeader
           title="Schools"
-          description="Search, review and change the account status of any school on the platform."
+          description="Search, register and manage every school on the platform."
+          actions={
+            <Button onClick={() => setRegisterOpen(true)}>
+              <Building2 className="size-4" aria-hidden="true" />
+              Register school
+            </Button>
+          }
         />
 
         <div className="flex flex-col gap-3 sm:flex-row">
@@ -102,7 +145,7 @@ function PlatformSchoolsPage() {
         ) : schools.length === 0 ? (
           <EmptyState
             title="No schools match your filters"
-            description="Try another name, state or status."
+            description="Try another name, state or status, or register a new school."
           />
         ) : (
           <ul className="fn-panel divide-y">
@@ -119,16 +162,11 @@ function PlatformSchoolsPage() {
                   {naira(school.mrr)}/mo
                 </span>
                 <StatusBadge status={school.status} />
-                {school.status === "suspended" ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={mutation.isPending}
-                    onClick={() => mutation.mutate({ id: school.id, next: "active" })}
-                  >
-                    Reactivate
-                  </Button>
-                ) : (
+                <Button size="sm" variant="outline" onClick={() => setManageId(school.id)}>
+                  <Pencil className="size-3.5" aria-hidden="true" />
+                  Manage
+                </Button>
+                {school.status !== "suspended" ? (
                   <Button
                     size="sm"
                     variant="outline"
@@ -137,12 +175,463 @@ function PlatformSchoolsPage() {
                   >
                     Suspend
                   </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={mutation.isPending}
+                    onClick={() => mutation.mutate({ id: school.id, next: "active" })}
+                  >
+                    Reactivate
+                  </Button>
                 )}
               </li>
             ))}
           </ul>
         )}
+
+        <RegisterSchoolDialog open={registerOpen} onOpenChange={setRegisterOpen} />
+        <ManageSchoolDialog
+          schoolId={manageId}
+          open={manageId !== null}
+          onOpenChange={(open) => {
+            if (!open) setManageId(null);
+          }}
+        />
       </div>
     </PermissionGate>
+  );
+}
+
+function RegisterSchoolDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState(EMPTY_FORM);
+
+  useEffect(() => {
+    if (open) setForm(EMPTY_FORM);
+  }, [open]);
+
+  const createMutation = useMutation({
+    mutationFn: createPlatformSchool,
+    onSuccess: (school) => {
+      toast.success(`${school.name} registered and activated`);
+      onOpenChange(false);
+      void queryClient.invalidateQueries({ queryKey: ["platform", "schools"] });
+    },
+    onError: async (err) => {
+      const message =
+        err instanceof Error && "fieldErrors" in err
+          ? Object.values(
+              (err as unknown as { fieldErrors: Record<string, string> }).fieldErrors,
+            ).join(" ")
+          : "We couldn't register the school. Please check the details.";
+      toast.error(message);
+    },
+  });
+
+  const set = (key: keyof typeof form) => (value: string) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    createMutation.mutate(form);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="text-lg">Register a school</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="reg-name">School name</Label>
+            <Input
+              id="reg-name"
+              className="h-11"
+              required
+              placeholder="e.g. Sunrise Academy"
+              value={form.name}
+              onChange={(e) => set("name")(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>School type</Label>
+              <Select value={form.schoolType} onValueChange={set("schoolType")}>
+                <SelectTrigger className="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCHOOL_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reg-tier">Plan</Label>
+              <Select value={form.tierId} onValueChange={set("tierId")}>
+                <SelectTrigger className="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SUBSCRIPTION_TIERS.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="reg-state">State</Label>
+              <Input
+                id="reg-state"
+                className="h-11"
+                required
+                placeholder="e.g. Kano"
+                value={form.state}
+                onChange={(e) => set("state")(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reg-lga">LGA</Label>
+              <Input
+                id="reg-lga"
+                className="h-11"
+                required
+                placeholder="e.g. Kano Municipal"
+                value={form.lga}
+                onChange={(e) => set("lga")(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="reg-address">Address</Label>
+            <Input
+              id="reg-address"
+              className="h-11"
+              required
+              placeholder="Street address"
+              value={form.address}
+              onChange={(e) => set("address")(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="reg-phone">Phone</Label>
+              <Input
+                id="reg-phone"
+                className="h-11"
+                required
+                placeholder="+234..."
+                value={form.phone}
+                onChange={(e) => set("phone")(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reg-email">Contact email</Label>
+              <Input
+                id="reg-email"
+                type="email"
+                className="h-11"
+                required
+                placeholder="info@school.edu.ng"
+                value={form.email}
+                onChange={(e) => set("email")(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="reg-session">Session</Label>
+              <Input
+                id="reg-session"
+                className="h-11"
+                value={form.currentSession}
+                onChange={(e) => set("currentSession")(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reg-website">Website</Label>
+              <Input
+                id="reg-website"
+                className="h-11"
+                placeholder="https://..."
+                value={form.website}
+                onChange={(e) => set("website")(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={createMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Registering…" : "Register school"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type EditableSchool = {
+  name: string;
+  schoolType: string;
+  state: string;
+  lga: string;
+  address: string;
+  phone: string;
+  email: string;
+  website: string;
+  primaryColor: string;
+  secondaryColor: string;
+  currentSession: string;
+  currentTerm: string;
+};
+
+function ManageSchoolDialog({
+  schoolId,
+  open,
+  onOpenChange,
+}: {
+  schoolId: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const detail = useQuery({
+    queryKey: ["platform", "school", schoolId],
+    queryFn: () => getPlatformSchool(schoolId as string),
+    enabled: open && schoolId !== null,
+  });
+
+  const [form, setForm] = useState<EditableSchool | null>(null);
+
+  const school = detail.data;
+
+  useEffect(() => {
+    if (school) {
+      setForm({
+        name: school.name,
+        schoolType: school.schoolType,
+        state: school.state,
+        lga: school.lga,
+        address: school.address,
+        phone: school.phone,
+        email: school.email,
+        website: school.website,
+        primaryColor: school.primaryColor,
+        secondaryColor: school.secondaryColor,
+        currentSession: school.currentSession,
+        currentTerm: school.currentTerm,
+      });
+    }
+  }, [school]);
+
+  const saveMutation = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: EditableSchool }) =>
+      updatePlatformSchool(id, input),
+    onSuccess: (updated) => {
+      toast.success(`${updated.name} updated`);
+      void queryClient.invalidateQueries({ queryKey: ["platform", "schools"] });
+      void queryClient.invalidateQueries({ queryKey: ["platform", "school", schoolId] });
+    },
+    onError: () => toast.error("We couldn't save those changes."),
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: ({ id, next }: { id: string; next: "active" | "suspended" }) =>
+      setSchoolStatus(id, next),
+    onSuccess: (updated) => {
+      toast.success(`${updated.name} is now ${updated.status.replace("_", " ")}`);
+      void queryClient.invalidateQueries({ queryKey: ["platform", "schools"] });
+      void queryClient.invalidateQueries({ queryKey: ["platform", "school", schoolId] });
+    },
+    onError: () => toast.error("We couldn't update that school."),
+  });
+
+  const set = (key: keyof EditableSchool) => (value: string) =>
+    setForm((f) => (f ? { ...f, [key]: value } : f));
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!schoolId || !form) return;
+    saveMutation.mutate({ id: schoolId, input: form });
+  };
+
+  useEffect(() => {
+    if (!open) setForm(null);
+  }, [open]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-lg">Manage school</DialogTitle>
+        </DialogHeader>
+
+        {detail.isError ? (
+          <ErrorState onRetry={() => void detail.refetch()} />
+        ) : !school || !form ? (
+          <ListSkeleton />
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="font-medium">{school.name}</p>
+              <StatusBadge status={school.status} />
+              <span className="text-sm text-muted-foreground">
+                {numberFmt(school.students)} students · {numberFmt(school.staffCount)} staff ·{" "}
+                {naira(school.mrr)}/mo
+              </span>
+            </div>
+
+            <form onSubmit={submit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="mng-name">School name</Label>
+                <Input
+                  id="mng-name"
+                  className="h-11"
+                  value={form.name}
+                  onChange={(e) => set("name")(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>School type</Label>
+                  <Select value={form.schoolType} onValueChange={set("schoolType")}>
+                    <SelectTrigger className="h-11">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SCHOOL_TYPES.map((t) => (
+                        <SelectItem key={t.value} value={t.value}>
+                          {t.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="mng-phone">Phone</Label>
+                  <Input
+                    id="mng-phone"
+                    className="h-11"
+                    value={form.phone}
+                    onChange={(e) => set("phone")(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="mng-state">State</Label>
+                  <Input
+                    id="mng-state"
+                    className="h-11"
+                    value={form.state}
+                    onChange={(e) => set("state")(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="mng-lga">LGA</Label>
+                  <Input
+                    id="mng-lga"
+                    className="h-11"
+                    value={form.lga}
+                    onChange={(e) => set("lga")(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mng-address">Address</Label>
+                <Input
+                  id="mng-address"
+                  className="h-11"
+                  value={form.address}
+                  onChange={(e) => set("address")(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="mng-email">Contact email</Label>
+                  <Input
+                    id="mng-email"
+                    className="h-11"
+                    value={form.email}
+                    onChange={(e) => set("email")(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="mng-website">Website</Label>
+                  <Input
+                    id="mng-website"
+                    className="h-11"
+                    value={form.website}
+                    onChange={(e) => set("website")(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="mng-session">Session</Label>
+                  <Input
+                    id="mng-session"
+                    className="h-11"
+                    value={form.currentSession}
+                    onChange={(e) => set("currentSession")(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="mng-term">Term</Label>
+                  <Input
+                    id="mng-term"
+                    className="h-11"
+                    value={form.currentTerm}
+                    onChange={(e) => set("currentTerm")(e.target.value)}
+                  />
+                </div>
+              </div>
+              <DialogFooter className="sm:justify-between">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={statusMutation.isPending}
+                  onClick={() =>
+                    schoolId &&
+                    statusMutation.mutate({
+                      id: schoolId,
+                      next: school.status === "suspended" ? "active" : "suspended",
+                    })
+                  }
+                >
+                  {school.status === "suspended" ? "Reactivate" : "Suspend"}
+                </Button>
+                <Button type="submit" disabled={saveMutation.isPending}>
+                  {saveMutation.isPending ? "Saving…" : "Save changes"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
