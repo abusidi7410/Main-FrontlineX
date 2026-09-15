@@ -98,3 +98,27 @@ class SchoolSubscription(models.Model):
         indexes = [
             models.Index(fields=['status']),
         ]
+
+
+class AuditLog(models.Model):
+    class Severity(models.TextChoices):
+        INFO = 'info', 'Info'
+        WARNING = 'warning', 'Warning'
+        CRITICAL = 'critical', 'Critical'
+
+    actor = models.CharField(max_length=255)
+    role = models.CharField(max_length=20, blank=True, default='')
+    action = models.CharField(max_length=100)
+    target = models.CharField(max_length=255, blank=True, default='')
+    detail = models.TextField(blank=True, default='')
+    ip = models.CharField(max_length=64, blank=True, default='')
+    severity = models.CharField(
+        max_length=10, choices=Severity.choices, default=Severity.INFO,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.action} → {self.target} by {self.actor}'
