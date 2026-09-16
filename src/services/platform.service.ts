@@ -74,6 +74,19 @@ export async function updatePlatformSchool(
   return apiFetch(`/platform/schools/${id}`, { method: "PATCH", body: input });
 }
 
+export interface DeleteSchoolResult {
+  detail: string;
+  deleted: string;
+  remaining: number;
+}
+
+export async function deletePlatformSchool(
+  id: string,
+  confirm: string,
+): Promise<DeleteSchoolResult> {
+  return apiFetch(`/platform/schools/${id}`, { method: "DELETE", body: { confirm } });
+}
+
 export interface PlatformTicket {
   id: string;
   school: string;

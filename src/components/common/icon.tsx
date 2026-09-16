@@ -22,6 +22,7 @@ import {
   UserCog,
   Users,
   Wallet,
+  KeyRound,
   type LucideIcon,
 } from "lucide-react";
 
@@ -29,6 +30,7 @@ export const ICONS: Record<string, LucideIcon> = {
   home: Home,
   users: Users,
   userCog: UserCog,
+  userKey: KeyRound,
   graduation: GraduationCap,
   clipboard: ClipboardCheck,
   award: Award,

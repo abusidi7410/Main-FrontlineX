@@ -185,6 +185,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'EXCEPTION_HANDLER': 'config.exceptions.frontline_exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [],  # per-view scoped throttle on auth endpoints only
     'DEFAULT_THROTTLE_RATES': {
         'anon': '30/minute',

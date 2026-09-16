@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Building2, Pencil } from "lucide-react";
+import { Building2, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
@@ -27,8 +27,10 @@ import {
 import { useDebounced } from "@/hooks/use-debounced";
 import { dateFmt, naira, numberFmt } from "@/lib/format";
 import { tierById, SUBSCRIPTION_TIERS } from "@/constants/plans";
+import type { PlatformSchool } from "@/types";
 import {
   createPlatformSchool,
+  deletePlatformSchool,
   getPlatformSchool,
   listPlatformSchools,
   setSchoolStatus,
@@ -82,6 +84,7 @@ function PlatformSchoolsPage() {
   const [status, setStatus] = useState("all");
   const [registerOpen, setRegisterOpen] = useState(false);
   const [manageId, setManageId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PlatformSchool | null>(null);
   const debounced = useDebounced(search, 300);
   const queryClient = useQueryClient();
 
@@ -98,6 +101,20 @@ function PlatformSchoolsPage() {
       void queryClient.invalidateQueries({ queryKey: ["platform", "schools"] });
     },
     onError: () => toast.error("We couldn't update that school. Please try again."),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: ({ id, confirm }: { id: string; confirm: string }) =>
+      deletePlatformSchool(id, confirm),
+    onSuccess: (result) => {
+      toast.success(`${result.deleted} was permanently deleted.`);
+      setDeleteTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ["platform", "schools"] });
+      void queryClient.invalidateQueries({ queryKey: ["platform", "dashboard"] });
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "We couldn't delete that school.");
+    },
   });
 
   const schools = query.data ?? [];
@@ -186,6 +203,16 @@ function PlatformSchoolsPage() {
                     Reactivate
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive hover:text-destructive"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => setDeleteTarget(school)}
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                  Delete
+                </Button>
               </li>
             ))}
           </ul>
@@ -198,6 +225,14 @@ function PlatformSchoolsPage() {
           onOpenChange={(open) => {
             if (!open) setManageId(null);
           }}
+        />
+        <DeleteSchoolDialog
+          school={deleteTarget}
+          isPending={deleteMutation.isPending}
+          onOpenChange={(open) => {
+            if (!open && !deleteMutation.isPending) setDeleteTarget(null);
+          }}
+          onConfirm={(id, confirm) => deleteMutation.mutate({ id, confirm })}
         />
       </div>
     </PermissionGate>
@@ -479,6 +514,74 @@ type EditableSchool = {
   currentSession: string;
   currentTerm: string;
 };
+
+function DeleteSchoolDialog({
+  school,
+  isPending,
+  onOpenChange,
+  onConfirm,
+}: {
+  school: PlatformSchool | null;
+  isPending: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (id: string, confirm: string) => void;
+}) {
+  const [confirmName, setConfirmName] = useState("");
+
+  useEffect(() => {
+    if (!school) setConfirmName("");
+  }, [school]);
+
+  const matches = school !== null && confirmName.trim() === school.name;
+  const canDelete = matches && !isPending;
+
+  return (
+    <Dialog
+      open={school !== null}
+      onOpenChange={(open) => {
+        if (open && school) return;
+        onOpenChange(open);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-lg">Delete {school?.name ?? "this school"}?</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            This permanently deletes the school, its login accounts, students, staff, attendance,
+            invoices and payments. This can't be undone.
+          </p>
+          <div className="space-y-2">
+            <Label htmlFor="del-confirm">
+              Type <span className="font-mono font-medium">{school?.name ?? "…"}</span> to confirm
+            </Label>
+            <Input
+              id="del-confirm"
+              className="h-11"
+              autoFocus
+              placeholder={school?.name ?? ""}
+              value={confirmName}
+              onChange={(event) => setConfirmName(event.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!canDelete}
+              variant="destructive"
+              onClick={() => school && onConfirm(school.id, confirmName.trim())}
+            >
+              {isPending ? "Deleting…" : "Delete school permanently"}
+            </Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function ManageSchoolDialog({
   schoolId,

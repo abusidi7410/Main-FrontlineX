@@ -14,6 +14,8 @@ export type Permission =
   | "students.import"
   | "staff.read"
   | "staff.write"
+  | "accounts.read"
+  | "accounts.write"
   | "academics.read"
   | "academics.write"
   | "attendance.read"
@@ -129,6 +131,53 @@ export interface StaffMember {
   subjects: string[];
   classes: string[];
   status: "active" | "invited" | "suspended";
+}
+
+export interface SchoolAccount {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  role: Role;
+  status: "active" | "inactive";
+  mustChangePassword: boolean;
+  lastLogin: string | null;
+  joinedAt: string;
+  student?: {
+    id: string;
+    name: string;
+    admissionNumber: string;
+    className: string;
+  } | null;
+  staff?: { id: string; fullName: string; role: string } | null;
+}
+
+export interface DefaultCredentials {
+  email: string;
+  password: string;
+  mustChangePassword: true;
+}
+
+export interface AccountCreateInput {
+  fullName: string;
+  email: string;
+  phone?: string;
+  role: Role;
+  password?: string;
+  studentId?: string;
+  staffId?: string;
+}
+
+export interface AccountStats {
+  total: number;
+  active: number;
+  byRole: Record<
+    Role,
+    {
+      total: number;
+      active: number;
+    }
+  >;
 }
 
 export type AttendanceStatus = "present" | "absent" | "late" | "excused";

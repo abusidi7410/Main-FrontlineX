@@ -34,6 +34,28 @@ class User(AbstractUser):
         related_name='users',
     )
     is_verified = models.BooleanField(default=False)
+
+    # Optional links so role accounts map onto the school roster records.
+    # SET_NULL: removing a Student/StaffMember keeps the login account alive.
+    student_profile = models.OneToOneField(
+        'records.Student',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='user_account',
+    )
+    staff_profile = models.OneToOneField(
+        'records.StaffMember',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='user_account',
+    )
+
+    # True when a login was provisioned with a generated one-time password;
+    # the user must change it on first successful authentication.
+    must_change_password = models.BooleanField(default=False)
+    last_password_reset_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     USERNAME_FIELD = 'email'
@@ -46,6 +68,10 @@ class User(AbstractUser):
         indexes = [
             models.Index(fields=['role']),
             models.Index(fields=['school', 'role']),
+            # Hot paths: school-scoped account lists, role filters and
+            # active-user counts (thousands of schools, each with many users).
+            models.Index(fields=['school', 'role', 'is_active']),
+            models.Index(fields=['school', 'last_name', 'first_name']),
         ]
 
     def __str__(self):

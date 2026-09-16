@@ -22,6 +22,9 @@ dist-ssr
 .env.staging
 .env.production
 
+# Local handoff file (contains credentials)
+CONTINUE_HERE.md
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars

@@ -45,7 +45,10 @@ export interface RequestOptions {
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const withSlash = path.endsWith("/") ? path : `${path}/`;
-  const url = new URL(`${API_BASE_URL}${withSlash}`, globalThis.location?.origin ?? "http://localhost");
+  const url = new URL(
+    `${API_BASE_URL}${withSlash}`,
+    globalThis.location?.origin ?? "http://localhost",
+  );
   Object.entries(options.query ?? {}).forEach(([k, v]) => {
     if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
   });
@@ -75,12 +78,13 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
       detail?: string;
       message?: string;
       errors?: Record<string, string>;
+      fieldErrors?: Record<string, string>;
     } | null;
     const error = new ApiRequestError(
       payload?.detail ?? payload?.message ?? FRIENDLY_ERROR,
       response.status,
       undefined,
-      payload?.errors,
+      payload?.fieldErrors ?? payload?.errors,
     );
     if (response.status === 401 && accessToken && unauthorizedHandler) {
       unauthorizedHandler();

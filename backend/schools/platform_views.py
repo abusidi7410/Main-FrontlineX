@@ -297,6 +297,42 @@ class PlatformSchoolDetailView(APIView):
         )
         return Response(_platform_school_detail(school))
 
+    def delete(self, request, pk):
+        """Permanently remove a school and every record tied to it.
+
+        Requires ``confirm`` set to the school's exact name, so an accidental
+        tap can never perform the deletion. The action is audited before the
+        school is destroyed; audit log entries are global and survive the
+        cascade.
+        """
+        school = self.get_school(pk)
+        if school is None:
+            return Response({'detail': 'School not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        confirm = (request.data.get('confirm') or '').strip()
+        if confirm != school.name:
+            return Response(
+                {'detail': 'Type the school name to confirm deletion.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        label = school.name
+        AuditLog.objects.create(
+            actor=f'{request.user.get_full_name()} ({request.user.email})' if request.user.get_full_name() else request.user.email,
+            role=request.user.role,
+            action='school.deleted',
+            target=label,
+            detail='School and all associated records permanently deleted.',
+            ip=_client_ip(request),
+            severity='critical',
+        )
+
+        school.delete()
+        return Response(
+            {'detail': f'{label} deleted.', 'deleted': label, 'remaining': School.objects.count()},
+            status=status.HTTP_200_OK,
+        )
+
 
 class PlatformSupportTicketListView(APIView):
     permission_classes = [IsAuthenticated, IsSuperAdmin]

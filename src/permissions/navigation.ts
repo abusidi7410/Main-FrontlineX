@@ -12,6 +12,7 @@ const SCHOOL_ADMIN: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Overview", mobile: true },
   { label: "Students", to: "/students", icon: "users", group: "People", mobile: true },
   { label: "Staff", to: "/staff", icon: "userCog", group: "People" },
+  { label: "Accounts", to: "/accounts", icon: "userKey", group: "People", mobile: true },
   { label: "Academics", to: "/academics", icon: "graduation", group: "Academics" },
   { label: "Attendance", to: "/attendance", icon: "clipboard", group: "Academics", mobile: true },
   { label: "Results", to: "/results", icon: "award", group: "Academics" },
@@ -32,6 +33,7 @@ const PRINCIPAL: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Overview", mobile: true },
   { label: "Students", to: "/students", icon: "users", group: "People", mobile: true },
   { label: "Staff", to: "/staff", icon: "userCog", group: "People" },
+  { label: "Accounts", to: "/accounts", icon: "userKey", group: "People" },
   { label: "Attendance", to: "/attendance", icon: "clipboard", group: "Academics", mobile: true },
   { label: "Results", to: "/results", icon: "award", group: "Academics", mobile: true },
   { label: "Timetable", to: "/timetable", icon: "calendar", group: "Academics" },
@@ -64,6 +66,7 @@ const ACCOUNTANT: NavItem[] = [
 const SECRETARY: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Overview", mobile: true },
   { label: "Students", to: "/students", icon: "users", group: "People", mobile: true },
+  { label: "Accounts", to: "/accounts", icon: "userKey", group: "People", mobile: true },
   { label: "Attendance", to: "/attendance", icon: "clipboard", group: "People", mobile: true },
   {
     label: "Announcements",

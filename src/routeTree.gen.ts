@@ -17,6 +17,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as AppAcademicsRouteImport } from './routes/_app.academics'
+import { Route as AppAccountsRouteImport } from './routes/_app.accounts'
 import { Route as AppAiRouteImport } from './routes/_app.ai'
 import { Route as AppAttendanceRouteImport } from './routes/_app.attendance'
 import { Route as AppAuditLogsRouteImport } from './routes/_app.audit-logs'
@@ -90,6 +91,11 @@ const ResetPasswordRoute = ResetPasswordRouteImport.update({
 const AppAcademicsRoute = AppAcademicsRouteImport.update({
   id: '/academics',
   path: '/academics',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccountsRoute = AppAccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAiRoute = AppAiRouteImport.update({
@@ -278,6 +284,7 @@ export interface FileRoutesByFullPath {
   '/pricing': typeof PricingRoute
   '/reset-password': typeof ResetPasswordRoute
   '/academics': typeof AppAcademicsRoute
+  '/accounts': typeof AppAccountsRoute
   '/ai': typeof AppAiRoute
   '/attendance': typeof AppAttendanceRoute
   '/audit-logs': typeof AppAuditLogsRoute
@@ -322,6 +329,7 @@ export interface FileRoutesByTo {
   '/pricing': typeof PricingRoute
   '/reset-password': typeof ResetPasswordRoute
   '/academics': typeof AppAcademicsRoute
+  '/accounts': typeof AppAccountsRoute
   '/ai': typeof AppAiRoute
   '/attendance': typeof AppAttendanceRoute
   '/audit-logs': typeof AppAuditLogsRoute
@@ -368,6 +376,7 @@ export interface FileRoutesById {
   '/pricing': typeof PricingRoute
   '/reset-password': typeof ResetPasswordRoute
   '/_app/academics': typeof AppAcademicsRoute
+  '/_app/accounts': typeof AppAccountsRoute
   '/_app/ai': typeof AppAiRoute
   '/_app/attendance': typeof AppAttendanceRoute
   '/_app/audit-logs': typeof AppAuditLogsRoute
@@ -414,6 +423,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/reset-password'
     | '/academics'
+    | '/accounts'
     | '/ai'
     | '/attendance'
     | '/audit-logs'
@@ -458,6 +468,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/reset-password'
     | '/academics'
+    | '/accounts'
     | '/ai'
     | '/attendance'
     | '/audit-logs'
@@ -503,6 +514,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/reset-password'
     | '/_app/academics'
+    | '/_app/accounts'
     | '/_app/ai'
     | '/_app/attendance'
     | '/_app/audit-logs'
@@ -606,6 +618,13 @@ declare module '@tanstack/react-router' {
       path: '/academics'
       fullPath: '/academics'
       preLoaderRoute: typeof AppAcademicsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/accounts': {
+      id: '/_app/accounts'
+      path: '/accounts'
+      fullPath: '/accounts'
+      preLoaderRoute: typeof AppAccountsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/ai': {
@@ -895,6 +914,7 @@ const AppStudentsStudentIdRouteWithChildren =
 
 interface AppRouteChildren {
   AppAcademicsRoute: typeof AppAcademicsRoute
+  AppAccountsRoute: typeof AppAccountsRoute
   AppAiRoute: typeof AppAiRoute
   AppAttendanceRoute: typeof AppAttendanceRoute
   AppAuditLogsRoute: typeof AppAuditLogsRoute
@@ -930,6 +950,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAcademicsRoute: AppAcademicsRoute,
+  AppAccountsRoute: AppAccountsRoute,
   AppAiRoute: AppAiRoute,
   AppAttendanceRoute: AppAttendanceRoute,
   AppAuditLogsRoute: AppAuditLogsRoute,
