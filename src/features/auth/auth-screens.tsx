@@ -1,7 +1,11 @@
 import { useNavigate, Link } from "@tanstack/react-router";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState, type Dispatch, type SetStateAction, type ReactNode } from "react";
-import { useForm, type UseFormReturn, type UseFormRegisterReturn } from "react-hook-form";
+import {
+  useController,
+  useForm,
+  type UseFormReturn,
+} from "react-hook-form";
 import { z } from "zod";
 import {
   AlertCircle,
@@ -101,6 +105,14 @@ function FieldError({ message, id }: { message?: string | undefined; id: string 
   );
 }
 
+type AuthFieldProps = {
+  value: string;
+  onChange: (event: unknown) => void;
+  onBlur: () => void;
+  name: string;
+  ref: (instance: HTMLInputElement | null) => void;
+};
+
 type PasswordFieldProps = {
   id: string;
   label: ReactNode;
@@ -109,8 +121,7 @@ type PasswordFieldProps = {
   message?: string | undefined;
   describedBy: string;
   autoComplete: string;
-  registerProps: UseFormRegisterReturn;
-  value: string;
+  field: AuthFieldProps;
 };
 
 function PasswordField({
@@ -121,8 +132,7 @@ function PasswordField({
   message,
   describedBy,
   autoComplete,
-  registerProps,
-  value,
+  field,
 }: PasswordFieldProps) {
   const [show, setShow] = useState(false);
   return (
@@ -150,8 +160,7 @@ function PasswordField({
           className={cn("auth-input pl-11 pr-14", message && "auth-input-err")}
           aria-invalid={!!message}
           aria-describedby={message ? describedBy : undefined}
-          value={value}
-          {...registerProps}
+          {...field}
         />
         <button
           type="button"
@@ -268,6 +277,15 @@ function LoginContent({
   onSubmit: ReturnType<UseFormReturn<LoginValues>["handleSubmit"]>;
   onShowRegister: () => void;
 }) {
+  const { field: identifierField } = useController({
+    control: form.control,
+    name: "identifier",
+  });
+  const { field: passwordField } = useController({
+    control: form.control,
+    name: "password",
+  });
+
   return (
     <div className="space-y-7">
       <div className="space-y-2">
@@ -318,8 +336,7 @@ function LoginContent({
               )}
               aria-invalid={!!form.formState.errors.identifier}
               aria-describedby={form.formState.errors.identifier ? "identifier-error" : undefined}
-              value={form.watch("identifier")}
-              {...form.register("identifier")}
+              {...identifierField}
             />
           </div>
           <FieldError
@@ -343,8 +360,7 @@ function LoginContent({
           message={form.formState.errors.password?.message ?? undefined}
           describedBy="password-error"
           autoComplete="current-password"
-          registerProps={form.register("password")}
-          value={form.watch("password")}
+          field={passwordField}
         />
 
         <div className="flex justify-center pt-2">
@@ -449,6 +465,20 @@ function RegisterContent({
   paymentRef: string | null;
   onShowLogin: () => void;
 }) {
+  const { field: nameField } = useController({ control: schoolForm.control, name: "name" });
+  const { field: addressField } = useController({ control: schoolForm.control, name: "address" });
+  const { field: lgaField } = useController({ control: schoolForm.control, name: "lga" });
+  const { field: phoneField } = useController({ control: schoolForm.control, name: "phone" });
+  const { field: emailField } = useController({ control: schoolForm.control, name: "email" });
+  const { field: websiteField } = useController({ control: schoolForm.control, name: "website" });
+  const { field: fullNameField } = useController({ control: adminForm.control, name: "fullName" });
+  const { field: adminPhoneField } = useController({ control: adminForm.control, name: "phone" });
+  const { field: adminEmailField } = useController({ control: adminForm.control, name: "email" });
+  const { field: adminPasswordField } = useController({
+    control: adminForm.control,
+    name: "password",
+  });
+
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -493,8 +523,7 @@ function RegisterContent({
               className={cn("auth-input", schoolForm.formState.errors.name && "auth-input-err")}
               aria-invalid={!!schoolForm.formState.errors.name}
               aria-describedby={schoolForm.formState.errors.name ? "name-error" : undefined}
-              value={schoolForm.watch("name")}
-              {...schoolForm.register("name")}
+              {...nameField}
             />
             <FieldError id="name-error" message={schoolForm.formState.errors.name?.message ?? ""} />
           </div>
@@ -543,8 +572,7 @@ function RegisterContent({
               className={cn("auth-input", schoolForm.formState.errors.address && "auth-input-err")}
               aria-invalid={!!schoolForm.formState.errors.address}
               aria-describedby={schoolForm.formState.errors.address ? "address-error" : undefined}
-              value={schoolForm.watch("address")}
-              {...schoolForm.register("address")}
+              {...addressField}
             />
             <FieldError
               id="address-error"
@@ -599,8 +627,7 @@ function RegisterContent({
               className={cn("auth-input", schoolForm.formState.errors.lga && "auth-input-err")}
               aria-invalid={!!schoolForm.formState.errors.lga}
               aria-describedby={schoolForm.formState.errors.lga ? "lga-error" : undefined}
-              value={schoolForm.watch("lga")}
-              {...schoolForm.register("lga")}
+              {...lgaField}
             />
             <FieldError id="lga-error" message={schoolForm.formState.errors.lga?.message ?? ""} />
           </div>
@@ -620,8 +647,7 @@ function RegisterContent({
               className={cn("auth-input", schoolForm.formState.errors.phone && "auth-input-err")}
               aria-invalid={!!schoolForm.formState.errors.phone}
               aria-describedby={schoolForm.formState.errors.phone ? "phone-error" : undefined}
-              value={schoolForm.watch("phone")}
-              {...schoolForm.register("phone")}
+              {...phoneField}
             />
             <p className="text-[11.5px]" style={{ color: SOFT }}>
               Nigerian number, e.g. 08012345678 or +2348012345678.
@@ -648,8 +674,7 @@ function RegisterContent({
               aria-describedby={
                 schoolForm.formState.errors.email ? "school-email-error" : undefined
               }
-              value={schoolForm.watch("email")}
-              {...schoolForm.register("email")}
+              {...emailField}
             />
             <FieldError
               id="school-email-error"
@@ -672,8 +697,7 @@ function RegisterContent({
               id="website"
               placeholder="www.yourschool.edu.ng"
               className="auth-input"
-              value={schoolForm.watch("website")}
-              {...schoolForm.register("website")}
+              {...websiteField}
             />
           </div>
 
@@ -713,8 +737,7 @@ function RegisterContent({
               className={cn("auth-input", adminForm.formState.errors.fullName && "auth-input-err")}
               aria-invalid={!!adminForm.formState.errors.fullName}
               aria-describedby={adminForm.formState.errors.fullName ? "fullName-error" : undefined}
-              value={adminForm.watch("fullName")}
-              {...adminForm.register("fullName")}
+              {...fullNameField}
             />
             <FieldError
               id="fullName-error"
@@ -736,8 +759,7 @@ function RegisterContent({
               className={cn("auth-input", adminForm.formState.errors.phone && "auth-input-err")}
               aria-invalid={!!adminForm.formState.errors.phone}
               aria-describedby={adminForm.formState.errors.phone ? "admin-phone-error" : undefined}
-              value={adminForm.watch("phone")}
-              {...adminForm.register("phone")}
+              {...adminPhoneField}
             />
             <FieldError
               id="admin-phone-error"
@@ -758,8 +780,7 @@ function RegisterContent({
               className={cn("auth-input", adminForm.formState.errors.email && "auth-input-err")}
               aria-invalid={!!adminForm.formState.errors.email}
               aria-describedby={adminForm.formState.errors.email ? "admin-email-error" : undefined}
-              value={adminForm.watch("email")}
-              {...adminForm.register("email")}
+              {...adminEmailField}
             />
             <FieldError
               id="admin-email-error"
@@ -777,8 +798,7 @@ function RegisterContent({
             message={adminForm.formState.errors.password?.message ?? undefined}
             describedBy="admin-password-error"
             autoComplete="new-password"
-            registerProps={adminForm.register("password")}
-            value={adminForm.watch("password")}
+            field={adminPasswordField}
           />
           <div className="flex flex-col items-center gap-2.5 pt-2">
             <button type="submit" className="auth-btn auth-btn-form">
