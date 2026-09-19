@@ -18,4 +18,10 @@ urlpatterns = [
     path('results/', views.ResultSheetListView.as_view()),
     path('attendance/roster/', views.AttendanceRosterView.as_view()),
     path('attendance/', views.AttendanceSubmitView.as_view()),
+    path('academics/', views.AcademicsView.as_view()),
+    path('academics/subjects/<str:name>/', views.AcademicSubjectDetailView.as_view()),
+    path('academics/subjects/', views.AcademicSubjectsView.as_view()),
+    path('academics/classes/<str:name>/', views.AcademicClassDetailView.as_view()),
+    path('academics/classes/', views.AcademicClassesView.as_view()),
+    path('timetable/', views.TimetableView.as_view()),
 ]

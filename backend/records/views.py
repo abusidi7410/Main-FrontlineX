@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -354,3 +355,135 @@ class AttendanceSubmitView(APIView):
                 )
                 created_ids.append(record.id)
         return Response({'id': request.data.get('id', ''), 'saved': len(created_ids)}, status=status.HTTP_201_CREATED)
+
+
+# ── Academics ──────────────────────────────────────────────────────────────
+
+DEFAULT_CLASSES = [
+    'Nursery 1',
+    'Nursery 2',
+    'Primary 1',
+    'Primary 2',
+    'Primary 3',
+    'Primary 4',
+    'Primary 5',
+    'Primary 6',
+    'JSS 1',
+    'JSS 2',
+    'JSS 3',
+    'SS 1',
+    'SS 2',
+    'SS 3',
+]
+
+DEFAULT_SUBJECTS = [
+    'Mathematics',
+    'English Language',
+    'Basic Science',
+    'Social Studies',
+    'Civic Education',
+    'Computer Studies',
+    'Agricultural Science',
+    'Business Studies',
+]
+
+
+class AcademicsView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def _school(self, request):
+        return get_object_or_404(School, id=request.user.school_id)
+
+    def _payload(self, school):
+        return {
+            'session': school.current_session,
+            'term': school.current_term,
+            'classes': school.classes or DEFAULT_CLASSES,
+            'subjects': school.subjects or DEFAULT_SUBJECTS,
+        }
+
+    def get(self, request):
+        return Response(self._payload(self._school(request)))
+
+    def patch(self, request):
+        school = self._school(request)
+        session = (request.data.get('session') or '').strip()
+        term = (request.data.get('term') or '').strip()
+        update = []
+        if session:
+            school.current_session = session
+            update.append('current_session')
+        if term:
+            school.current_term = term
+            update.append('current_term')
+        if not update:
+            raise ValidationError({'session': 'Provide a session or term to update.'})
+        school.save(update_fields=update)
+        return Response(self._payload(school))
+
+
+class AcademicSubjectsView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteRecords]
+
+    def post(self, request):
+        school = get_object_or_404(School, id=request.user.school_id)
+        name = (request.data.get('name') or '').strip()
+        if not name:
+            raise ValidationError({'name': 'A subject name is required.'})
+        subjects = list(school.subjects or DEFAULT_SUBJECTS)
+        if name not in subjects:
+            subjects.append(name)
+            school.subjects = subjects
+            school.save(update_fields=['subjects'])
+        return Response(AcademicsView()._payload(school))
+
+
+class AcademicSubjectDetailView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteRecords]
+
+    def delete(self, request, name):
+        school = get_object_or_404(School, id=request.user.school_id)
+        subjects = list(school.subjects or DEFAULT_SUBJECTS)
+        if name in subjects:
+            subjects.remove(name)
+            school.subjects = subjects
+            school.save(update_fields=['subjects'])
+        return Response(AcademicsView()._payload(school))
+
+
+class AcademicClassesView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteRecords]
+
+    def post(self, request):
+        school = get_object_or_404(School, id=request.user.school_id)
+        name = (request.data.get('name') or '').strip()
+        if not name:
+            raise ValidationError({'name': 'A class name is required.'})
+        classes = list(school.classes or DEFAULT_CLASSES)
+        if name not in classes:
+            classes.append(name)
+            school.classes = classes
+            school.save(update_fields=['classes'])
+        return Response(AcademicsView()._payload(school))
+
+
+class AcademicClassDetailView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteRecords]
+
+    def delete(self, request, name):
+        school = get_object_or_404(School, id=request.user.school_id)
+        classes = list(school.classes or DEFAULT_CLASSES)
+        if name in classes:
+            classes.remove(name)
+            school.classes = classes
+            school.save(update_fields=['classes'])
+        return Response(AcademicsView()._payload(school))
+
+
+# ── Timetable (contract stub; full module later) ───────────────────────────
+
+class TimetableView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request):
+        return Response([])

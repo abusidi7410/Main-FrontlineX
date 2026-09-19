@@ -45,13 +45,16 @@ import { Route as AppPlatformSchoolsRouteImport } from './routes/_app.platform.s
 import { Route as AppPlatformSecurityRouteImport } from './routes/_app.platform.security'
 import { Route as AppPlatformSubscriptionsRouteImport } from './routes/_app.platform.subscriptions'
 import { Route as AppPlatformSupportRouteImport } from './routes/_app.platform.support'
+import { Route as AppStaffIndexRouteImport } from './routes/_app.staff.index'
 import { Route as AppStaffStaffIdRouteImport } from './routes/_app.staff.$staffId'
 import { Route as AppStaffNewRouteImport } from './routes/_app.staff.new'
 import { Route as AppStudentsIndexRouteImport } from './routes/_app.students.index'
 import { Route as AppStudentsStudentIdRouteImport } from './routes/_app.students.$studentId'
 import { Route as AppStudentsImportRouteImport } from './routes/_app.students.import'
 import { Route as AppStudentsNewRouteImport } from './routes/_app.students.new'
+import { Route as AppStaffStaffIdIndexRouteImport } from './routes/_app.staff.$staffId.index'
 import { Route as AppStaffStaffIdEditRouteImport } from './routes/_app.staff.$staffId.edit'
+import { Route as AppStudentsStudentIdIndexRouteImport } from './routes/_app.students.$studentId.index'
 import { Route as AppStudentsStudentIdEditRouteImport } from './routes/_app.students.$studentId.edit'
 
 const IndexRoute = IndexRouteImport.update({
@@ -234,6 +237,11 @@ const AppPlatformSupportRoute = AppPlatformSupportRouteImport.update({
   path: '/platform/support',
   getParentRoute: () => AppRoute,
 } as any)
+const AppStaffIndexRoute = AppStaffIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppStaffRoute,
+} as any)
 const AppStaffStaffIdRoute = AppStaffStaffIdRouteImport.update({
   id: '/$staffId',
   path: '/$staffId',
@@ -264,11 +272,22 @@ const AppStudentsNewRoute = AppStudentsNewRouteImport.update({
   path: '/students/new',
   getParentRoute: () => AppRoute,
 } as any)
+const AppStaffStaffIdIndexRoute = AppStaffStaffIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppStaffStaffIdRoute,
+} as any)
 const AppStaffStaffIdEditRoute = AppStaffStaffIdEditRouteImport.update({
   id: '/edit',
   path: '/edit',
   getParentRoute: () => AppStaffStaffIdRoute,
 } as any)
+const AppStudentsStudentIdIndexRoute =
+  AppStudentsStudentIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppStudentsStudentIdRoute,
+  } as any)
 const AppStudentsStudentIdEditRoute =
   AppStudentsStudentIdEditRouteImport.update({
     id: '/edit',
@@ -317,9 +336,12 @@ export interface FileRoutesByFullPath {
   '/students/new': typeof AppStudentsNewRoute
   '/finance/': typeof AppFinanceIndexRoute
   '/platform/': typeof AppPlatformIndexRoute
+  '/staff/': typeof AppStaffIndexRoute
   '/students/': typeof AppStudentsIndexRoute
   '/staff/$staffId/edit': typeof AppStaffStaffIdEditRoute
   '/students/$studentId/edit': typeof AppStudentsStudentIdEditRoute
+  '/staff/$staffId/': typeof AppStaffStaffIdIndexRoute
+  '/students/$studentId/': typeof AppStudentsStudentIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -344,7 +366,6 @@ export interface FileRoutesByTo {
   '/reports': typeof AppReportsRoute
   '/results': typeof AppResultsRoute
   '/settings': typeof AppSettingsRoute
-  '/staff': typeof AppStaffRouteWithChildren
   '/subscription': typeof AppSubscriptionRoute
   '/sync': typeof AppSyncRoute
   '/timetable': typeof AppTimetableRoute
@@ -355,16 +376,17 @@ export interface FileRoutesByTo {
   '/platform/security': typeof AppPlatformSecurityRoute
   '/platform/subscriptions': typeof AppPlatformSubscriptionsRoute
   '/platform/support': typeof AppPlatformSupportRoute
-  '/staff/$staffId': typeof AppStaffStaffIdRouteWithChildren
   '/staff/new': typeof AppStaffNewRoute
-  '/students/$studentId': typeof AppStudentsStudentIdRouteWithChildren
   '/students/import': typeof AppStudentsImportRoute
   '/students/new': typeof AppStudentsNewRoute
   '/finance': typeof AppFinanceIndexRoute
   '/platform': typeof AppPlatformIndexRoute
+  '/staff': typeof AppStaffIndexRoute
   '/students': typeof AppStudentsIndexRoute
   '/staff/$staffId/edit': typeof AppStaffStaffIdEditRoute
   '/students/$studentId/edit': typeof AppStudentsStudentIdEditRoute
+  '/staff/$staffId': typeof AppStaffStaffIdIndexRoute
+  '/students/$studentId': typeof AppStudentsStudentIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -409,9 +431,12 @@ export interface FileRoutesById {
   '/_app/students/new': typeof AppStudentsNewRoute
   '/_app/finance/': typeof AppFinanceIndexRoute
   '/_app/platform/': typeof AppPlatformIndexRoute
+  '/_app/staff/': typeof AppStaffIndexRoute
   '/_app/students/': typeof AppStudentsIndexRoute
   '/_app/staff/$staffId/edit': typeof AppStaffStaffIdEditRoute
   '/_app/students/$studentId/edit': typeof AppStudentsStudentIdEditRoute
+  '/_app/staff/$staffId/': typeof AppStaffStaffIdIndexRoute
+  '/_app/students/$studentId/': typeof AppStudentsStudentIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -456,9 +481,12 @@ export interface FileRouteTypes {
     | '/students/new'
     | '/finance/'
     | '/platform/'
+    | '/staff/'
     | '/students/'
     | '/staff/$staffId/edit'
     | '/students/$studentId/edit'
+    | '/staff/$staffId/'
+    | '/students/$studentId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -483,7 +511,6 @@ export interface FileRouteTypes {
     | '/reports'
     | '/results'
     | '/settings'
-    | '/staff'
     | '/subscription'
     | '/sync'
     | '/timetable'
@@ -494,16 +521,17 @@ export interface FileRouteTypes {
     | '/platform/security'
     | '/platform/subscriptions'
     | '/platform/support'
-    | '/staff/$staffId'
     | '/staff/new'
-    | '/students/$studentId'
     | '/students/import'
     | '/students/new'
     | '/finance'
     | '/platform'
+    | '/staff'
     | '/students'
     | '/staff/$staffId/edit'
     | '/students/$studentId/edit'
+    | '/staff/$staffId'
+    | '/students/$studentId'
   id:
     | '__root__'
     | '/'
@@ -547,9 +575,12 @@ export interface FileRouteTypes {
     | '/_app/students/new'
     | '/_app/finance/'
     | '/_app/platform/'
+    | '/_app/staff/'
     | '/_app/students/'
     | '/_app/staff/$staffId/edit'
     | '/_app/students/$studentId/edit'
+    | '/_app/staff/$staffId/'
+    | '/_app/students/$studentId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -816,6 +847,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPlatformSupportRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/staff/': {
+      id: '/_app/staff/'
+      path: '/'
+      fullPath: '/staff/'
+      preLoaderRoute: typeof AppStaffIndexRouteImport
+      parentRoute: typeof AppStaffRoute
+    }
     '/_app/staff/$staffId': {
       id: '/_app/staff/$staffId'
       path: '/$staffId'
@@ -858,12 +896,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppStudentsNewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/staff/$staffId/': {
+      id: '/_app/staff/$staffId/'
+      path: '/'
+      fullPath: '/staff/$staffId/'
+      preLoaderRoute: typeof AppStaffStaffIdIndexRouteImport
+      parentRoute: typeof AppStaffStaffIdRoute
+    }
     '/_app/staff/$staffId/edit': {
       id: '/_app/staff/$staffId/edit'
       path: '/edit'
       fullPath: '/staff/$staffId/edit'
       preLoaderRoute: typeof AppStaffStaffIdEditRouteImport
       parentRoute: typeof AppStaffStaffIdRoute
+    }
+    '/_app/students/$studentId/': {
+      id: '/_app/students/$studentId/'
+      path: '/'
+      fullPath: '/students/$studentId/'
+      preLoaderRoute: typeof AppStudentsStudentIdIndexRouteImport
+      parentRoute: typeof AppStudentsStudentIdRoute
     }
     '/_app/students/$studentId/edit': {
       id: '/_app/students/$studentId/edit'
@@ -877,10 +929,12 @@ declare module '@tanstack/react-router' {
 
 interface AppStaffStaffIdRouteChildren {
   AppStaffStaffIdEditRoute: typeof AppStaffStaffIdEditRoute
+  AppStaffStaffIdIndexRoute: typeof AppStaffStaffIdIndexRoute
 }
 
 const AppStaffStaffIdRouteChildren: AppStaffStaffIdRouteChildren = {
   AppStaffStaffIdEditRoute: AppStaffStaffIdEditRoute,
+  AppStaffStaffIdIndexRoute: AppStaffStaffIdIndexRoute,
 }
 
 const AppStaffStaffIdRouteWithChildren = AppStaffStaffIdRoute._addFileChildren(
@@ -890,11 +944,13 @@ const AppStaffStaffIdRouteWithChildren = AppStaffStaffIdRoute._addFileChildren(
 interface AppStaffRouteChildren {
   AppStaffStaffIdRoute: typeof AppStaffStaffIdRouteWithChildren
   AppStaffNewRoute: typeof AppStaffNewRoute
+  AppStaffIndexRoute: typeof AppStaffIndexRoute
 }
 
 const AppStaffRouteChildren: AppStaffRouteChildren = {
   AppStaffStaffIdRoute: AppStaffStaffIdRouteWithChildren,
   AppStaffNewRoute: AppStaffNewRoute,
+  AppStaffIndexRoute: AppStaffIndexRoute,
 }
 
 const AppStaffRouteWithChildren = AppStaffRoute._addFileChildren(
@@ -903,10 +959,12 @@ const AppStaffRouteWithChildren = AppStaffRoute._addFileChildren(
 
 interface AppStudentsStudentIdRouteChildren {
   AppStudentsStudentIdEditRoute: typeof AppStudentsStudentIdEditRoute
+  AppStudentsStudentIdIndexRoute: typeof AppStudentsStudentIdIndexRoute
 }
 
 const AppStudentsStudentIdRouteChildren: AppStudentsStudentIdRouteChildren = {
   AppStudentsStudentIdEditRoute: AppStudentsStudentIdEditRoute,
+  AppStudentsStudentIdIndexRoute: AppStudentsStudentIdIndexRoute,
 }
 
 const AppStudentsStudentIdRouteWithChildren =

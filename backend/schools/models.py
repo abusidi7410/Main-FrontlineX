@@ -29,6 +29,8 @@ class School(models.Model):
     is_active = models.BooleanField(default=False)
     current_session = models.CharField(max_length=20, default='2025/2026')
     current_term = models.CharField(max_length=50, default='First Term')
+    classes = models.JSONField(default=list, blank=True)
+    subjects = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
