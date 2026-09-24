@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatusBadge } from "@/components/common/status-badge";
+import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { ErrorState, ListSkeleton } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,12 +17,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ApiRequestError } from "@/api/client";
 import { useSession } from "@/auth/session";
 import { dateTimeFmt, naira, titleCase } from "@/lib/format";
 import {
+  cancelPayment,
   listInvoices,
   listPayments,
   recordPayment,
+  reversePayment,
   verifyPayment,
 } from "@/services/finance.service";
 import type { Payment } from "@/types";
@@ -59,11 +63,21 @@ function PaymentsPage() {
   const [method, setMethod] = useState<Payment["method"]>("cash");
   const [reference, setReference] = useState("");
 
+  const selectedInvoice = (invoices.data ?? []).find((invoice) => invoice.id === invoiceId);
+  const balance = selectedInvoice ? Math.max(0, selectedInvoice.total - selectedInvoice.paid) : 0;
+  const amountNumber = Number(amount);
+  const withinBalance = Number.isFinite(amountNumber) && amountNumber <= balance;
+
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["payments"] });
+    await queryClient.invalidateQueries({ queryKey: ["invoices"] });
+  };
+
   const record = useMutation({
     mutationFn: () =>
       recordPayment({
         invoiceId,
-        amount: Number(amount),
+        amount: amountNumber,
         method,
         ...(reference ? { reference } : {}),
       }),
@@ -73,23 +87,60 @@ function PaymentsPage() {
       );
       setAmount("");
       setReference("");
-      await queryClient.invalidateQueries({ queryKey: ["payments"] });
-      await queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      await refresh();
     },
-    onError: () =>
-      toast.error("We couldn't record that payment. Please check the amount and try again."),
+    onError: (error) => {
+      toast.error(
+        error instanceof ApiRequestError
+          ? error.message
+          : "We couldn't record that payment. Please check the amount and try again.",
+      );
+    },
   });
 
   const verify = useMutation({
     mutationFn: verifyPayment,
     onSuccess: async () => {
       toast.success("Payment verified.");
-      await queryClient.invalidateQueries({ queryKey: ["payments"] });
+      await refresh();
     },
-    onError: () => toast.error("Verification failed. Please try again."),
+    onError: (error) => {
+      toast.error(
+        error instanceof ApiRequestError
+          ? error.message
+          : "Verification failed. Please try again.",
+      );
+    },
   });
 
-  const canSubmit = invoiceId !== "" && Number(amount) > 0 && !record.isPending;
+  const reverse = useMutation({
+    mutationFn: reversePayment,
+    onSuccess: async () => {
+      toast.success("Payment reversed — the invoice balance has been restored.");
+      await refresh();
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof ApiRequestError ? error.message : "Could not reverse this payment.",
+      );
+    },
+  });
+
+  const cancel = useMutation({
+    mutationFn: cancelPayment,
+    onSuccess: async () => {
+      toast.success("Pending payment cancelled.");
+      await refresh();
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof ApiRequestError ? error.message : "Could not cancel this payment.",
+      );
+    },
+  });
+
+  const canSubmit =
+    invoiceId !== "" && Number(amount) > 0 && withinBalance && !record.isPending;
 
   return (
     <PermissionGate anyOf={["finance.read", "finance.write"]}>
@@ -137,6 +188,11 @@ function PaymentsPage() {
                 value={amount}
                 onChange={(event) => setAmount(event.target.value.replace(/[^0-9]/g, ""))}
               />
+              <p id="amount-hint" className="text-sm text-muted-foreground">
+                {selectedInvoice
+                  ? `Outstanding balance: ${naira(balance)} of ${naira(selectedInvoice.total)}`
+                  : "Select an invoice to see its outstanding balance."}
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="method">Method</Label>
@@ -201,6 +257,42 @@ function PaymentsPage() {
                   >
                     Verify
                   </Button>
+                ) : null}
+                {payment.status === "pending" && can("finance.write") ? (
+                  <ConfirmDialog
+                    title="Cancel this payment?"
+                    description={`${naira(payment.amount)} for ${payment.studentName} (${payment.reference}) will be cancelled and never credited to the invoice.`}
+                    confirmLabel="Cancel payment"
+                    destructive
+                    trigger={
+                      <Button
+                        variant="ghost"
+                        className="h-11 text-destructive"
+                        disabled={cancel.isPending}
+                      >
+                        Cancel
+                      </Button>
+                    }
+                    onConfirm={() => cancel.mutate(payment.id)}
+                  />
+                ) : null}
+                {payment.status === "verified" && can("finance.write") ? (
+                  <ConfirmDialog
+                    title="Reverse this payment?"
+                    description={`${naira(payment.amount)} will be removed from ${payment.studentName}'s invoice balance and the payment marked reversed.`}
+                    confirmLabel="Reverse payment"
+                    destructive
+                    trigger={
+                      <Button
+                        variant="ghost"
+                        className="h-11 text-destructive"
+                        disabled={reverse.isPending}
+                      >
+                        Reverse
+                      </Button>
+                    }
+                    onConfirm={() => reverse.mutate(payment.id)}
+                  />
                 ) : null}
               </li>
             ))}

@@ -54,6 +54,7 @@ def audit(request, action, target, detail='', severity='info'):
         detail=str(detail)[:2000],
         ip=_client_ip(request),
         severity=severity,
+        school=request.user.school,
     )
 
 

@@ -2,6 +2,23 @@
 # Push to GitHub, then deploy via "New +" > "Blueprint" in Render,
 # or run deploy via the Render Dashboard using the repo.
 services:
+# ── Edge proxy (firewall-layer rate limiting) ────────────────────────────────
+# Sits in front of the backend: auth 5r/m, payments 10r/m, standard 60r/m per
+# client IP, enforced in Nginx. Throttled requests get a 429 and never reach
+# Django. After deploying, point the app's VITE_API_URL at THIS service URL
+# (e.g. https://frontlinex-edge.onrender.com) so all /api/ traffic flows
+# through the edge.
+  - type: web
+    name: frontlinex-edge
+    runtime: docker
+    rootDir: nginx
+    plan: free
+    healthCheckPath: /admin/login/
+    envVars:
+      # Render internal hostname of the backend service (same account/region):
+      - key: UPSTREAM_URL
+        sync: false
+
   - type: web
     name: frontlinex-backend
     runtime: python

@@ -6,7 +6,6 @@ from django.utils.http import urlsafe_base64_decode
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
@@ -67,8 +66,6 @@ class SchoolRegistrationView(APIView):
     Creates a School + its first Admin and returns tokens.
     """
     permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = 'auth'
 
     def post(self, request):
         serializer = SchoolRegistrationSerializer(data=request.data)
@@ -93,8 +90,6 @@ class SchoolRegistrationView(APIView):
 class LoginView(APIView):
     """POST /auth/login/  → Session {user, school, token} + refresh cookie"""
     permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = 'auth'
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -147,8 +142,6 @@ class CookieTokenRefreshView(APIView):
     token, rotates the refresh token, and blacklists the old one.
     """
     permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = 'auth'
 
     def post(self, request):
         raw = request.COOKIES.get('refresh_token')

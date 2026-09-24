@@ -26,13 +26,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSession } from "@/auth/session";
+import { ApiRequestError } from "@/api/client";
 import { dateTimeFmt, naira, titleCase } from "@/lib/format";
 import { printHtml } from "@/lib/print";
 import {
   listInvoices,
   listPayments,
   recordPayment,
-  verifyPayment,
 } from "@/services/finance.service";
 import type { Invoice, Payment } from "@/types";
 
@@ -297,12 +297,21 @@ function PaymentDialog({
         amount: amountNumber,
         method,
       });
-      const verified = await verifyPayment(recorded.id);
-      setConfirmed(verified);
-      toast.success(`${naira(verified.amount)} paid for ${verified.studentName}.`);
+      setConfirmed(recorded);
+      if (recorded.status === "verified") {
+        toast.success(`${naira(recorded.amount)} paid for ${recorded.studentName}.`);
+      } else {
+        toast.success(
+          `${naira(recorded.amount)} submitted for ${recorded.studentName}. The school will confirm it shortly.`,
+        );
+      }
       onPaid();
-    } catch {
-      toast.error("We couldn't process that payment. Please try again.");
+    } catch (error) {
+      toast.error(
+        error instanceof ApiRequestError
+          ? error.message
+          : "We couldn't process that payment. Please try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -325,10 +334,14 @@ function PaymentDialog({
         {confirmed ? (
           <>
             <DialogHeader>
-              <DialogTitle>Payment received</DialogTitle>
+              <DialogTitle>
+                {confirmed.status === "verified" ? "Payment received" : "Payment submitted"}
+              </DialogTitle>
               <DialogDescription>
-                {confirmed.studentName} — {confirmed.reference}. A receipt is now in your payment
-                history.
+                {confirmed.studentName} — {confirmed.reference}.{" "}
+                {confirmed.status === "verified"
+                  ? "A receipt is now in your payment history."
+                  : "The school will confirm it shortly; it shows as pending until then."}
               </DialogDescription>
             </DialogHeader>
             <dl className="space-y-2 text-sm">

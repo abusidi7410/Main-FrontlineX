@@ -1,7 +1,11 @@
+import uuid
+from decimal import Decimal, InvalidOperation
+
 from django.db import transaction
 from django.shortcuts import get_object_or_404
+from django.utils.dateparse import parse_date
 from rest_framework import status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,6 +22,11 @@ from .serializers import (
 )
 
 CanWriteRecords = require_roles('school_admin', 'principal', 'secretary')
+CanWriteAttendance = require_roles('school_admin', 'principal', 'secretary', 'teacher')
+CanReadFinance = require_roles('school_admin', 'principal', 'accountant', 'student')
+CanWriteFinance = require_roles('school_admin', 'accountant')
+FINANCE_WRITE_ROLES = ('school_admin', 'accountant')
+SELF_SERVICE_METHODS = ('card', 'bank_transfer', 'online', 'ussd')
 
 
 def _paginate(queryset, request, serializer_class, context=None):
@@ -203,53 +212,251 @@ class StaffInviteView(APIView):
 # ── Finance ────────────────────────────────────────────────────────────────
 
 class InvoiceListView(APIView):
-    permission_classes = [IsAuthenticated, HasSchool]
+    permission_classes = [IsAuthenticated, HasSchool, CanReadFinance]
 
     def get(self, request):
         qs = Invoice.objects.filter(school_id=request.user.school_id)
-        search = request.query_params.get('search', '').strip()
-        if search:
-            qs = qs.filter(
-                student__first_name__icontains=search,
-            ) | qs.filter(student__last_name__icontains=search) | qs.filter(
-                student__admission_number__icontains=search,
-            )
+        if request.user.role != 'student':
+            search = request.query_params.get('search', '').strip()
+            if search:
+                qs = qs.filter(
+                    student__first_name__icontains=search,
+                ) | qs.filter(student__last_name__icontains=search) | qs.filter(
+                    student__admission_number__icontains=search,
+                )
+            student_id = request.query_params.get('studentId', '').strip()
+            if student_id:
+                qs = qs.filter(student_id=student_id)
+        else:
+            # Self-service: a student sees only their own invoices.
+            qs = qs.filter(student_id=request.user.student_profile_id)
         return Response(InvoiceSerializer(qs, many=True).data)
 
 
+class InvoiceGenerateView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteFinance]
+
+    def post(self, request):
+        class_name = (request.data.get('className') or '').strip()
+        term = (request.data.get('term') or '').strip()
+        overwrite = bool(request.data.get('overwrite'))
+        errors = {}
+        if not class_name:
+            errors['className'] = 'Select a class to invoice.'
+        if not term:
+            errors['term'] = 'A term is required (e.g. First Term).'
+        if errors:
+            raise ValidationError(errors)
+
+        school = get_object_or_404(School, id=request.user.school_id)
+        structure = school.fee_structure or []
+        items = [it for it in structure if it.get('className', '*') in ('*', class_name)]
+        if not items:
+            raise ValidationError({
+                'className': f'No fee items are set up for {class_name}. Add a fee structure first.',
+            })
+        total = Decimal(sum(Decimal(it['amount']) for it in items))
+        students = Student.objects.filter(
+            school_id=school.id, class_name=class_name, status=Student.Status.ACTIVE,
+        )
+        generated = updated = 0
+        with transaction.atomic():
+            for student in students.select_for_update():
+                invoice = Invoice.objects.filter(
+                    school_id=school.id, student_id=student.id, term=term,
+                ).first()
+                if invoice:
+                    if overwrite and total >= invoice.paid:
+                        invoice.items = items
+                        invoice.total = total
+                        invoice.save(update_fields=['items', 'total'])
+                        updated += 1
+                    continue
+                Invoice.objects.create(
+                    school_id=school.id,
+                    student_id=student.id,
+                    term=term,
+                    total=total,
+                    paid=0,
+                    items=items,
+                )
+                generated += 1
+        return Response({
+            'generated': generated,
+            'updated': updated,
+            'totalStudents': students.count(),
+            'term': term,
+        })
+
+
+class FeeStructureView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteFinance]
+
+    def _school(self, request):
+        return get_object_or_404(School, id=request.user.school_id)
+
+    def get(self, request):
+        return Response({'items': self._school(request).fee_structure or []})
+
+    def put(self, request):
+        school = self._school(request)
+        items = request.data.get('items', [])
+        if not isinstance(items, list):
+            raise ValidationError({'items': 'Fee structure must be a list of items.'})
+        normalized = []
+        for item in items:
+            label = str(item.get('label') or '').strip()
+            class_name = str(item.get('className') or '*').strip() or '*'
+            try:
+                amount = Decimal(item.get('amount'))
+            except (TypeError, ValueError, InvalidOperation):
+                raise ValidationError({'items': f'"{label}" has an invalid amount.'})
+            if not label:
+                raise ValidationError({'items': 'Every fee item needs a label.'})
+            if amount <= 0:
+                raise ValidationError({'items': f'Amount for "{label}" must be greater than zero.'})
+            normalized.append({'label': label, 'amount': float(amount), 'className': class_name})
+        school.fee_structure = normalized
+        school.save(update_fields=['fee_structure'])
+        return Response({'items': school.fee_structure})
+
+
 class PaymentListView(APIView):
-    permission_classes = [IsAuthenticated, HasSchool]
+    permission_classes = [IsAuthenticated, HasSchool, CanReadFinance]
 
     def get(self, request):
         qs = Payment.objects.filter(school_id=request.user.school_id)
+        if request.user.role == 'student':
+            qs = qs.filter(invoice__student_id=request.user.student_profile_id)
+        else:
+            invoice_id = request.query_params.get('invoiceId', '').strip()
+            student_id = request.query_params.get('studentId', '').strip()
+            if invoice_id:
+                qs = qs.filter(invoice_id=invoice_id)
+            if student_id:
+                qs = qs.filter(invoice__student_id=student_id)
         return Response(PaymentSerializer(qs, many=True).data)
 
     def post(self, request):
-        amount = request.data.get('amount')
-        invoice = get_object_or_404(Invoice, id=request.data.get('invoiceId'), school_id=request.user.school_id)
-        import uuid
-        payment = Payment.objects.create(
-            school_id=request.user.school_id,
-            invoice=invoice,
-            amount=amount,
-            method=request.data.get('method', Payment.Method.CASH),
-            status=Payment.Status.PENDING,
-            reference=request.data.get('reference') or f'FN-{uuid.uuid4().hex[:10].upper()}',
-            note=request.data.get('note', ''),
-            recorded_by=request.user if request.user.school_id else None,
+        is_finance = request.user.role in FINANCE_WRITE_ROLES
+        is_self_service = request.user.role == 'student' and request.user.student_profile_id is not None
+        if not is_finance and not is_self_service:
+            raise PermissionDenied('You do not have permission to record fee payments.')
+        method = (request.data.get('method') or Payment.Method.CASH).strip()
+        if method not in Payment.Method.values:
+            raise ValidationError({'method': 'Invalid payment method.'})
+        invoice = get_object_or_404(
+            Invoice, id=request.data.get('invoiceId'), school_id=request.user.school_id,
         )
+        if is_self_service:
+            if invoice.student_id != request.user.student_profile_id:
+                raise PermissionDenied('You can only pay your own invoices.')
+            if method not in SELF_SERVICE_METHODS:
+                raise ValidationError({
+                    'method': 'Self-service payments must use card, bank transfer, online or USSD. '
+                              'Cash and POS are recorded by the school bursar.',
+                })
+        try:
+            amount = Decimal(request.data.get('amount'))
+        except (TypeError, ValueError, InvalidOperation):
+            raise ValidationError({'amount': 'Enter a valid amount.'})
+        if amount <= 0:
+            raise ValidationError({'amount': 'Amount must be greater than zero.'})
+        reference = (request.data.get('reference') or '').strip()
+        if reference and Payment.objects.filter(reference=reference).exists():
+            raise ValidationError({'reference': 'A payment with this reference already exists.'})
+
+        verified = is_finance and method in (Payment.Method.CASH, Payment.Method.POS)
+        with transaction.atomic():
+            invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+            outstanding = invoice.total - invoice.paid
+            if amount > outstanding:
+                raise ValidationError({
+                    'amount': f'Amount exceeds the outstanding balance of {outstanding:.2f}.',
+                })
+            payment = Payment.objects.create(
+                school_id=request.user.school_id,
+                invoice_id=invoice.id,
+                amount=amount,
+                method=method,
+                status=Payment.Status.VERIFIED if verified else Payment.Status.PENDING,
+                reference=reference or f'FN-{uuid.uuid4().hex[:10].upper()}',
+                note=request.data.get('note', ''),
+                recorded_by=request.user if request.user.school_id else None,
+            )
+            if verified:
+                invoice.paid += amount
+                invoice.save(update_fields=['paid'])
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
 
 
 class PaymentVerifyView(APIView):
-    permission_classes = [IsAuthenticated, HasSchool]
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteFinance]
 
     def post(self, request, pk):
-        payment = get_object_or_404(Payment, id=pk, school_id=request.user.school_id)
-        payment.status = Payment.Status.VERIFIED
-        payment.invoice.paid += payment.amount
-        payment.invoice.save(update_fields=['paid'])
-        payment.save(update_fields=['status'])
+        with transaction.atomic():
+            payment = get_object_or_404(
+                Payment.objects.select_for_update(), id=pk, school_id=request.user.school_id,
+            )
+            if payment.status in (Payment.Status.FAILED, Payment.Status.REFUNDED,
+                                  Payment.Status.REVERSED, Payment.Status.CANCELLED):
+                return Response(
+                    {'detail': f'A {payment.status} payment cannot be verified.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if payment.status == Payment.Status.VERIFIED:
+                return Response(PaymentSerializer(payment).data)
+            invoice = Invoice.objects.select_for_update().get(pk=payment.invoice_id)
+            outstanding = invoice.total - invoice.paid
+            if payment.amount > outstanding:
+                return Response(
+                    {'detail': f'Amount exceeds the outstanding balance of {outstanding:.2f}.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            invoice.paid += payment.amount
+            invoice.save(update_fields=['paid'])
+            payment.status = Payment.Status.VERIFIED
+            payment.save(update_fields=['status'])
+        return Response(PaymentSerializer(payment).data)
+
+
+class PaymentReverseView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteFinance]
+
+    def post(self, request, pk):
+        with transaction.atomic():
+            payment = get_object_or_404(
+                Payment.objects.select_for_update(), id=pk, school_id=request.user.school_id,
+            )
+            if payment.status != Payment.Status.VERIFIED:
+                return Response(
+                    {'detail': 'Only verified payments can be reversed.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            invoice = Invoice.objects.select_for_update().get(pk=payment.invoice_id)
+            invoice.paid -= payment.amount
+            invoice.paid = max(invoice.paid, 0)
+            invoice.save(update_fields=['paid'])
+            payment.status = Payment.Status.REVERSED
+            payment.save(update_fields=['status'])
+        return Response(PaymentSerializer(payment).data)
+
+
+class PaymentCancelView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteFinance]
+
+    def post(self, request, pk):
+        with transaction.atomic():
+            payment = get_object_or_404(
+                Payment.objects.select_for_update(), id=pk, school_id=request.user.school_id,
+            )
+            if payment.status != Payment.Status.PENDING:
+                return Response(
+                    {'detail': 'Only pending payments can be cancelled.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            payment.status = Payment.Status.CANCELLED
+            payment.save(update_fields=['status'])
         return Response(PaymentSerializer(payment).data)
 
 
@@ -298,9 +505,14 @@ class AttendanceRosterView(APIView):
 
     def get(self, request):
         class_name = request.query_params.get('className', '').strip()
+        arm = request.query_params.get('arm', '').strip()
+        subject = request.query_params.get('subject', '').strip()
+        date = parse_date(request.query_params.get('date', '').strip()) if request.query_params.get('date', '').strip() else None
         qs = Student.objects.filter(school_id=request.user.school_id, status=Student.Status.ACTIVE)
         if class_name:
             qs = qs.filter(class_name=class_name)
+        if arm:
+            qs = qs.filter(arm=arm)
         data = [
             {
                 'id': str(s.id),
@@ -317,26 +529,49 @@ class AttendanceRosterView(APIView):
             }
             for s in qs
         ]
-        return Response(data)
+        taken = False
+        existing = {}
+        if class_name and date:
+            attendance_qs = AttendanceRecord.objects.filter(
+                school_id=request.user.school_id,
+                class_name=class_name,
+                date=date,
+            )
+            if subject:
+                attendance_qs = attendance_qs.filter(subject=subject)
+            taken = attendance_qs.exists()
+            existing = {str(record.student_id): record.status for record in attendance_qs}
+        return Response({'students': data, 'taken': taken, 'existing': existing})
 
 
 class AttendanceSubmitView(APIView):
-    permission_classes = [IsAuthenticated, HasSchool, CanWriteRecords]
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteAttendance]
 
     def post(self, request):
         serializer = AttendanceSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        roster = {
-            s.id: s
-            for s in Student.objects.filter(
-                school_id=request.user.school_id,
-                class_name=data['className'],
-                status=Student.Status.ACTIVE,
-            )
-        }
         created_ids = []
         with transaction.atomic():
+            School.objects.select_for_update().get(id=request.user.school_id)
+            already_taken = AttendanceRecord.objects.filter(
+                school_id=request.user.school_id,
+                class_name=data['className'],
+                date=data['date'],
+            ).exists()
+            if already_taken:
+                return Response(
+                    {'detail': f'Attendance has already been recorded for {data["className"]} on {data["date"]}.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            roster = {
+                s.id: s
+                for s in Student.objects.filter(
+                    school_id=request.user.school_id,
+                    class_name=data['className'],
+                    status=Student.Status.ACTIVE,
+                )
+            }
             for item in data['records']:
                 student_id = item.get('studentId')
                 student = roster.get(int(student_id)) if student_id else None

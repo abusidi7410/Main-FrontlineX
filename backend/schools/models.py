@@ -31,6 +31,7 @@ class School(models.Model):
     current_term = models.CharField(max_length=50, default='First Term')
     classes = models.JSONField(default=list, blank=True)
     subjects = models.JSONField(default=list, blank=True)
+    fee_structure = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -108,6 +109,13 @@ class AuditLog(models.Model):
         WARNING = 'warning', 'Warning'
         CRITICAL = 'critical', 'Critical'
 
+    school = models.ForeignKey(
+        School,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='audit_logs',
+    )
     actor = models.CharField(max_length=255)
     role = models.CharField(max_length=20, blank=True, default='')
     action = models.CharField(max_length=100)
@@ -121,6 +129,10 @@ class AuditLog(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['school']),
+            models.Index(fields=['-created_at']),
+        ]
 
     def __str__(self):
         return f'{self.action} → {self.target} by {self.actor}'

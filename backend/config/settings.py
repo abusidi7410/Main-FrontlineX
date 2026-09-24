@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from datetime import timedelta
 from urllib.parse import urlparse
@@ -46,6 +47,7 @@ INSTALLED_APPS = [
     'accounts',
     'schools',
     'records',
+    'ratelimit',
 ]
 
 # ── Middleware ─────────────────────────────────────────────────────────────────
@@ -55,6 +57,8 @@ MIDDLEWARE = [
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.middleware.gzip.GZipMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    # Global Redis rate limiter — single gateway for every /api/ request.
+    'ratelimit.middleware.RateLimitMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -186,12 +190,6 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'EXCEPTION_HANDLER': 'config.exceptions.frontline_exception_handler',
-    'DEFAULT_THROTTLE_CLASSES': [],  # per-view scoped throttle on auth endpoints only
-    'DEFAULT_THROTTLE_RATES': {
-        'anon': '30/minute',
-        'user': '60/minute',
-        'auth': '8/minute',  # login / register / token refresh
-    },
 }
 
 # ── SimpleJWT ────────────────────────────────────────────────────────────────
@@ -213,3 +211,83 @@ SIMPLE_JWT = {
 # ── Email ────────────────────────────────────────────────────────────────────
 
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+
+# ── Rate limiting (centralized Redis sliding-window counter) ────────────────
+
+# Redis connection for the rate limiter. Falls back to the main REDIS_URL so a
+# single infra dependency is enough; when neither is set the limiter runs in
+# fail-open mode (requests pass through, a warning is logged). Because it is a
+# shared Redis key namespace, ANY number of web instances enforce one global
+# budget for the same key.
+RATE_LIMIT_REDIS_URL = env('RATE_LIMIT_REDIS_URL', default=None) or env('REDIS_URL', default=None)
+
+# Master switch. Default OFF for the current architecture: rate limiting is
+# enforced at the Nginx edge layer (see /nginx), so requests are rejected before
+# they reach Django at all. Set RATE_LIMIT_ENABLED=true only when running the
+# backend without the Nginx proxy in front (e.g. local dev hitting Django
+# directly), to keep a safety net.
+RATE_LIMIT_ENABLED = env.bool('RATE_LIMIT_ENABLED', default=False)
+# The test runner must never hit the shared rate-limit budget, so drop the Redis
+# URL during tests. The limiter stays enabled but fails open (requests pass).
+if 'test' in sys.argv:
+    RATE_LIMIT_REDIS_URL = None
+
+RATE_LIMIT_ERROR_MESSAGE = 'Too many requests, please try again later'
+
+# Tier order matters: each path is matched against tiers from the top until one
+# matches, so the most specific tier must be listed first. ``standard`` is the
+# catch-all fallback for every other authenticated /api/ route.
+RATE_LIMIT_TIERS = {
+    # Tier 3 – expensive operations (verification, uploads, payments), per user.
+    'expensive': {
+        'limit': 10,
+        'window': 60,
+        'prefixes': [
+            '/api/v1/payments/',
+            '/api/v1/otp/',       # reserved OTP endpoint
+            '/api/v1/upload',     # reserved upload endpoint
+        ],
+    },
+    # Tier 1 – authentication, per IP (anti-credential-stuffing).
+    'auth': {
+        'limit': 5,
+        'window': 60,
+        'prefixes': [
+            '/api/v1/auth/login',
+            '/api/v1/auth/school/register',
+        ],
+    },
+    # Tier 2 – every other authenticated /api/ route, per user id.
+    'standard': {
+        'limit': 60,
+        'window': 60,
+        'prefixes': ['/api/'],
+    },
+}
+
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard',
+        },
+    },
+    'loggers': {
+        'frontline.ratelimit': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}

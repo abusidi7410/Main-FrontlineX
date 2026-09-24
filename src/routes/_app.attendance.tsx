@@ -15,9 +15,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ApiRequestError } from "@/api/client";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { queueAttendance } from "@/offline/store";
-import { CLASS_OPTIONS, getRoster, submitAttendance } from "@/services/attendance.service";
+import { getRoster, submitAttendance } from "@/services/attendance.service";
+import { getAcademicStructure } from "@/services/academics.service";
+import { ARMS, CLASSES } from "@/constants/reference";
 import { cn } from "@/lib/utils";
 import type { AttendanceStatus } from "@/types";
 
@@ -62,23 +65,37 @@ const STATUSES: { value: AttendanceStatus; label: string; className: string }[] 
 
 function AttendancePage() {
   const online = useOnlineStatus();
-  const [className, setClassName] = useState(CLASS_OPTIONS[0] ?? "");
+  const academics = useQuery({ queryKey: ["academics"], queryFn: () => getAcademicStructure() });
+  const classes = academics.data?.classes ?? CLASSES;
+
+  const [className, setClassName] = useState(classes[0] ?? "");
+  const [arm, setArm] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [subject, setSubject] = useState("");
   const [marks, setMarks] = useState<Record<string, AttendanceStatus>>({});
 
-  const roster = useQuery({ queryKey: ["roster", className], queryFn: () => getRoster(className) });
+  const roster = useQuery({
+    queryKey: ["roster", className, arm, date, subject],
+    queryFn: () => getRoster({ className, arm, date, subject }),
+    enabled: className !== "" && date !== "",
+  });
 
   useEffect(() => {
     if (!roster.data) return;
-    setMarks(Object.fromEntries(roster.data.map((s) => [s.id, "present" as AttendanceStatus])));
+    if (roster.data.taken) {
+      setMarks(roster.data.existing);
+    } else {
+      setMarks(Object.fromEntries(roster.data.students.map((s) => [s.id, "present" as AttendanceStatus])));
+    }
   }, [roster.data]);
 
   const save = useMutation({
     mutationFn: async () => {
       const submission = {
-        id: `att_${className}_${date}`,
+        id: `att_${className}_${arm || "all"}_${date}`,
         className,
         date,
+        ...(subject ? { subject } : {}),
         records: Object.entries(marks).map(([studentId, status]) => ({ studentId, status })),
         syncState: "pending" as const,
         updatedAt: Date.now(),
@@ -90,17 +107,27 @@ function AttendancePage() {
       try {
         await submitAttendance(submission);
         return { queued: false };
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 409) {
+          throw error;
+        }
         await queueAttendance(submission);
         return { queued: true };
+      }
+    },
+    onError: (error) => {
+      if (error instanceof ApiRequestError && error.status === 409) {
+        toast.error(error.message || "Attendance for this class has already been recorded.");
+        void roster.refetch();
       }
     },
     onSuccess: (result) => {
       if (result.queued) {
         toast.success("Saved on this device. It will sync automatically when you're back online.");
       } else {
-        toast.success(`Attendance submitted for ${className}.`);
+        toast.success(`Attendance submitted for ${className}${arm ? ` ${arm}` : ""}.`);
       }
+      void roster.refetch();
     },
   });
 
@@ -108,6 +135,8 @@ function AttendancePage() {
     ...s,
     count: Object.values(marks).filter((value) => value === s.value).length,
   }));
+
+  const lockable = roster.data?.taken ?? false;
 
   return (
     <PermissionGate permission="attendance.write">
@@ -119,15 +148,43 @@ function AttendancePage() {
 
         {!online ? <OfflineNotice /> : null}
 
-        <div className="fn-panel grid gap-4 p-4 sm:grid-cols-2">
+        <div className="fn-panel grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1.5">
             <Label htmlFor="class">Class</Label>
-            <Select value={className} onValueChange={setClassName}>
+            <Select
+              value={className}
+              onValueChange={(value) => {
+                setClassName(value);
+                setMarks({});
+              }}
+            >
               <SelectTrigger id="class" className="h-12">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {CLASS_OPTIONS.map((option) => (
+                {classes.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="arm">Arm</Label>
+            <Select
+              value={arm}
+              onValueChange={(value) => {
+                setArm(value);
+                setMarks({});
+              }}
+            >
+              <SelectTrigger id="arm" className="h-12">
+                <SelectValue placeholder="All arms" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All arms</SelectItem>
+                {ARMS.map((option) => (
                   <SelectItem key={option} value={option}>
                     {option}
                   </SelectItem>
@@ -145,7 +202,25 @@ function AttendancePage() {
               onChange={(event) => setDate(event.target.value)}
             />
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="subject">Subject (optional)</Label>
+            <Input
+              id="subject"
+              className="h-12"
+              placeholder="e.g. Mathematics"
+              value={subject}
+              onChange={(event) => setSubject(event.target.value)}
+            />
+          </div>
         </div>
+
+        {lockable ? (
+          <div role="status" className="rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm">
+            Attendance for {className}
+            {arm ? ` ${arm}` : ""} on {date} has already been recorded and is shown below. It can
+            only be taken once per class and date.
+          </div>
+        ) : null}
 
         <div className="flex flex-wrap gap-3" aria-live="polite">
           {counts.map((item) => (
@@ -169,9 +244,14 @@ function AttendancePage() {
           <ErrorState onRetry={() => void roster.refetch()} />
         ) : roster.isPending ? (
           <ListSkeleton rows={8} />
+        ) : roster.data.students.length === 0 ? (
+          <div className="fn-panel p-6 text-center text-muted-foreground">
+            No active students found in {className}
+            {arm ? ` ${arm}` : ""}. Add students to this class first.
+          </div>
         ) : (
           <ul className="fn-panel divide-y">
-            {roster.data.map((student) => (
+            {roster.data.students.map((student) => (
               <li key={student.id} className="flex flex-wrap items-center gap-3 p-4">
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">
@@ -193,11 +273,13 @@ function AttendancePage() {
                         data-on={on}
                         aria-pressed={on}
                         aria-label={status.value}
+                        disabled={lockable}
                         onClick={() =>
                           setMarks((prev) => ({ ...prev, [student.id]: status.value }))
                         }
                         className={cn(
-                          "size-12 rounded-xl border font-semibold transition-colors hover:bg-muted",
+                          "size-12 rounded-xl border font-semibold transition-colors",
+                          lockable ? "cursor-default opacity-70" : "hover:bg-muted",
                           status.className,
                         )}
                       >
@@ -214,10 +296,14 @@ function AttendancePage() {
         <div className="sticky bottom-20 lg:bottom-6">
           <Button
             className="h-12 w-full text-base"
-            disabled={save.isPending}
+            disabled={save.isPending || lockable}
             onClick={() => save.mutate()}
           >
-            {save.isPending ? "Saving…" : "Submit attendance"}
+            {save.isPending
+              ? "Saving…"
+              : lockable
+                ? "Attendance already recorded"
+                : "Submit attendance"}
           </Button>
         </div>
       </div>

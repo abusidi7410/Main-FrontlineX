@@ -1,0 +1,33 @@
+# Frontline Nexus — edge + backend stack.
+#
+# Runs the Django backend behind an Nginx edge proxy that applies rate limits
+# (auth 5r/m, payments 10r/m, standard 60r/m per client IP) at the firewall
+# layer, so throttled requests never reach the Python process.
+#
+# Usage (VPS, Railway container, docker compose):
+#   docker compose -f docker-compose.edge.yml up --build
+# The backend port is only exposed internally to the edge; ALL public traffic
+# must come in through the nginx service on :80.
+services:
+  backend:
+    build:
+      context: ./backend
+    env_file: ./backend/.env
+    restart: unless-stopped
+    # No host ports: only reachable from inside this compose network.
+    expose:
+      - 8000
+    command: >
+      sh -c "python manage.py collectstatic --noinput &&
+             python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120"
+
+  nginx:
+    build: ./nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      - UPSTREAM_URL=backend:8000
+    depends_on:
+      - backend

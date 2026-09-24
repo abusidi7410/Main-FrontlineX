@@ -1,13 +1,31 @@
 import { apiFetch } from "@/api/client";
-import { ARMS, CLASSES } from "@/constants/reference";
-import type { AttendanceSubmission, Student } from "@/types";
+import type { AttendanceStatus, AttendanceSubmission, Student } from "@/types";
 
-export async function getRoster(className: string): Promise<Student[]> {
-  return apiFetch("/attendance/roster", { query: { className } });
+export type RosterParams = {
+  className: string;
+  arm?: string;
+  date?: string;
+  subject?: string;
+};
+
+export interface RosterResponse {
+  students: Student[];
+  taken: boolean;
+  existing: Record<string, AttendanceStatus>;
+}
+
+export async function getRoster(params: RosterParams): Promise<RosterResponse> {
+  return apiFetch("/attendance/roster", { query: params });
 }
 
 export async function submitAttendance(submission: AttendanceSubmission): Promise<{ id: string }> {
-  return apiFetch("/attendance", { method: "POST", body: submission });
+  return apiFetch("/attendance", {
+    method: "POST",
+    body: {
+      className: submission.className,
+      date: submission.date,
+      subject: submission.subject ?? "",
+      records: submission.records,
+    },
+  });
 }
-
-export const CLASS_OPTIONS = CLASSES.flatMap((c) => ARMS.map((a) => `${c}${a}`));

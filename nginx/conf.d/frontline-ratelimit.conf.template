@@ -1,0 +1,102 @@
+# Frontline Nexus — edge rate limiting (firewall layer).
+#
+# Runs in Nginx IN FRONT of Django, so every request is checked here and a
+# 429 is returned WITHOUT the traffic ever reaching the backend Python
+# process. Thresholds mirror the previous in-app tiers:
+#
+#   auth      → 5 req/min  (login + school register, per client IP)
+#   expensive → 10 req/min (payments, OTP, uploads, per client IP)
+#   standard  → 60 req/min (any other /api/ route, per client IP)
+#
+# Deployment:
+#   * Copy this file to /etc/nginx/templates/ on the official nginx image —
+#     it is envsubst'd into conf.d automatically (only defined env vars are
+#     substituted, so all nginx $variables below are preserved).
+#   * Set the environment variable UPSTREAM_URL to the Django service,
+#     e.g. UPSTREAM_URL=frontlinex-backend:8000 (no protocol).
+#
+# Keys are per client IP ($binary_remote_addr). Nginx reads the client IP from
+# the socket; make sure X-Forwarded-For / real_ip come from a trusted proxy so
+# clients can't rotate through fake IPs to bypass the limit.
+
+limit_req_zone $binary_remote_addr zone=fn_auth:32m rate=5r/m;
+limit_req_zone $binary_remote_addr zone=fn_expensive:32m rate=10r/m;
+limit_req_zone $binary_remote_addr zone=fn_standard:64m rate=60r/m;
+
+limit_req_status 429;
+limit_req_log_level warn;
+
+upstream backend {
+    server ${UPSTREAM_URL};
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    # ── Tier "auth" — brute-force protection on credential endpoints.
+    location = /api/v1/auth/login {
+        limit_req zone=fn_auth burst=5 nodelay;
+        error_page 429 @rate_limited_auth;
+        proxy_pass http://backend;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+    }
+
+    location = /api/v1/auth/school/register {
+        limit_req zone=fn_auth burst=5 nodelay;
+        error_page 429 @rate_limited_auth;
+        proxy_pass http://backend;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+    }
+
+    # ── Tier "expensive" — money movement and uploads.
+    location ~ ^/api/v1/(payments|otp|upload) {
+        limit_req zone=fn_expensive burst=10 nodelay;
+        error_page 429 @rate_limited_expensive;
+        proxy_pass http://backend;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+    }
+
+    # ── Tier "standard" — everything else under /api/.
+    location /api/ {
+        limit_req zone=fn_standard burst=20 nodelay;
+        error_page 429 @rate_limited_standard;
+        proxy_pass http://backend;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+    }
+
+    # ── Everything that is not API (health checks, admin) passes through.
+    location / {
+        proxy_pass http://backend;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+    }
+
+    # ── Standardised 429 responses (no retry gives seconds until the window).
+    location @rate_limited_auth {
+        default_type application/json;
+        add_header Retry-After 60 always;
+        return 429 '{"error":"Too many requests, please try again later"}';
+    }
+
+    location @rate_limited_expensive {
+        default_type application/json;
+        add_header Retry-After 60 always;
+        return 429 '{"error":"Too many requests, please try again later"}';
+    }
+
+    location @rate_limited_standard {
+        default_type application/json;
+        add_header Retry-After 60 always;
+        return 429 '{"error":"Too many requests, please try again later"}';
+    }
+}

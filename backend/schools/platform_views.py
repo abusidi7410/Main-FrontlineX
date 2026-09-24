@@ -181,6 +181,7 @@ class PlatformSchoolListView(APIView):
             detail='School registered by platform manager. Default admin account provisioned.',
             ip=_client_ip(request),
             severity='info',
+            school=school,
         )
         AuditLog.objects.create(
             actor=f'{request.user.get_full_name()} ({request.user.email})' if request.user.get_full_name() else request.user.email,
@@ -190,6 +191,7 @@ class PlatformSchoolListView(APIView):
             detail='Default admin credentials generated; must be changed after first login.',
             ip=_client_ip(request),
             severity='info',
+            school=school,
         )
         data = _platform_school_detail(school)
         data['defaultCredentials'] = {
@@ -235,6 +237,7 @@ class PlatformSchoolStatusView(APIView):
             detail=f'{current} → {next_status}',
             ip=_client_ip(request),
             severity='critical' if next_status == 'suspended' else 'info',
+            school=school,
         )
 
         return Response(_platform_school_data(school))
@@ -294,6 +297,7 @@ class PlatformSchoolDetailView(APIView):
             detail=', '.join(updated) or 'details updated',
             ip=_client_ip(request),
             severity='info',
+            school=school,
         )
         return Response(_platform_school_detail(school))
 
@@ -325,6 +329,7 @@ class PlatformSchoolDetailView(APIView):
             detail='School and all associated records permanently deleted.',
             ip=_client_ip(request),
             severity='critical',
+            school=school,
         )
 
         school.delete()
@@ -367,6 +372,7 @@ class PlatformSupportTicketListView(APIView):
             detail=subject,
             ip=_client_ip(request),
             severity='info',
+            school=school,
         )
         return Response(_ticket_json(ticket), status=status.HTTP_201_CREATED)
 
@@ -392,6 +398,7 @@ class PlatformSupportTicketStatusView(APIView):
             detail=f'{previous} → {ticket.status}',
             ip=_client_ip(request),
             severity='info',
+            school=ticket.school,
         )
         return Response(_ticket_json(ticket))
 
