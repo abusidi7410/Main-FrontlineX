@@ -108,7 +108,7 @@ export function TeacherDashboard() {
                 </div>
                 <Link
                   to="/attendance"
-                  className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-5 font-medium text-primary-foreground shadow-[0_6px_14px_-6px_oklch(0.31_0.02_250/0.55),inset_0_1px_0_oklch(1_0_0/0.1)] transition-all duration-200 hover:-translate-y-px hover:bg-[#273850]"
+                  className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-5 font-medium text-primary-foreground shadow-[0_6px_14px_-6px_oklch(0.31_0.02_250/0.55),inset_0_1px_0_oklch(1_0_0/0.1)] transition-all duration-200 hover:-translate-y-px hover:bg-primary/90"
                 >
                   Take attendance
                 </Link>

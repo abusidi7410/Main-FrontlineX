@@ -15,6 +15,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { NavIcon } from "@/components/common/icon";
 import { BrandLockup, BrandMark } from "@/components/layout/brand";
 import { GlobalSearch } from "@/components/layout/global-search";
+import { ThemeToggle } from "@/components/common/theme-toggle";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { useAuthenticatedSession } from "@/auth/session";
 import { ROLE_LABELS } from "@/permissions";
@@ -74,7 +75,7 @@ function NavLinks({
                       "group relative flex min-h-[2.5rem] items-center rounded-[14px] text-[13px] font-medium transition-all duration-200",
                       collapsed ? "justify-center px-0" : "gap-2.5 px-3",
                       active
-                        ? "bg-card text-foreground shadow-[6px_6px_14px_oklch(0.31_0.02_250/0.07),-6px_-6px_14px_oklch(1_0_0/0.8),inset_0_1px_0_oklch(1_0_0/0.7)]"
+                        ? "bg-card text-foreground shadow-[6px_6px_14px_oklch(0.31_0.02_250/0.07),-6px_-6px_14px_oklch(1_0_0/0.8),inset_0_1px_0_oklch(1_0_0/0.7)] dark:bg-foreground/10 dark:shadow-none"
                         : "text-sidebar-foreground/75 hover:bg-accent/50 hover:text-foreground",
                     )}
                   >
@@ -129,7 +130,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <aside
         className={cn(
-          "fixed inset-y-3 left-3 z-30 hidden flex-col rounded-[24px] bg-card shadow-[var(--shadow-card),inset_0_1px_0_oklch(1_0_0/0.7)] lg:flex",
+          "fixed inset-y-3 left-3 z-30 hidden flex-col rounded-[24px] border border-border/70 bg-card/90 shadow-[var(--shadow-card),inset_0_1px_0_oklch(1_0_0/0.7)] backdrop-blur-md dark:bg-card/95 lg:flex",
           sidebarW,
         )}
       >
@@ -206,6 +207,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </span>
             ) : null}
             <GlobalSearch />
+            <ThemeToggle />
             <Button
               variant="ghost"
               size="icon"
