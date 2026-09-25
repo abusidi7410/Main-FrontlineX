@@ -13,37 +13,46 @@ export interface StaffInput {
 }
 
 export async function listStaff(): Promise<StaffMember[]> {
+  // SECURITY: Backend must verify permission staff.read and schoolId match.
   return apiFetch("/staff");
 }
 
 export async function getStaffMember(id: string): Promise<StaffMember> {
+  // SECURITY: Backend must verify permission staff.read and schoolId match.
   return apiFetch(`/staff/${id}`);
 }
 
 export async function createStaff(input: StaffInput): Promise<StaffMember> {
+  // SECURITY: Backend must verify permission staff.write and schoolId match.
   return apiFetch("/staff", { method: "POST", body: input });
 }
 
 export async function updateStaff(id: string, input: StaffInput): Promise<StaffMember> {
+  // SECURITY: Backend must verify permission staff.write and schoolId match.
   return apiFetch(`/staff/${id}`, { method: "PATCH", body: input });
 }
 
 export async function suspendStaff(id: string): Promise<StaffMember> {
+  // SECURITY: Backend must verify permission staff.write and schoolId match.
   return apiFetch(`/staff/${id}`, { method: "PATCH", body: { status: "suspended" } });
 }
 
 export async function reinstateStaff(id: string): Promise<StaffMember> {
+  // SECURITY: Backend must verify permission staff.write and schoolId match.
   return apiFetch(`/staff/${id}`, { method: "PATCH", body: { status: "active" } });
 }
 
 export async function inviteStaff(id: string): Promise<StaffMember> {
+  // SECURITY: Backend must verify permission staff.write and schoolId match.
   return apiFetch(`/staff/${id}/invite`, { method: "POST" });
 }
 
 export async function setStaffClasses(id: string, classes: string[]): Promise<StaffMember> {
+  // SECURITY: Backend must verify permission staff.write and schoolId match.
   return apiFetch(`/staff/${id}`, { method: "PATCH", body: { classes } });
 }
 
 export async function deleteStaff(id: string): Promise<void> {
+  // SECURITY: Backend must verify permission staff.write and schoolId match.
   return apiFetch(`/staff/${id}`, { method: "DELETE" });
 }

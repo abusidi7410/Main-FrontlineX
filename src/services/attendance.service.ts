@@ -15,10 +15,12 @@ export interface RosterResponse {
 }
 
 export async function getRoster(params: RosterParams): Promise<RosterResponse> {
+  // SECURITY: Backend must verify permission attendance.read and schoolId match.
   return apiFetch("/attendance/roster", { query: params });
 }
 
 export async function submitAttendance(submission: AttendanceSubmission): Promise<{ id: string }> {
+  // SECURITY: Backend must verify permission attendance.write and schoolId match.
   return apiFetch("/attendance", {
     method: "POST",
     body: {

@@ -1,6 +1,9 @@
 import secrets
+from datetime import datetime, timedelta
 
-from django.db import IntegrityError
+from django.core.cache import cache
+from django.db import IntegrityError, connection
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -84,6 +87,263 @@ def _platform_school_detail(school):
         'mrr': float(plan.monthly_price) if plan else 0,
         'tierId': plan.name if plan else 't100',
     }
+
+
+_OVERVIEW_RANGES = {'7d': 7, '30d': 30, '90d': 90}
+_OVERVIEW_CACHE_TTL = 5 * 60
+
+
+def _overview_range_days(request):
+    requested = str(request.query_params.get('range', '30d')).lower()
+    return _OVERVIEW_RANGES.get(requested, _OVERVIEW_RANGES['30d'])
+
+
+def _overview_month_buckets(now):
+    local_now = timezone.localtime(now)
+    current_index = local_now.year * 12 + local_now.month - 1
+    buckets = []
+    for offset in range(5, -1, -1):
+        index = current_index - offset
+        year, month_zero_based = divmod(index, 12)
+        month = month_zero_based + 1
+        start = datetime(year, month, 1, tzinfo=local_now.tzinfo)
+        next_index = index + 1
+        next_year, next_month_zero_based = divmod(next_index, 12)
+        end = datetime(
+            next_year,
+            next_month_zero_based + 1,
+            1,
+            tzinfo=local_now.tzinfo,
+        )
+        buckets.append((start, end))
+    return buckets
+
+
+def _overview_datetime(value):
+    if value is None:
+        return None
+    if timezone.is_naive(value):
+        value = timezone.make_aware(value, timezone.get_current_timezone())
+    return value
+
+
+def _overview_rows(now, range_days, auth_school_id):
+    month_buckets = _overview_month_buckets(now)
+    login_cutoff = now - timedelta(hours=24)
+    payment_cutoff = now - timedelta(days=range_days)
+    login_columns = [
+        'MAX(u.last_login) AS last_active',
+        'COUNT(DISTINCT CASE WHEN u.is_active = TRUE AND u.last_login >= %s THEN u.id END) AS active_logins_24h',
+    ]
+    login_params = [login_cutoff]
+    for index, (start, end) in enumerate(month_buckets):
+        login_columns.append(
+            'COUNT(DISTINCT CASE WHEN u.is_active = TRUE AND u.last_login >= %s '
+            'AND u.last_login < %s THEN u.id END) AS active_school_{}'.format(index)
+        )
+        login_params.extend([start, end])
+
+    payment_columns = [
+        "COUNT(DISTINCT CASE WHEN p.status = 'failed' AND p.created_at >= %s THEN p.id END) AS failed_payments",
+    ]
+    payment_params = [payment_cutoff]
+    for index, (start, end) in enumerate(month_buckets):
+        payment_columns.append(
+            "COALESCE(SUM(CASE WHEN p.status = 'verified' AND p.created_at >= %s "
+            "AND p.created_at < %s THEN p.amount ELSE 0 END), 0) AS revenue_{}".format(index)
+        )
+        payment_params.extend([start, end])
+
+    active_school_columns = ', '.join(
+        'COALESCE(lr.active_school_{}, 0) AS active_school_{}'.format(index, index)
+        for index in range(len(month_buckets))
+    )
+    revenue_columns = ', '.join(
+        'COALESCE(pr.revenue_{}, 0) AS revenue_{}'.format(index, index)
+        for index in range(len(month_buckets))
+    )
+    active_school_output_columns = ', '.join(
+        'active_school_{}'.format(index) for index in range(len(month_buckets))
+    )
+    revenue_output_columns = ', '.join(
+        'revenue_{}'.format(index) for index in range(len(month_buckets))
+    )
+    scope_clause = ''
+    scope_params = []
+    if auth_school_id is not None:
+        scope_clause = 'WHERE s.id = %s'
+        scope_params.append(auth_school_id)
+
+    sql = """
+WITH student_counts AS (
+    SELECT school_id, COUNT(*) AS students
+    FROM records_student
+    WHERE status = 'active'
+    GROUP BY school_id
+),
+login_rollup AS (
+    SELECT school_id, {login_columns}
+    FROM accounts_user u
+    WHERE u.school_id IS NOT NULL
+    GROUP BY school_id
+),
+payment_rollup AS (
+    SELECT school_id, {payment_columns}
+    FROM records_payment p
+    GROUP BY school_id
+),
+school_rollup AS (
+    SELECT
+        s.id AS school_id,
+        s.name,
+        s.state,
+        s.is_active,
+        ss.status AS subscription_status,
+        ss.expires_at AS renewal_date,
+        COALESCE(plan.name, 't100') AS plan,
+        CASE
+            WHEN s.is_active = TRUE THEN 'active'
+            WHEN ss.status = 'suspended' THEN 'suspended'
+            WHEN ss.status = 'grace' THEN 'grace'
+            WHEN ss.status IN ('pending', 'expired') THEN 'pending_payment'
+            ELSE 'trial'
+        END AS status,
+        CASE
+            WHEN s.is_active = TRUE AND ss.status = 'active' THEN COALESCE(plan.monthly_price, 0)
+            ELSE 0
+        END AS mrr,
+        COALESCE(sc.students, 0) AS students,
+        lr.last_active,
+        COALESCE(lr.active_logins_24h, 0) AS active_logins_24h,
+        COALESCE(pr.failed_payments, 0) AS failed_payments,
+        {active_school_columns},
+        {revenue_columns}
+    FROM schools_school s
+    LEFT JOIN schools_schoolsubscription ss ON ss.school_id = s.id
+    LEFT JOIN schools_subscriptionplan plan ON plan.id = ss.plan_id
+    LEFT JOIN student_counts sc ON sc.school_id = s.id
+    LEFT JOIN login_rollup lr ON lr.school_id = s.id
+    LEFT JOIN payment_rollup pr ON pr.school_id = s.id
+    {scope_clause}
+)
+SELECT
+    school_id,
+    name,
+    state,
+    plan,
+    students,
+    mrr,
+    status,
+    last_active,
+    renewal_date,
+    failed_payments,
+    active_logins_24h,
+    {active_school_output_columns},
+    {revenue_output_columns}
+FROM school_rollup
+ORDER BY
+    CASE status
+        WHEN 'suspended' THEN 0
+        WHEN 'pending_payment' THEN 1
+        WHEN 'grace' THEN 2
+        WHEN 'trial' THEN 3
+        ELSE 4
+    END,
+    name
+""".format(
+        login_columns=', '.join(login_columns),
+        payment_columns=', '.join(payment_columns),
+        active_school_columns=active_school_columns,
+        revenue_columns=revenue_columns,
+        active_school_output_columns=active_school_output_columns,
+        revenue_output_columns=revenue_output_columns,
+        scope_clause=scope_clause,
+    )
+    params = login_params + payment_params + scope_params
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        columns = [column[0] for column in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def _overview_payload(rows, range_days):
+    status_counts = {value: 0 for value in PLATFORM_STATUSES}
+    mrr = 0.0
+    active_logins = 0
+    failed_payments = 0
+    at_risk = []
+    month_count = 6
+    active_school_totals = [0] * month_count
+    revenue_trend = [0.0] * month_count
+    now = timezone.now()
+    renewal_cutoff = now + timedelta(days=range_days)
+
+    for row in rows:
+        status = row['status']
+        if status in status_counts:
+            status_counts[status] += 1
+        mrr += float(row['mrr'] or 0)
+        active_logins += int(row['active_logins_24h'] or 0)
+        failed_payments += int(row['failed_payments'] or 0)
+        for index in range(month_count):
+            if int(row[f'active_school_{index}'] or 0) > 0:
+                active_school_totals[index] += 1
+            revenue_trend[index] += float(row[f'revenue_{index}'] or 0)
+        if status in {'grace', 'suspended', 'pending_payment'}:
+            renewal_date = _overview_datetime(row['renewal_date'])
+            last_active = _overview_datetime(row['last_active'])
+            at_risk.append({
+                'id': str(row['school_id']),
+                'name': row['name'],
+                'state': row['state'],
+                'plan': row['plan'],
+                'students': int(row['students'] or 0),
+                'lastActive': last_active.isoformat() if last_active else None,
+                'renewalDate': renewal_date.isoformat() if renewal_date else None,
+                'status': status,
+                'mrr': float(row['mrr'] or 0),
+                'failedPayments': int(row['failed_payments'] or 0),
+            })
+
+    return {
+        'mrr': round(mrr, 2),
+        'mrrTrend': [round(value, 2) for value in revenue_trend],
+        'schoolsByStatus': status_counts,
+        'activeSchools': status_counts['active'],
+        'activeSchoolsTrend': active_school_totals,
+        'activeSchoolsGrowth': (
+            active_school_totals[-1] - active_school_totals[-2]
+            if len(active_school_totals) > 1
+            else 0
+        ),
+        'activeLogins24h': active_logins,
+        'failedPayments': failed_payments,
+        'upcomingRenewals': sum(
+            1
+            for row in rows
+            if _overview_datetime(row['renewal_date']) is not None
+            and now <= _overview_datetime(row['renewal_date']) <= renewal_cutoff
+        ),
+        'atRiskSchools': at_risk,
+        'rangeDays': range_days,
+    }
+
+
+class PlatformOverviewView(APIView):
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def get(self, request):
+        range_days = _overview_range_days(request)
+        auth_school_id = request.user.school_id
+        cache_key = f"platform:overview:{range_days}:{auth_school_id or 'all'}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
+
+        rows = _overview_rows(timezone.now(), range_days, auth_school_id)
+        payload = _overview_payload(rows, range_days)
+        cache.set(cache_key, payload, _OVERVIEW_CACHE_TTL)
+        return Response(payload)
 
 
 class PlatformSchoolListView(APIView):

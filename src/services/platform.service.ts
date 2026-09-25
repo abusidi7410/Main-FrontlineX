@@ -1,7 +1,14 @@
 import { apiFetch } from "@/api/client";
-import type { PlatformSchool } from "@/types";
+import type { PlatformOverview, PlatformOverviewRange, PlatformSchool } from "@/types";
+
+export async function getPlatformOverview(
+  range: PlatformOverviewRange = "30d",
+): Promise<PlatformOverview> {
+  return apiFetch("/platform/overview", { query: { range } });
+}
 
 export async function listPlatformSchools(search = "", status = ""): Promise<PlatformSchool[]> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch("/platform/schools", { query: { search, status } });
 }
 
@@ -9,6 +16,7 @@ export async function setSchoolStatus(
   id: string,
   status: PlatformSchool["status"],
 ): Promise<PlatformSchool> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch(`/platform/schools/${id}/status`, { method: "PATCH", body: { status } });
 }
 
@@ -60,10 +68,12 @@ export interface RegisterSchoolResponse extends PlatformSchoolDetail {
 export async function createPlatformSchool(
   input: CreatePlatformSchoolInput,
 ): Promise<RegisterSchoolResponse> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required when creating a new tenant.
   return apiFetch("/platform/schools", { method: "POST", body: input });
 }
 
 export async function getPlatformSchool(id: string): Promise<PlatformSchoolDetail> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch(`/platform/schools/${id}`);
 }
 
@@ -71,6 +81,7 @@ export async function updatePlatformSchool(
   id: string,
   input: UpdatePlatformSchoolInput,
 ): Promise<PlatformSchoolDetail> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch(`/platform/schools/${id}`, { method: "PATCH", body: input });
 }
 
@@ -84,6 +95,7 @@ export async function deletePlatformSchool(
   id: string,
   confirm: string,
 ): Promise<DeleteSchoolResult> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch(`/platform/schools/${id}`, { method: "DELETE", body: { confirm } });
 }
 
@@ -97,6 +109,7 @@ export interface PlatformTicket {
 }
 
 export async function listSupportTickets(): Promise<PlatformTicket[]> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch("/platform/support/tickets");
 }
 
@@ -106,6 +119,7 @@ export async function createSupportTicket(input: {
   subject: string;
   message?: string;
 }): Promise<PlatformTicket> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch("/platform/support/tickets", { method: "POST", body: input });
 }
 
@@ -113,6 +127,7 @@ export async function setSupportTicketStatus(
   id: string,
   status: PlatformTicket["status"],
 ): Promise<PlatformTicket> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch(`/platform/support/tickets/${id}/status`, { method: "POST", body: { status } });
 }
 
@@ -126,10 +141,12 @@ export interface PlatformBroadcast {
 }
 
 export async function listBroadcasts(): Promise<PlatformBroadcast[]> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch("/platform/support/announcements");
 }
 
 export async function createBroadcast(title: string, body: string): Promise<PlatformBroadcast> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
   return apiFetch("/platform/support/announcements", { method: "POST", body: { title, body } });
 }
 
@@ -144,5 +161,6 @@ export interface AuditEvent {
 }
 
 export async function listAuditEvents(): Promise<AuditEvent[]> {
+  // SECURITY: Backend must verify permission audit.read and the platform-manager role; schoolId match is intentionally not required for this global audit scope.
   return apiFetch("/platform/audit");
 }

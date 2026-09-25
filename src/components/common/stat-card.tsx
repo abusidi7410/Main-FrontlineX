@@ -10,7 +10,7 @@ export function StatCard({
 }: {
   label: string;
   value: ReactNode;
-  hint?: string | undefined;
+  hint?: ReactNode | undefined;
   tone?: "default" | "success" | "warning" | "danger" | undefined;
   icon?: ReactNode | undefined;
 }) {

@@ -55,5 +55,6 @@ function remarkFor(average: number, attendanceRate: number): string {
 
 /** Builds a termly report card from the student's published result sheets. Sipping unavailable subjects. */
 export async function getReportCard(studentId: string): Promise<ReportCard | null> {
+  // SECURITY: Backend must verify permission reports.read and schoolId match, or allow only published own or linked-child reports.
   return apiFetch<ReportCard>(`/reports/report-cards/${studentId}`);
 }

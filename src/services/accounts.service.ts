@@ -10,10 +10,12 @@ export interface AccountQuery {
 }
 
 export async function listAccounts(query: AccountQuery = {}): Promise<Paginated<SchoolAccount>> {
+  // SECURITY: Backend must verify permission accounts.read and schoolId match.
   return apiFetch("/accounts/users", { query: { ...query } });
 }
 
 export async function getAccountStats(): Promise<AccountStats> {
+  // SECURITY: Backend must verify permission accounts.read and schoolId match.
   return apiFetch("/accounts/users/stats");
 }
 
@@ -22,6 +24,7 @@ export interface CreatedAccount extends SchoolAccount {
 }
 
 export async function createAccount(input: AccountCreateInput): Promise<CreatedAccount> {
+  // SECURITY: Backend must verify permission accounts.write and schoolId match.
   return apiFetch("/accounts/users", { method: "POST", body: input });
 }
 
@@ -29,16 +32,19 @@ export async function updateAccount(
   id: string,
   input: Partial<Pick<AccountCreateInput, "fullName" | "phone" | "role">>,
 ): Promise<SchoolAccount> {
+  // SECURITY: Backend must verify permission accounts.write and schoolId match.
   return apiFetch(`/accounts/users/${id}`, { method: "PATCH", body: input });
 }
 
 export async function deleteAccount(id: string): Promise<void> {
+  // SECURITY: Backend must verify permission accounts.write and schoolId match.
   return apiFetch(`/accounts/users/${id}`, { method: "DELETE" });
 }
 
 export async function resetAccountPassword(
   id: string,
 ): Promise<{ defaultCredentials: DefaultCredentials }> {
+  // SECURITY: Backend must verify permission accounts.write and schoolId match.
   return apiFetch(`/accounts/users/${id}/reset-password`, { method: "POST" });
 }
 
@@ -47,5 +53,6 @@ export async function setAccountStatus(
   status: "active" | "inactive",
 ): Promise<SchoolAccount> {
   const action = status === "active" ? "activate" : "deactivate";
+  // SECURITY: Backend must verify permission accounts.write and schoolId match.
   return apiFetch(`/accounts/users/${id}/${action}`, { method: "POST" });
 }

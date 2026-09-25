@@ -107,6 +107,7 @@ def _default_tiers():
                 '/api/v1/payments/',   # payment verification + record payments
                 '/api/v1/otp/',        # OTP dispatch (reserved endpoint)
                 '/api/v1/upload',      # file uploads (reserved endpoint)
+                '/api/v1/students/import',
             ],
         },
         'auth': {

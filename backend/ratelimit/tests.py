@@ -41,8 +41,13 @@ class TierRoutingTests(TestCase):
             self.assertEqual((name, tier['limit']), ('auth', 5))
 
     def test_expensive_tier_beats_standard(self):
-        name, tier = self.mw._resolve_tier('/api/v1/payments/abc/verify/')
-        self.assertEqual((name, tier['limit']), ('expensive', 10))
+        for path in (
+            '/api/v1/payments/abc/verify/',
+            '/api/v1/students/import/',
+            '/api/v1/students/import/analyse/',
+        ):
+            name, tier = self.mw._resolve_tier(path)
+            self.assertEqual((name, tier['limit']), ('expensive', 10))
 
     def test_standard_tier_is_the_catch_all(self):
         for path in ('/api/v1/students/', '/api/v1/accounts/users/', '/api/v1/attendance/'):

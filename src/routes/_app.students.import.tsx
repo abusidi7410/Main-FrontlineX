@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { AlertTriangle, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
@@ -9,9 +9,7 @@ import { StatCard } from "@/components/common/stat-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { tierById } from "@/constants/plans";
 import { numberFmt } from "@/lib/format";
-import { getSubscription } from "@/services/school.service";
 import { analyseImportFile, commitImport, type ImportAnalysis } from "@/services/students.service";
 
 export const Route = createFileRoute("/_app/students/import")({
@@ -38,15 +36,15 @@ const TEMPLATE = "first_name,last_name,admission_number,class,guardian_phone\n";
 
 function ImportStudentsPage() {
   const [analysis, setAnalysis] = useState<ImportAnalysis | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const queryClient = useQueryClient();
-  const subscription = useQuery({ queryKey: ["subscription"], queryFn: getSubscription });
-  const tier = subscription.data ? tierById(subscription.data.tierId) : null;
-  const allowed = tier?.maxStudents ?? 5000;
 
   const analyse = useMutation({
-    mutationFn: (file: File) =>
-      analyseImportFile(file, subscription.data?.activeStudents ?? 0, allowed),
-    onSuccess: setAnalysis,
+    mutationFn: analyseImportFile,
+    onSuccess: (result, file) => {
+      setAnalysis(result);
+      setSelectedFile(file);
+    },
     onError: () =>
       toast.error("We couldn't read that file. Please upload a CSV that matches the template."),
   });
@@ -54,8 +52,10 @@ function ImportStudentsPage() {
   const commit = useMutation({
     mutationFn: commitImport,
     onSuccess: async (result) => {
-      toast.success(`${result.imported} students imported successfully.`);
+      const skippedMessage = result.skipped ? ` ${result.skipped} rows were not imported.` : "";
+      toast.success(`${result.imported} students imported successfully.${skippedMessage}`);
       setAnalysis(null);
+      setSelectedFile(null);
       await queryClient.invalidateQueries({ queryKey: ["students"] });
     },
     onError: () =>
@@ -89,6 +89,8 @@ function ImportStudentsPage() {
             className="h-12"
             onChange={(event) => {
               const file = event.target.files?.[0];
+              setSelectedFile(file ?? null);
+              setAnalysis(null);
               if (file) analyse.mutate(file);
             }}
           />
@@ -183,13 +185,27 @@ function ImportStudentsPage() {
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button
                 className="h-12 text-base"
-                disabled={analysis.valid === 0 || analysis.capacity.exceeds || commit.isPending}
-                onClick={() => commit.mutate(analysis)}
+                disabled={
+                  !selectedFile ||
+                  analysis.valid === 0 ||
+                  analysis.capacity.exceeds ||
+                  commit.isPending
+                }
+                onClick={() => {
+                  if (selectedFile) commit.mutate(selectedFile);
+                }}
               >
                 <FileSpreadsheet className="size-4" aria-hidden="true" />
                 {commit.isPending ? "Importing…" : `Import ${numberFmt(analysis.valid)} students`}
               </Button>
-              <Button variant="outline" className="h-12" onClick={() => setAnalysis(null)}>
+              <Button
+                variant="outline"
+                className="h-12"
+                onClick={() => {
+                  setAnalysis(null);
+                  setSelectedFile(null);
+                }}
+              >
                 Choose a different file
               </Button>
             </div>

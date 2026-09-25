@@ -37,10 +37,12 @@ export function suggestPromotion(student: Student): PromotionDecision {
 }
 
 export async function listPromotionClasses(): Promise<PromotionClassSummary[]> {
+  // SECURITY: Backend must verify permission students.read and schoolId match.
   return apiFetch("/promotion/classes");
 }
 
 export async function getPromotionCandidates(className: string): Promise<PromotionCandidate[]> {
+  // SECURITY: Backend must verify permission students.read and schoolId match for the class and every returned student.
   return apiFetch(`/promotion/classes/${encodeURIComponent(className)}`);
 }
 
@@ -48,6 +50,7 @@ export async function applyPromotion(
   className: string,
   decisions: Record<string, PromotionDecision>,
 ): Promise<PromotionApplyResult> {
+  // SECURITY: Backend must verify permission students.write and schoolId match for the class and every decision student.
   return apiFetch(`/promotion/classes/${encodeURIComponent(className)}/apply`, {
     method: "POST",
     body: { decisions },

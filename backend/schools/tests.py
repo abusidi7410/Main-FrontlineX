@@ -1,9 +1,16 @@
-from django.test import TestCase
+from datetime import timedelta
+from decimal import Decimal
+
+from django.core.cache import cache
+from django.db import connection
+from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from records.models import Student
+from records.models import Invoice, Payment, Student
 from schools.models import AuditLog, School, SchoolSubscription
 
 from .models import SubscriptionPlan
@@ -117,3 +124,146 @@ class PlatformSchoolDeleteTests(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()['remaining'], 1)
+
+
+@override_settings(
+    CACHES={
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'platform-overview-tests',
+        },
+    },
+)
+class PlatformOverviewTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.now = timezone.now()
+        self.platform = User.objects.create_user(
+            email='overview-platform@example.com',
+            password='Strong-Pass-1!',
+            first_name='Overview',
+            last_name='Manager',
+            role=User.Role.PLATFORM_MANAGER,
+            is_active=True,
+        )
+        self.plan = SubscriptionPlan.objects.create(
+            name='growth', min_students=1, max_students=500, monthly_price=Decimal('2500.00'),
+        )
+        self.active_school = self._school('Overview Active', 'active', 'active')
+        self.trial_school = self._school('Overview Trial', 'trial', None)
+        self.suspended_school = self._school('Overview Suspended', 'suspended', 'suspended')
+        self.pending_school = self._school('Overview Pending', 'pending', 'expired')
+        self.active_student = Student.objects.create(
+            school=self.active_school,
+            admission_number='OV-001',
+            first_name='Amina',
+            last_name='Bello',
+            gender=Student.Gender.FEMALE,
+            class_name='SS1',
+            status=Student.Status.ACTIVE,
+        )
+        self.pending_student = Student.objects.create(
+            school=self.pending_school,
+            admission_number='OV-002',
+            first_name='Chinedu',
+            last_name='Okafor',
+            gender=Student.Gender.MALE,
+            class_name='SS1',
+            status=Student.Status.ACTIVE,
+        )
+        self.active_admin = User.objects.create_user(
+            email='overview-admin@example.com',
+            password='Strong-Pass-1!',
+            first_name='Active',
+            last_name='Admin',
+            role=User.Role.SCHOOL_ADMIN,
+            school=self.active_school,
+            is_active=True,
+        )
+        User.objects.filter(id=self.active_admin.id).update(last_login=self.now - timedelta(hours=2))
+        invoice = Invoice.objects.create(
+            school=self.active_school,
+            student=self.active_student,
+            term='First Term',
+            total=Decimal('5000.00'),
+        )
+        payment = Payment.objects.create(
+            school=self.active_school,
+            invoice=invoice,
+            amount=Decimal('5000.00'),
+            method=Payment.Method.ONLINE,
+            status=Payment.Status.VERIFIED,
+            reference='OV-PAY-001',
+        )
+        Payment.objects.filter(id=payment.id).update(created_at=self.now - timedelta(days=2))
+        failed_invoice = Invoice.objects.create(
+            school=self.pending_school,
+            student=self.pending_student,
+            term='First Term',
+            total=Decimal('1000.00'),
+        )
+        failed_payment = Payment.objects.create(
+            school=self.pending_school,
+            invoice=failed_invoice,
+            amount=Decimal('1000.00'),
+            method=Payment.Method.CARD,
+            status=Payment.Status.FAILED,
+            reference='OV-PAY-002',
+        )
+        Payment.objects.filter(id=failed_payment.id).update(created_at=self.now - timedelta(days=3))
+        self.client = APIClient()
+        self.client.force_authenticate(self.platform)
+
+    def tearDown(self):
+        cache.clear()
+
+    def _school(self, name, slug, subscription_status):
+        school = School.objects.create(
+            name=name,
+            slug=slug,
+            address=f'{slug} road',
+            state='Lagos',
+            lga='Ikeja',
+            phone=f'+234800000{len(slug):04d}',
+            email=f'{slug}@example.com',
+            is_active=slug == 'active',
+        )
+        if subscription_status is not None:
+            SchoolSubscription.objects.create(
+                school=school,
+                plan=self.plan,
+                status=subscription_status,
+                expires_at=(
+                    self.now - timedelta(days=1)
+                    if subscription_status == SchoolSubscription.Status.EXPIRED
+                    else self.now + timedelta(days=10)
+                ),
+            )
+        return school
+
+    def test_overview_uses_one_query_and_returns_operational_metrics(self):
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get('/api/v1/platform/overview/?range=30d')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(len(queries), 1, [query['sql'] for query in queries])
+        payload = response.json()
+        self.assertEqual(payload['mrr'], 2500.0)
+        self.assertEqual(payload['activeLogins24h'], 1)
+        self.assertEqual(payload['failedPayments'], 1)
+        self.assertEqual(payload['upcomingRenewals'], 2)
+        self.assertEqual(payload['schoolsByStatus']['active'], 1)
+        self.assertEqual(payload['schoolsByStatus']['trial'], 1)
+        self.assertEqual(payload['schoolsByStatus']['suspended'], 1)
+        self.assertEqual(payload['schoolsByStatus']['pending_payment'], 1)
+        self.assertEqual(len(payload['mrrTrend']), 6)
+        self.assertEqual(len(payload['atRiskSchools']), 2)
+        at_risk_by_name = {row['name']: row for row in payload['atRiskSchools']}
+        self.assertEqual(at_risk_by_name['Overview Pending']['failedPayments'], 1)
+
+    def test_overview_is_cached_for_the_requested_range(self):
+        first = self.client.get('/api/v1/platform/overview/?range=7d')
+        second = self.client.get('/api/v1/platform/overview/?range=7d')
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+        self.assertEqual(cache.get('platform:overview:7:all'), second.json())

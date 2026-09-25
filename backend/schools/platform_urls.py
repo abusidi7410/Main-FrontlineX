@@ -3,6 +3,7 @@ from django.urls import path
 from . import platform_views
 
 urlpatterns = [
+    path('overview/', platform_views.PlatformOverviewView.as_view()),
     path('schools/', platform_views.PlatformSchoolListView.as_view()),
     path('schools/<str:pk>/status/', platform_views.PlatformSchoolStatusView.as_view()),
     path('schools/<str:pk>/', platform_views.PlatformSchoolDetailView.as_view()),

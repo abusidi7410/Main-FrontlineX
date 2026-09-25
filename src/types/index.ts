@@ -303,6 +303,35 @@ export interface PlatformSchool {
   createdAt: string;
 }
 
+export interface AtRiskSchool {
+  id: string;
+  name: string;
+  state: string;
+  plan: string;
+  students: number;
+  lastActive: string | null;
+  renewalDate: string | null;
+  status: SchoolStatus;
+  mrr: number;
+  failedPayments: number;
+}
+
+export type PlatformOverviewRange = "7d" | "30d" | "90d";
+
+export interface PlatformOverview {
+  mrr: number;
+  mrrTrend: number[];
+  schoolsByStatus: Record<SchoolStatus, number>;
+  activeSchools: number;
+  activeSchoolsTrend: number[];
+  activeSchoolsGrowth: number;
+  activeLogins24h: number;
+  failedPayments: number;
+  upcomingRenewals: number;
+  atRiskSchools: AtRiskSchool[];
+  rangeDays: number;
+}
+
 export interface ApiError {
   message: string;
   code?: string;

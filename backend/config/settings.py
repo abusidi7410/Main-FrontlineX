@@ -212,6 +212,11 @@ SIMPLE_JWT = {
 
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
+STUDENT_IMPORT_MAX_FILE_SIZE = env.int(
+    'STUDENT_IMPORT_MAX_FILE_SIZE', default=5 * 1024 * 1024,
+)
+STUDENT_IMPORT_MAX_ROWS = env.int('STUDENT_IMPORT_MAX_ROWS', default=10000)
+
 
 # ── Rate limiting (centralized Redis sliding-window counter) ────────────────
 
@@ -247,6 +252,7 @@ RATE_LIMIT_TIERS = {
             '/api/v1/payments/',
             '/api/v1/otp/',       # reserved OTP endpoint
             '/api/v1/upload',     # reserved upload endpoint
+            '/api/v1/students/import',
         ],
     },
     # Tier 1 – authentication, per IP (anti-credential-stuffing).

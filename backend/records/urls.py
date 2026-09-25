@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     path('students/', views.StudentListCreateView.as_view()),
     path('students/stats/', views.StudentStatsView.as_view()),
+    path('students/import/analyse/', views.StudentImportAnalysisView.as_view()),
     path('students/import/', views.StudentImportView.as_view()),
     path('students/<str:pk>/transfer/', views.StudentTransferView.as_view()),
     path('students/<str:pk>/', views.StudentDetailView.as_view()),

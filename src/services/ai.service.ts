@@ -90,5 +90,6 @@ export interface AskAiInput {
 }
 
 export async function askAi({ prompt, role, permissions }: AskAiInput): Promise<AiMessage> {
+  // SECURITY: Backend must verify the authenticated user's ai.* permission for the selected tool and schoolId match; never trust role or permissions from the client.
   return apiFetch("/ai/ask", { method: "POST", body: { prompt } });
 }

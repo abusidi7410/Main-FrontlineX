@@ -10,10 +10,12 @@ export interface StudentQuery {
 }
 
 export async function listStudents(query: StudentQuery = {}): Promise<Paginated<Student>> {
+  // SECURITY: Backend must verify permission students.read and schoolId match, or restrict parents and students to authorized linked records.
   return apiFetch("/students", { query: { ...query } });
 }
 
 export async function getStudent(id: string): Promise<Student> {
+  // SECURITY: Backend must verify permission students.read and schoolId match, or allow only the caller's own or linked student record.
   return apiFetch(`/students/${id}`);
 }
 
@@ -26,6 +28,7 @@ export interface StudentStats {
 }
 
 export async function getStudentStats(): Promise<StudentStats> {
+  // SECURITY: Backend must verify permission students.read and schoolId match before returning school-wide statistics.
   return apiFetch("/students/stats");
 }
 
@@ -42,18 +45,22 @@ export interface StudentInput {
 }
 
 export async function createStudent(input: StudentInput): Promise<Student> {
+  // SECURITY: Backend must verify permission students.write and schoolId match.
   return apiFetch("/students", { method: "POST", body: input });
 }
 
 export async function updateStudent(id: string, input: StudentInput): Promise<Student> {
+  // SECURITY: Backend must verify permission students.write and schoolId match.
   return apiFetch(`/students/${id}`, { method: "PATCH", body: input });
 }
 
 export async function suspendStudent(id: string): Promise<Student> {
+  // SECURITY: Backend must verify permission students.write and schoolId match.
   return apiFetch(`/students/${id}`, { method: "PATCH", body: { status: "suspended" } });
 }
 
 export async function reinstateStudent(id: string): Promise<Student> {
+  // SECURITY: Backend must verify permission students.write and schoolId match.
   return apiFetch(`/students/${id}`, { method: "PATCH", body: { status: "active" } });
 }
 
@@ -63,6 +70,7 @@ export interface TransferStudentInput {
 }
 
 export async function transferStudent(input: TransferStudentInput): Promise<Student> {
+  // SECURITY: Backend must verify permission students.write, match the source student's schoolId, and allow only an approved destination school.
   return apiFetch(`/students/${input.studentId}/transfer`, {
     method: "POST",
     body: { toSchoolId: input.toSchoolId },
@@ -76,6 +84,10 @@ export interface ImportRow {
   admissionNumber: string;
   className: string;
   guardianPhone: string;
+  gender: "male" | "female";
+  dateOfBirth: string | null;
+  arm: string;
+  guardianName: string;
   issues: string[];
 }
 
@@ -89,67 +101,21 @@ export interface ImportAnalysis {
   capacity: { activeStudents: number; allowed: number; afterImport: number; exceeds: boolean };
 }
 
-/** Parses a CSV in the browser then validates it exactly like the API will. */
-export async function analyseImportFile(
-  file: File,
-  activeStudents: number,
-  allowed: number,
-): Promise<ImportAnalysis> {
-  const text = await file.text();
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  const [header = "", ...body] = lines;
-  const cols = header.split(",").map((c) => c.trim().toLowerCase());
-  const idx = (name: string) => cols.indexOf(name);
-  const existing = await apiFetch<Paginated<Student>>("/students", { query: { pageSize: 1000 } });
-  const seen = new Set(existing.results.map((s) => s.admissionNumber.toLowerCase()));
-  let duplicates = 0;
-  let missingFields = 0;
-
-  const rows: ImportRow[] = body.map((line, i) => {
-    const cells = line.split(",").map((c) => c.trim());
-    const row: ImportRow = {
-      rowNumber: i + 2,
-      firstName: cells[idx("first_name")] ?? "",
-      lastName: cells[idx("last_name")] ?? "",
-      admissionNumber: cells[idx("admission_number")] ?? "",
-      className: cells[idx("class")] ?? "",
-      guardianPhone: cells[idx("guardian_phone")] ?? "",
-      issues: [],
-    };
-    if (!row.firstName || !row.lastName || !row.className) {
-      row.issues.push("Missing required field");
-      missingFields += 1;
-    }
-    const key = row.admissionNumber.toLowerCase();
-    if (!key) {
-      row.issues.push("Missing admission number");
-      missingFields += 1;
-    } else if (seen.has(key)) {
-      row.issues.push("Duplicate admission number");
-      duplicates += 1;
-    } else {
-      seen.add(key);
-    }
-    return row;
-  });
-
-  const valid = rows.filter((r) => r.issues.length === 0).length;
-  return {
-    fileName: file.name,
-    total: rows.length,
-    valid,
-    duplicates,
-    missingFields,
-    rows,
-    capacity: {
-      activeStudents,
-      allowed,
-      afterImport: activeStudents + valid,
-      exceeds: activeStudents + valid > allowed,
-    },
-  };
+export async function analyseImportFile(file: File): Promise<ImportAnalysis> {
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+  // SECURITY: Backend must verify permission students.import, derive schoolId from the authenticated user, and perform all CSV validation.
+  return apiFetch("/students/import/analyse", { method: "POST", body: formData });
 }
 
-export async function commitImport(analysis: ImportAnalysis): Promise<{ imported: number }> {
-  return apiFetch("/students/import", { method: "POST", body: { rows: analysis.rows } });
+export async function commitImport(file: File): Promise<{
+  imported: number;
+  skipped: number;
+  invalid: number;
+  duplicates: number;
+}> {
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+  // SECURITY: Backend must verify permission students.import, derive schoolId from the authenticated user, and revalidate the file transactionally.
+  return apiFetch("/students/import", { method: "POST", body: formData });
 }

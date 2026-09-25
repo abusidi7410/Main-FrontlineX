@@ -25,6 +25,9 @@ let accessToken: string | null = null;
 export function setAccessToken(token: string | null) {
   accessToken = token;
 }
+export function getAccessToken() {
+  return accessToken;
+}
 
 /**
  * Called once when an authenticated request comes back with HTTP 401, so the
@@ -53,16 +56,25 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
   });
 
+  const isMultipart = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const requestBody =
+    options.body === undefined
+      ? undefined
+      : isMultipart
+        ? (options.body as FormData)
+        : JSON.stringify(options.body);
+  const requestHeaders: Record<string, string> = {
+    ...(isMultipart ? {} : { "Content-Type": "application/json" }),
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+  };
+
   let response: Response;
   try {
     response = await fetch(url.toString(), {
       method: options.method ?? "GET",
       ...(options.signal ? { signal: options.signal } : {}),
-      headers: {
-        "Content-Type": "application/json",
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      },
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      headers: requestHeaders,
+      ...(requestBody === undefined ? {} : { body: requestBody }),
       credentials: "include",
     });
   } catch {

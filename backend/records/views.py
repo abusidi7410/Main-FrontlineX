@@ -1,11 +1,12 @@
 import uuid
 from decimal import Decimal, InvalidOperation
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,6 +14,11 @@ from rest_framework.views import APIView
 from accounts.permissions import HasSchool, require_roles
 from schools.models import School, SchoolSubscription
 from .models import AttendanceRecord, Invoice, Payment, StaffMember, Student
+from .student_import import (
+    StudentImportError,
+    analyse_import,
+    parse_import_file,
+)
 from .serializers import (
     AttendanceSubmitSerializer,
     InvoiceSerializer,
@@ -22,6 +28,7 @@ from .serializers import (
 )
 
 CanWriteRecords = require_roles('school_admin', 'principal', 'secretary')
+CanImportStudents = require_roles('school_admin')
 CanWriteAttendance = require_roles('school_admin', 'principal', 'secretary', 'teacher')
 CanReadFinance = require_roles('school_admin', 'principal', 'accountant', 'student')
 CanWriteFinance = require_roles('school_admin', 'accountant')
@@ -128,35 +135,73 @@ class StudentTransferView(APIView):
         return Response(StudentSerializer(student, context={'request': request}).data)
 
 
-class StudentImportView(APIView):
-    permission_classes = [IsAuthenticated, HasSchool, CanWriteRecords]
+class StudentImportAnalysisView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanImportStudents]
+    parser_classes = [MultiPartParser]
 
     def post(self, request):
-        rows = request.data.get('rows', [])
-        created = 0
-        existing = set(
-            Student.objects.filter(school_id=request.user.school_id).values_list('admission_number', flat=True)
-        )
-        with transaction.atomic():
-            for row in rows:
-                number = (row.get('admissionNumber') or '').strip()
-                if not number or number in existing:
-                    continue
-                Student.objects.get_or_create(
-                    school_id=request.user.school_id,
-                    admission_number=number,
-                    defaults={
-                        'first_name': row.get('firstName') or '',
-                        'last_name': row.get('lastName') or '',
-                        'gender': Student.Gender.MALE,
-                        'class_name': row.get('className') or '',
-                        'guardian_name': '',
-                        'guardian_phone': row.get('guardianPhone') or '',
-                    },
+        try:
+            parsed = parse_import_file(request.FILES.get('file'))
+        except StudentImportError as exc:
+            raise ValidationError({'file': str(exc)})
+        analysis = analyse_import(parsed, request.user.school_id)
+        return Response(analysis.as_dict())
+
+
+class StudentImportView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanImportStudents]
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        try:
+            parsed = parse_import_file(request.FILES.get('file'))
+        except StudentImportError as exc:
+            raise ValidationError({'file': str(exc)})
+
+        try:
+            with transaction.atomic():
+                School.objects.select_for_update().get(pk=request.user.school_id)
+                analysis = analyse_import(
+                    parsed,
+                    request.user.school_id,
+                    lock_existing=True,
                 )
-                existing.add(number)
-                created += 1
-        return Response({'imported': created})
+                if analysis.capacity['exceeds']:
+                    raise ValidationError({
+                        'capacity': 'This import would exceed the school student limit.',
+                    })
+                if not analysis.valid_rows:
+                    raise ValidationError({
+                        'file': 'The CSV file does not contain any valid student rows.',
+                    })
+                students = [
+                    Student(
+                        school_id=request.user.school_id,
+                        admission_number=row.admission_number,
+                        first_name=row.first_name,
+                        last_name=row.last_name,
+                        gender=row.gender,
+                        date_of_birth=row.date_of_birth,
+                        class_name=row.class_name,
+                        arm=row.arm,
+                        guardian_name=row.guardian_name,
+                        guardian_phone=row.guardian_phone,
+                        status=Student.Status.ACTIVE,
+                    )
+                    for row in analysis.valid_rows
+                ]
+                Student.objects.bulk_create(students)
+        except IntegrityError as exc:
+            raise ValidationError({
+                'file': 'An admission number was imported by another user. Please re-run the import.',
+            }) from exc
+
+        return Response({
+            'imported': len(students),
+            'skipped': analysis.rejected,
+            'invalid': analysis.invalid,
+            'duplicates': analysis.duplicate_count,
+        })
 
 
 # ── Staff ──────────────────────────────────────────────────────────────────
