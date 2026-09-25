@@ -106,6 +106,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useSession() {
   const ctx = useContext(SessionContext);
   if (!ctx) throw new Error("useSession must be used inside <SessionProvider>");
@@ -113,12 +114,14 @@ export function useSession() {
 }
 
 /** Throws if used outside an authenticated layout. */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuthenticatedSession() {
   const ctx = useSession();
   if (!ctx.session) throw new Error("This page requires an authenticated session.");
   return { ...ctx, session: ctx.session, user: ctx.session.user, school: ctx.session.school };
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function homeForRole(role: Role) {
   return HOME_BY_ROLE[role];
 }

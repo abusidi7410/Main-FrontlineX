@@ -29,11 +29,7 @@ import { useSession } from "@/auth/session";
 import { ApiRequestError } from "@/api/client";
 import { dateTimeFmt, naira, titleCase } from "@/lib/format";
 import { printHtml } from "@/lib/print";
-import {
-  listInvoices,
-  listPayments,
-  recordPayment,
-} from "@/services/finance.service";
+import { listInvoices, listPayments, recordPayment } from "@/services/finance.service";
 import type { Invoice, Payment } from "@/types";
 
 export const Route = createFileRoute("/_app/fees")({

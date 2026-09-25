@@ -14,6 +14,7 @@ import {
 import { ARMS, CLASSES } from "@/constants/reference";
 import { ngPhone, requiredText } from "@/lib/validation";
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const studentSchema = z.object({
   firstName: requiredText("First name"),
   lastName: requiredText("Surname"),
@@ -47,11 +48,7 @@ export function StudentForm({
   });
 
   return (
-    <form
-      noValidate
-      className="fn-panel space-y-4 p-5"
-      onSubmit={form.handleSubmit(onSubmit)}
-    >
+    <form noValidate className="fn-panel space-y-4 p-5" onSubmit={form.handleSubmit(onSubmit)}>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="First name" id="firstName" error={form.formState.errors.firstName?.message}>
           <Input id="firstName" className="h-12" {...form.register("firstName")} />
@@ -71,7 +68,11 @@ export function StudentForm({
             {...form.register("admissionNumber")}
           />
         </Field>
-        <Field label="Date of birth" id="dateOfBirth" error={form.formState.errors.dateOfBirth?.message}>
+        <Field
+          label="Date of birth"
+          id="dateOfBirth"
+          error={form.formState.errors.dateOfBirth?.message}
+        >
           <Input id="dateOfBirth" type="date" className="h-12" {...form.register("dateOfBirth")} />
         </Field>
         <Field label="Gender" id="gender" error={form.formState.errors.gender?.message}>
@@ -124,10 +125,18 @@ export function StudentForm({
             </Select>
           </Field>
         </div>
-        <Field label="Guardian name" id="guardianName" error={form.formState.errors.guardianName?.message}>
+        <Field
+          label="Guardian name"
+          id="guardianName"
+          error={form.formState.errors.guardianName?.message}
+        >
           <Input id="guardianName" className="h-12" {...form.register("guardianName")} />
         </Field>
-        <Field label="Guardian phone" id="guardianPhone" error={form.formState.errors.guardianPhone?.message}>
+        <Field
+          label="Guardian phone"
+          id="guardianPhone"
+          error={form.formState.errors.guardianPhone?.message}
+        >
           <Input
             id="guardianPhone"
             inputMode="tel"

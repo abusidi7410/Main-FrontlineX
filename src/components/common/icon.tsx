@@ -26,6 +26,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const ICONS: Record<string, LucideIcon> = {
   home: Home,
   users: Users,

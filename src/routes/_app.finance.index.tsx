@@ -106,9 +106,7 @@ function PaymentsPage() {
     },
     onError: (error) => {
       toast.error(
-        error instanceof ApiRequestError
-          ? error.message
-          : "Verification failed. Please try again.",
+        error instanceof ApiRequestError ? error.message : "Verification failed. Please try again.",
       );
     },
   });
@@ -139,8 +137,7 @@ function PaymentsPage() {
     },
   });
 
-  const canSubmit =
-    invoiceId !== "" && Number(amount) > 0 && withinBalance && !record.isPending;
+  const canSubmit = invoiceId !== "" && Number(amount) > 0 && withinBalance && !record.isPending;
 
   return (
     <PermissionGate anyOf={["finance.read", "finance.write"]}>

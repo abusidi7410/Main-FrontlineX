@@ -1,11 +1,7 @@
 import { useNavigate, Link } from "@tanstack/react-router";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState, type Dispatch, type SetStateAction, type ReactNode } from "react";
-import {
-  useController,
-  useForm,
-  type UseFormReturn,
-} from "react-hook-form";
+import { useController, useForm, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
 import {
   AlertCircle,

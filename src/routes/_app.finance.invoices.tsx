@@ -213,9 +213,7 @@ function GenerateInvoicesDialog({
   });
 
   const updateRow = (index: number, patch: Partial<FeeItem>) => {
-    setRows((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, ...patch } : row)),
-    );
+    setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   };
 
   return (
@@ -266,8 +264,8 @@ function GenerateInvoicesDialog({
           <Label>Fee items</Label>
           {rows.length === 0 ? (
             <p className="rounded-lg border p-3 text-sm text-muted-foreground">
-              No fee structure yet. Add items — each is the amount every student in the class
-              will be billed.
+              No fee structure yet. Add items — each is the amount every student in the class will
+              be billed.
             </p>
           ) : null}
           {rows.map((row, index) => (
@@ -329,7 +327,12 @@ function GenerateInvoicesDialog({
             Close
           </Button>
           <Button
-            disabled={!className || !term || rows.length === 0 || rows.some((r) => !r.label || r.amount <= 0)}
+            disabled={
+              !className ||
+              !term ||
+              rows.length === 0 ||
+              rows.some((r) => !r.label || r.amount <= 0)
+            }
             onClick={() => generate.mutate()}
           >
             {generate.isPending ? "Generating…" : "Generate invoices"}

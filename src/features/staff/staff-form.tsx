@@ -22,6 +22,7 @@ const STAFF_ROLES: { value: StaffRole; label: string }[] = [
   { value: "principal", label: "Principal" },
 ];
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const staffSchema = z.object({
   fullName: requiredText("Full name"),
   email: emailField,
@@ -39,6 +40,7 @@ const splitList = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function toStaffInput(values: StaffValues): StaffInput {
   const role = values.role as StaffRole;
   return {
@@ -51,6 +53,7 @@ export function toStaffInput(values: StaffValues): StaffInput {
   };
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function toStaffFormValues(
   member: Pick<StaffMember, "fullName" | "email" | "phone" | "role" | "subjects" | "classes">,
 ): StaffValues {

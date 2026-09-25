@@ -85,7 +85,9 @@ function AttendancePage() {
     if (roster.data.taken) {
       setMarks(roster.data.existing);
     } else {
-      setMarks(Object.fromEntries(roster.data.students.map((s) => [s.id, "present" as AttendanceStatus])));
+      setMarks(
+        Object.fromEntries(roster.data.students.map((s) => [s.id, "present" as AttendanceStatus])),
+      );
     }
   }, [roster.data]);
 
@@ -215,7 +217,10 @@ function AttendancePage() {
         </div>
 
         {lockable ? (
-          <div role="status" className="rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm">
+          <div
+            role="status"
+            className="rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm"
+          >
             Attendance for {className}
             {arm ? ` ${arm}` : ""} on {date} has already been recorded and is shown below. It can
             only be taken once per class and date.
