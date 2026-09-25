@@ -7,12 +7,14 @@ export function StatCard({
   hint,
   tone = "default",
   icon,
+  trend,
 }: {
   label: string;
   value: ReactNode;
   hint?: string | undefined;
   tone?: "default" | "success" | "warning" | "danger" | undefined;
   icon?: ReactNode | undefined;
+  trend?: ReactNode | undefined;
 }) {
   const toneClass = {
     default: "text-foreground",
@@ -22,24 +24,32 @@ export function StatCard({
   }[tone];
 
   return (
-    <div className="fn-panel fn-panel-hover flex flex-col p-5">
+    <div className="group rounded-2xl border border-border/70 bg-card/90 p-5 text-card-foreground shadow-sm backdrop-blur-md transition-[box-shadow,transform,background-color] duration-300 hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] font-medium text-muted-foreground">{label}</p>
-        {icon ? (
-          <span aria-hidden="true" className="fn-icon-tile size-9 shrink-0 text-primary">
-            {icon}
-          </span>
-        ) : null}
+        <p className="text-[13px] font-semibold uppercase tracking-widest text-muted-foreground">
+          {label}
+        </p>
+        <div className="flex items-center gap-2">
+          {trend}
+          {icon ? (
+            <span
+              aria-hidden="true"
+              className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted/70 text-primary"
+            >
+              {icon}
+            </span>
+          ) : null}
+        </div>
       </div>
       <p
         className={cn(
-          "mt-3 font-display text-[1.75rem] font-semibold leading-tight tracking-[-0.02em] tabular-nums sm:text-[2rem]",
+          "mt-4 text-[30px] font-bold leading-none tracking-[-0.03em] tabular-nums",
           toneClass,
         )}
       >
         {value}
       </p>
-      {hint ? <p className="mt-1.5 text-[13px] text-muted-foreground">{hint}</p> : null}
+      {hint ? <p className="mt-2 text-[13px] text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
