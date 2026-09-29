@@ -11,6 +11,12 @@ class School(models.Model):
 
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, max_length=255)
+    # Short, stable code used as the first segment of every admission number
+    # (spec §27). Stored permanently: admission numbers must never be recomputed
+    # from the school name, so renaming a school must not rewrite identifiers.
+    # Blank until an administrator confirms it (admission numbers cannot be
+    # issued without it). `suggest_code` only proposes a starting point.
+    code = models.CharField(max_length=10, blank=True, default='')
     school_type = models.CharField(
         max_length=20, choices=SchoolType.choices, default=SchoolType.MIXED,
     )
@@ -44,6 +50,30 @@ class School(models.Model):
 
     def __str__(self):
         return self.name
+
+    # Words that carry no meaning in a school code, so "The" in "The Success
+    # Academy" does not become the T of TSA.
+    CODE_STOPWORDS = {'the', 'a', 'an', 'of', 'and'}
+
+    @classmethod
+    def suggest_code(cls, name):
+        """Propose a short uppercase code for a school name (spec §28).
+
+        Deliberately simple: the initials of at most three words, so
+        "Success Academy" → "SA" and "Bright Hope International School" → "BHI".
+        This is a *suggestion* only. The stored `code` is the source of truth
+        and is never recalculated once admission numbers have been issued.
+
+        Words like "School" and "Academy" are kept: they are the school's own
+        words, and dropping them turns "Success Academy" into "SUC".
+        """
+        words = [w for w in ''.join(c if c.isalnum() else ' ' for c in name).split() if w]
+        significant = [w for w in words if w.lower() not in cls.CODE_STOPWORDS] or words
+        if not significant:
+            return ''
+        if len(significant) == 1:
+            return significant[0][:3].upper()
+        return ''.join(w[0] for w in significant[:3]).upper()
 
     def save(self, *args, **kwargs):
         if not self.slug:

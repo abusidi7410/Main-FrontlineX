@@ -4,11 +4,26 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from records.models import AttendanceRecord, Invoice, Payment, Student
+from records.models import (
+    AcademicSession,
+    AttendanceRecord,
+    Enrollment,
+    Invoice,
+    Level,
+    Payment,
+    SchoolClass,
+    Section,
+    Student,
+)
 from schools.models import School, SchoolSubscription, SubscriptionPlan
 
 
 class AttendanceFinanceTests(TestCase):
+    # Test-only: PBKDF2 hashing of the users below dominated suite runtime and
+    # is irrelevant to what these tests assert. Production settings untouched.
+    @override_settings(PASSWORD_HASHERS=[
+        'django.contrib.auth.hashers.MD5PasswordHasher',
+    ])
     def setUp(self):
         self.school = School.objects.create(
             name='Sunrise Academy', slug='sunrise-academy', address='1 Sunrise Way',
@@ -40,7 +55,46 @@ class AttendanceFinanceTests(TestCase):
             first_name='Tunde', last_name='Okafor', gender='male',
             class_name='JSS 1', arm='B', status=Student.Status.ACTIVE,
         )
+        self._build_academic_structure()
         self.client = APIClient()
+
+    def _build_academic_structure(self):
+        """Create the class/section/session + active enrollments the roster reads.
+
+        Phase 1 makes `Enrollment` the authority for class membership rather than
+        `Student.class_name` (spec §35). Existing behaviour is preserved by
+        seeding the structure that the production backfill migration
+        (0003_backfill_class_enrollments) creates for real data.
+        """
+        self.session = AcademicSession.objects.create(
+            school=self.school, name='2026/2027',
+            start_year=2026, end_year=2027, is_current=True,
+        )
+        self.school.current_session = '2026/2027'
+        self.school.save(update_fields=['current_session'])
+        level = Level.objects.create(
+            school=self.school, code=Level.JUNIOR_SECONDARY,
+            name='Junior Secondary', sort_order=30,
+        )
+        self.jss1 = SchoolClass.objects.create(
+            school=self.school, level=level, name='JSS 1', sort_order=30,
+        )
+        self.section_a = Section.objects.create(
+            school=self.school, class_obj=self.jss1, name='A',
+        )
+        self.section_b = Section.objects.create(
+            school=self.school, class_obj=self.jss1, name='B',
+        )
+        Enrollment.objects.create(
+            school=self.school, student=self.student,
+            academic_session=self.session, class_obj=self.jss1,
+            section=self.section_a, status=Enrollment.Status.ACTIVE,
+        )
+        Enrollment.objects.create(
+            school=self.school, student=self.student_b,
+            academic_session=self.session, class_obj=self.jss1,
+            section=self.section_b, status=Enrollment.Status.ACTIVE,
+        )
 
     def _auth(self, user):
         self.client.force_authenticate(user)

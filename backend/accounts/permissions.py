@@ -4,6 +4,19 @@ from rest_framework.permissions import BasePermission
 # Mirrors the frontend role→permission matrix (src/permissions/index.ts).
 # The API is the authority; this is used to populate AuthUser.permissions
 # in serializer output.
+#
+# Admission/finance permissions (spec §39) are deliberately granular: a role
+# that may register a student does NOT thereby gain the right to approve that
+# student's registration, record a payment, or verify a payment.
+#   students.register     — create a new-student registration
+#   students.approve      — approve a pending registration (activates enrolment)
+#   students.import       — bulk upload / migrate existing students (ADMIN ONLY)
+#   enrollment.manage     — directly manage enrolments
+#   finance.structure     — configure the Payment Structure
+#   finance.invoice       — create / manage invoices
+#   finance.payment       — record a payment
+#   finance.verify        — verify / reverse a payment
+#   finance.read          — view financial records
 ROLE_PERMISSIONS = {
     'platform_manager': [
         'platform.manage', 'subscription.read', 'subscription.write',
@@ -11,12 +24,14 @@ ROLE_PERMISSIONS = {
         'settings.read', 'settings.write',
     ],
     'school_admin': [
-        'students.read', 'students.write', 'students.import',
+        'students.read', 'students.write', 'students.register', 'students.approve',
+        'students.import', 'enrollment.manage',
         'staff.read', 'staff.write',
         'academics.read', 'academics.write',
         'attendance.read', 'attendance.write',
         'results.read', 'results.write', 'results.approve', 'results.publish',
         'finance.read', 'finance.write', 'finance.verify',
+        'finance.structure', 'finance.invoice', 'finance.payment',
         'timetable.read', 'timetable.write',
         'lessonplans.read', 'lessonplans.write',
         'communication.read', 'communication.write',
@@ -25,7 +40,8 @@ ROLE_PERMISSIONS = {
         'ai.academic', 'ai.finance', 'ai.teaching',
     ],
     'principal': [
-        'students.read', 'students.write', 'staff.read', 'staff.write',
+        'students.read', 'students.write', 'students.register', 'students.approve',
+        'staff.read', 'staff.write',
         'academics.read', 'academics.write',
         'attendance.read', 'results.read', 'results.approve',
         'timetable.read', 'lessonplans.read',
@@ -40,15 +56,50 @@ ROLE_PERMISSIONS = {
     ],
     'accountant': [
         'students.read', 'finance.read', 'finance.write', 'finance.verify',
+        'finance.invoice', 'finance.payment',
         'reports.read', 'ai.finance',
     ],
     'secretary': [
-        'students.read', 'students.write',
+        'students.read', 'students.write', 'students.register',
         'attendance.read', 'communication.read', 'communication.write',
     ],
     'parent': ['ai.parent'],
     'student': ['ai.student'],
 }
+
+
+def has_permission(role, permission):
+    """Single source of truth for the role→permission matrix.
+
+    Permission classes, the `/me/` payload and the tests all read this, so the
+    matrix can never drift between them.
+    """
+    return permission in ROLE_PERMISSIONS.get(role or '', ())
+
+
+def require_permissions(*permissions):
+    """Factory: DRF permission class allowing roles that hold *every* permission.
+
+    Prefer this over `require_roles` for new endpoints: it keeps authorisation
+    expressed in business terms (spec §39) rather than role names, and a
+    student's own role can never accidentally satisfy a finance permission.
+    """
+
+    class _PermissionPermission(BasePermission):
+        def has_permission(self, request, view):
+            return bool(
+                request.user
+                and request.user.is_authenticated
+                and all(
+                    has_permission(request.user.role, permission)
+                    for permission in permissions
+                )
+            )
+
+        def __repr__(self):
+            return f'<RequirePermissions {permissions}>'
+
+    return _PermissionPermission
 
 
 def require_roles(*roles):

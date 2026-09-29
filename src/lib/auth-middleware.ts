@@ -1,4 +1,4 @@
-import { getAccessToken } from "@/api/client";
+import { API_BASE_URL, getAccessToken } from "@/api/client";
 import { createMiddleware } from "@tanstack/react-start";
 import { setResponseStatus } from "@tanstack/react-start/server";
 import type { AuthUser, Permission, Role } from "@/types";
@@ -113,8 +113,9 @@ export function assertSameSchool(principal: ServerPrincipal, resourceSchoolId: s
 }
 
 function getAuthUrl(request: Request): URL {
-  const baseUrl = (import.meta.env["VITE_API_URL"] as string | undefined) ?? "/api";
-  return new URL(`${baseUrl.replace(/\/+$/, "")}/auth/me/`, request.url);
+  // Reuse the single API boundary so server-side auth checks cannot drift onto
+  // an un-versioned `/api` path, which 404s against the versioned backend.
+  return new URL(`${API_BASE_URL}/auth/me/`, request.url);
 }
 
 const accessTokenMiddleware = createMiddleware({ type: "function" }).client(({ next }) => {

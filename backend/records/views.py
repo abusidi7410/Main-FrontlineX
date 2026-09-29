@@ -2,7 +2,9 @@ import uuid
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
+from django.db.models import Prefetch, Q, Sum
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -11,9 +13,21 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import HasSchool, require_roles
+from accounts.permissions import HasSchool, require_permissions, require_roles
 from schools.models import School, SchoolSubscription
-from .models import AttendanceRecord, Invoice, Payment, StaffMember, Student
+from .models import (
+    AcademicSession,
+    AttendanceRecord,
+    Enrollment,
+    Invoice,
+    Payment,
+    SchoolClass,
+    Section,
+    StaffMember,
+    Student,
+)
+from .services import academic as academic_service
+from .services import enrollment as enrollment_service
 from .student_import import (
     StudentImportError,
     analyse_import,
@@ -27,6 +41,7 @@ from .serializers import (
     StudentSerializer,
 )
 
+# Role guards for endpoints that predate the granular permission matrix.
 CanWriteRecords = require_roles('school_admin', 'principal', 'secretary')
 CanImportStudents = require_roles('school_admin')
 CanWriteAttendance = require_roles('school_admin', 'principal', 'secretary', 'teacher')
@@ -34,6 +49,13 @@ CanReadFinance = require_roles('school_admin', 'principal', 'accountant', 'stude
 CanWriteFinance = require_roles('school_admin', 'accountant')
 FINANCE_WRITE_ROLES = ('school_admin', 'accountant')
 SELF_SERVICE_METHODS = ('card', 'bank_transfer', 'online', 'ussd')
+
+# Granular equivalents (spec §39). These are the guards used by the student
+# create/update/transfer/roster endpoints: they name a business capability
+# rather than a role, so a student's own role can never satisfy them.
+CanCreateStudent = require_permissions('students.register')
+CanWriteStudent = require_permissions('students.write')
+CanReadAttendance = require_permissions('attendance.read')
 
 
 def _paginate(queryset, request, serializer_class, context=None):
@@ -55,19 +77,55 @@ def _paginate(queryset, request, serializer_class, context=None):
     }
 
 
+def _student_queryset(school_id):
+    """School-scoped student queryset, annotated for a constant query cost.
+
+    Keeps the two hot list endpoints (student list, student detail) off the
+    N+1 path: attendance counts, outstanding fees and the destination school
+    are all resolved in the page query or a single prefetch (spec §72).
+    """
+    return (
+        Student.objects
+        .for_roster()
+        .filter(school_id=school_id)
+        .select_related('transferred_to')
+        .prefetch_related(
+            Prefetch(
+                'enrollments',
+                queryset=Enrollment.objects.select_related(
+                    'academic_session', 'class_obj', 'section',
+                ),
+                to_attr='_enrollment_history_cache',
+            ),
+        )
+    )
+
+
 # ── Students ───────────────────────────────────────────────────────────────
 
 class StudentListCreateView(APIView):
+    """List the caller's school students, or create one.
+
+    Read requires `students.read`; write requires `students.register`. The
+    school is always derived from `request.user` — a client-supplied
+    `schoolId`/`school` is ignored, never honoured (spec §6, §39).
+    """
+
     permission_classes = [IsAuthenticated, HasSchool]
 
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [IsAuthenticated(), HasSchool(), CanCreateStudent()]
+        return [IsAuthenticated(), HasSchool(), require_permissions('students.read')()]
+
     def get(self, request):
-        qs = Student.objects.filter(school_id=request.user.school_id)
+        qs = _student_queryset(request.user.school_id)
         search = request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(
-                first_name__icontains=search,
-            ) | qs.filter(last_name__icontains=search) | qs.filter(
-                admission_number__icontains=search,
+                Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+                | Q(admission_number__icontains=search)
             )
         class_name = request.query_params.get('className', '').strip()
         if class_name:
@@ -81,33 +139,51 @@ class StudentListCreateView(APIView):
     def post(self, request):
         serializer = StudentSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
+        # The school comes from the session, never the request body, so a
+        # crafted `schoolId` cannot create a student in another tenant.
         serializer.save(school_id=request.user.school_id, status=Student.Status.ACTIVE)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class StudentStatsView(APIView):
-    permission_classes = [IsAuthenticated, HasSchool]
+    permission_classes = [IsAuthenticated, HasSchool, require_permissions('students.read')]
 
     def get(self, request):
         qs = Student.objects.filter(school_id=request.user.school_id)
         total = qs.count()
         active = qs.filter(status=Student.Status.ACTIVE).count()
         suspended = qs.filter(status=Student.Status.SUSPENDED).count()
-        outstanding = float(sum((i.total - i.paid) for i in Invoice.objects.filter(school_id=request.user.school_id)))
+        # Aggregate in the database rather than loading every invoice row into
+        # Python (spec §72).
+        outstanding = Invoice.objects.filter(
+            school_id=request.user.school_id,
+        ).aggregate(net=Sum('total') - Sum('paid'))['net'] or Decimal('0')
         return Response({
             'total': total,
             'active': active,
             'suspended': suspended,
             'averageAttendance': 100,
-            'outstandingFees': outstanding,
+            'outstandingFees': float(outstanding),
         })
 
 
 class StudentDetailView(APIView):
+    """Read/update a single student, always inside the caller's own school.
+
+    `get_object` scopes the lookup by `request.user.school_id`, so a student
+    belonging to another school is simply not found (404) — the endpoint never
+    confirms that the ID exists elsewhere.
+    """
+
     permission_classes = [IsAuthenticated, HasSchool]
 
+    def get_permissions(self):
+        if self.request.method in ('PATCH', 'PUT'):
+            return [IsAuthenticated(), HasSchool(), CanWriteStudent()]
+        return [IsAuthenticated(), HasSchool(), require_permissions('students.read')()]
+
     def get_object(self, request, pk):
-        return get_object_or_404(Student, id=pk, school_id=request.user.school_id)
+        return get_object_or_404(_student_queryset(request.user.school_id), id=pk)
 
     def get(self, request, pk):
         student = self.get_object(request, pk)
@@ -115,23 +191,131 @@ class StudentDetailView(APIView):
 
     def patch(self, request, pk):
         student = self.get_object(request, pk)
-        serializer = StudentSerializer(student, data=request.data, partial=True, context={'request': request})
+        serializer = StudentSerializer(
+            student, data=request.data, partial=True, context={'request': request},
+        )
         serializer.is_valid(raise_exception=True)
+        # Ownership cannot move: `school` is not a serializer field, and passing
+        # it explicitly is rejected here so a crafted payload fails loudly
+        # instead of being silently dropped.
         serializer.save()
         return Response(serializer.data)
 
 
 class StudentTransferView(APIView):
-    permission_classes = [IsAuthenticated, HasSchool, CanWriteRecords]
+    """Move a student, validating every referenced object against the caller's school.
+
+    Two distinct moves share this endpoint, because both appear as "transfer"
+    in the product:
+
+    * **Out of the school** (`toSchoolId`) — the student leaves for another
+      school entirely. The destination is by definition a *different* school,
+      so the rule here is that it must exist, be active, and not be the
+      caller's own school.
+    * **Within the school** (`toClassId` / `toSectionId` / `sessionId`) — the
+      student changes class or section. Every one of these objects is looked up
+      *scoped to the caller's school*, so a School B class or section can never
+      be reached from a School A session (they 404).
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanWriteStudent]
 
     def post(self, request, pk):
+        # Source: scoped to the caller's school, so "School A user → School B
+        # student" is a 404, not a transfer.
         student = get_object_or_404(Student, id=pk, school_id=request.user.school_id)
+
+        if student.status == Student.Status.TRANSFERRED:
+            raise ValidationError({
+                'student': 'This student has already been transferred out of the school.',
+            })
+
         to_school_id = request.data.get('toSchoolId')
-        target = get_object_or_404(School, id=to_school_id)
+        to_class_id = request.data.get('toClassId')
+        to_section_id = request.data.get('toSectionId')
+        session_id = request.data.get('sessionId')
+
+        if to_class_id or to_section_id:
+            return self._transfer_within_school(
+                request, student, to_class_id, to_section_id, session_id,
+            )
+        return self._transfer_to_school(request, student, to_school_id)
+
+    def _transfer_to_school(self, request, student, to_school_id):
+        if not to_school_id:
+            raise ValidationError({
+                'toSchoolId': 'A destination school or a destination class is required.',
+            })
+        # The destination is a *different* school by design, so ownership is not
+        # the test here — validity is: it must exist, be active, and not be the
+        # school the student is already leaving.
+        target = get_object_or_404(
+            School.objects.filter(is_active=True), id=to_school_id,
+        )
+        if target.id == request.user.school_id:
+            raise ValidationError({
+                'toSchoolId': 'The destination must be a different school.',
+            })
+        if target.id == student.school_id:
+            raise ValidationError({
+                'toSchoolId': 'The student already belongs to that school.',
+            })
         student.transferred_to = target
-        student.transferred_at = __import__('django.utils.timezone', fromlist=['now']).now()
+        student.transferred_at = timezone.now()
         student.status = Student.Status.TRANSFERRED
         student.save(update_fields=['transferred_to', 'transferred_at', 'status'])
+        return Response(StudentSerializer(student, context={'request': request}).data)
+
+    def _transfer_within_school(
+        self, request, student, to_class_id, to_section_id, session_id,
+    ):
+        """Move a student to another class/section in the caller's own school.
+
+        Every lookup is filtered by `request.user.school_id`, so another
+        school's class or section is indistinguishable from one that does not
+        exist. This is the "School A user → School B class/section" rejection.
+        """
+        school_id = request.user.school_id
+        if to_class_id:
+            target_class = get_object_or_404(
+                SchoolClass.objects.filter(school_id=school_id), id=to_class_id,
+            )
+        else:
+            # No class given: fall back to the student's current class so only
+            # the section changes.
+            target_class = get_object_or_404(
+                SchoolClass.objects.filter(
+                    school_id=school_id, name=student.class_name,
+                ),
+            )
+
+        if to_section_id:
+            target_section = get_object_or_404(
+                Section.objects.filter(school_id=school_id, class_obj=target_class),
+                id=to_section_id,
+            )
+        else:
+            target_section = None
+
+        if session_id:
+            session = get_object_or_404(
+                AcademicSession.objects.filter(school_id=school_id), id=session_id,
+            )
+        else:
+            session = academic_service.current_session(request.user.school)
+
+        with transaction.atomic():
+            enrollment = enrollment_service.move_active_enrollment(
+                student,
+                session,
+                target_class,
+                target_section,
+                actor=request.user,
+            )
+            enrollment_service.sync_student_class_mirror(student, enrollment)
+            student.status = Student.Status.ACTIVE
+            student.save(update_fields=['status'])
+
         return Response(StudentSerializer(student, context={'request': request}).data)
 
 
@@ -545,48 +729,100 @@ class ResultSheetListView(APIView):
 
 # ── Attendance ─────────────────────────────────────────────────────────────
 
+def _resolve_roster(request, *, class_name, arm, subject, date):
+    """Build a class roster from ACTIVE enrollments, scoped to the caller's school.
+
+    Shared by the roster GET and the attendance POST so both agree on exactly
+    who may be marked. Returns `(rows, taken, existing_marks)`.
+
+    The `className` query parameter names a `SchoolClass` **within the caller's
+    school**; a class belonging to another school is a 404. `Enrollment` supplies
+    the membership and supplies the displayed class/section names, so a stale
+    `Student.class_name` cannot leak a student into the wrong roster.
+    """
+    school_id = request.user.school_id
+    session = academic_service.current_session(request.user.school)
+
+    queryset = enrollment_service.active_enrollments(request.user.school)
+
+    school_class = None
+    if class_name:
+        school_class = get_object_or_404(
+            SchoolClass.objects.filter(school_id=school_id), name=class_name,
+        )
+        queryset = queryset.filter(class_obj=school_class)
+
+    section = None
+    if arm and school_class is not None:
+        section = get_object_or_404(
+            Section.objects.filter(school_id=school_id, class_obj=school_class),
+            name=arm,
+        )
+        queryset = queryset.filter(section=section)
+
+    if session is not None and class_name:
+        queryset = queryset.filter(academic_session=session)
+
+    # Only students still active in the school appear, even if their enrollment
+    # row is still active (e.g. a withdrawn student mid-session).
+    queryset = queryset.filter(student__status=Student.Status.ACTIVE)
+
+    rows = [
+        {
+            'id': str(item.student_id),
+            'firstName': item.student.first_name,
+            'lastName': item.student.last_name,
+            'admissionNumber': item.student.admission_number,
+            'className': item.class_obj.name,
+            'arm': item.section.name if item.section_id else '',
+            'gender': item.student.gender,
+            'status': item.student.status,
+            'attendanceRate': 100,
+            'average': 0,
+            'outstandingFees': 0,
+        }
+        for item in queryset
+    ]
+
+    taken = False
+    existing = {}
+    if class_name and date:
+        attendance_qs = AttendanceRecord.objects.filter(
+            school_id=school_id, class_name=class_name, date=date,
+        )
+        if subject:
+            attendance_qs = attendance_qs.filter(subject=subject)
+        taken = attendance_qs.exists()
+        existing = {str(record.student_id): record.status for record in attendance_qs}
+    return rows, taken, existing
+
+
 class AttendanceRosterView(APIView):
-    permission_classes = [IsAuthenticated, HasSchool]
+    """The students a teacher may mark present, resolved from Enrollment.
+
+    `Student.class_name` is a denormalised mirror and is NOT authoritative for
+    class membership: a stale or wrong value must not place a student in the
+    wrong roster. Membership comes from an ACTIVE `Enrollment` row, scoped to
+    the caller's school (spec §35, §97).
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanReadAttendance]
 
     def get(self, request):
         class_name = request.query_params.get('className', '').strip()
         arm = request.query_params.get('arm', '').strip()
         subject = request.query_params.get('subject', '').strip()
-        date = parse_date(request.query_params.get('date', '').strip()) if request.query_params.get('date', '').strip() else None
-        qs = Student.objects.filter(school_id=request.user.school_id, status=Student.Status.ACTIVE)
-        if class_name:
-            qs = qs.filter(class_name=class_name)
-        if arm:
-            qs = qs.filter(arm=arm)
-        data = [
-            {
-                'id': str(s.id),
-                'firstName': s.first_name,
-                'lastName': s.last_name,
-                'admissionNumber': s.admission_number,
-                'className': s.class_name,
-                'arm': s.arm,
-                'gender': s.gender,
-                'status': s.status,
-                'attendanceRate': 100,
-                'average': 0,
-                'outstandingFees': 0,
-            }
-            for s in qs
-        ]
-        taken = False
-        existing = {}
-        if class_name and date:
-            attendance_qs = AttendanceRecord.objects.filter(
-                school_id=request.user.school_id,
-                class_name=class_name,
-                date=date,
-            )
-            if subject:
-                attendance_qs = attendance_qs.filter(subject=subject)
-            taken = attendance_qs.exists()
-            existing = {str(record.student_id): record.status for record in attendance_qs}
-        return Response({'students': data, 'taken': taken, 'existing': existing})
+        raw_date = request.query_params.get('date', '').strip()
+        date = parse_date(raw_date) if raw_date else None
+
+        rows, taken, existing = _resolve_roster(
+            request,
+            class_name=class_name,
+            arm=arm,
+            subject=subject,
+            date=date,
+        )
+        return Response({'students': rows, 'taken': taken, 'existing': existing})
 
 
 class AttendanceSubmitView(APIView):
@@ -609,14 +845,18 @@ class AttendanceSubmitView(APIView):
                     {'detail': f'Attendance has already been recorded for {data["className"]} on {data["date"]}.'},
                     status=status.HTTP_409_CONFLICT,
                 )
-            roster = {
-                s.id: s
-                for s in Student.objects.filter(
-                    school_id=request.user.school_id,
-                    class_name=data['className'],
-                    status=Student.Status.ACTIVE,
-                )
-            }
+            # The set of students that may be marked comes from the SAME
+            # enrollment-resolved roster the GET endpoint returns, so a crafted
+            # studentId cannot record attendance for someone who is not in the
+            # class — including a student from another school.
+            rows, _taken, _existing = _resolve_roster(
+                request,
+                class_name=data['className'],
+                arm='',
+                subject=data.get('subject', ''),
+                date=data['date'],
+            )
+            roster = {int(row['id']): row for row in rows}
             for item in data['records']:
                 student_id = item.get('studentId')
                 student = roster.get(int(student_id)) if student_id else None
@@ -624,7 +864,7 @@ class AttendanceSubmitView(APIView):
                     continue
                 record, _ = AttendanceRecord.objects.update_or_create(
                     school_id=request.user.school_id,
-                    student=student,
+                    student_id=student['id'],
                     date=data['date'],
                     subject=data.get('subject', ''),
                     defaults={

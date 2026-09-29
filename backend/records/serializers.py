@@ -21,12 +21,38 @@ class StudentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        read_only_fields = ['transferredTo', 'attendanceRate', 'average', 'outstandingFees', 'enrollmentHistory']
+        # `school` is absent from `fields` and the rest are derived, so no
+        # request body can move a student between tenants. Ownership is decided
+        # by the view from `request.user.school_id`, never by client input.
+        read_only_fields = [
+            'transferredTo', 'attendanceRate', 'average',
+            'outstandingFees', 'enrollmentHistory',
+        ]
         fields = [
             'id', 'admissionNumber', 'firstName', 'lastName', 'gender', 'dateOfBirth',
             'className', 'arm', 'status', 'guardianName', 'guardianPhone', 'photoUrl',
             'transferredTo', 'attendanceRate', 'average', 'outstandingFees', 'enrollmentHistory',
         ]
+
+    def validate(self, attrs):
+        """Reject attempts to write tenant or lifecycle fields directly.
+
+        A client-supplied `school` / `schoolId` would be a cross-tenant write
+        attempt, so it fails loudly rather than being silently ignored.
+        """
+        request = self.context.get('request')
+        if request is not None:
+            school_id = getattr(request.user, 'school_id', None)
+            for key in ('school', 'schoolId', 'school_id'):
+                if key in request.data:
+                    raise serializers.ValidationError({
+                        key: 'The school is taken from your account and cannot be set here.',
+                    })
+            if school_id is None:
+                raise serializers.ValidationError(
+                    {'detail': 'Your account is not attached to a school.'},
+                )
+        return attrs
 
     def get_id(self, obj):
         return str(obj.id)
@@ -48,6 +74,15 @@ class StudentSerializer(serializers.ModelSerializer):
         }
 
     def get_attendanceRate(self, obj):
+        # Prefer the queryset-level annotation built by
+        # `Student.objects.for_roster()` so a page of students costs one query
+        # rather than two per student.
+        cached = getattr(obj, 'attendance_total', None)
+        if cached is not None:
+            if cached == 0:
+                return 100
+            present = getattr(obj, 'attendance_present', 0) or 0
+            return round((present / cached) * 100, 1)
         records = obj.attendance.all()
         count = records.count()
         if count == 0:
@@ -59,10 +94,28 @@ class StudentSerializer(serializers.ModelSerializer):
         return 0
 
     def get_outstandingFees(self, obj):
+        cached = getattr(obj, 'outstanding_total', None)
+        if cached is not None:
+            return float(cached)
         return float(sum((i.total - i.paid) for i in obj.invoices.all()))
 
     def get_enrollmentHistory(self, obj):
-        return []
+        # Served from the prefetch when the view provides one, so a student's
+        # history is not re-queried per render.
+        history = getattr(obj, '_enrollment_history_cache', None)
+        if history is None:
+            return []
+        return [
+            {
+                'sessionId': str(item.academic_session_id),
+                'session': item.academic_session.name,
+                'className': item.class_obj.name,
+                'arm': item.section.name if item.section_id else '',
+                'status': item.status,
+                'flaggedForReview': item.flagged_for_review,
+            }
+            for item in history
+        ]
 
 
 class StaffMemberSerializer(serializers.ModelSerializer):

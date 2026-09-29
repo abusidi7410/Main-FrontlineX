@@ -3,7 +3,33 @@
  *
  * Every request hits the live Django REST API at API_BASE_URL.
  */
-export const API_BASE_URL = import.meta.env["VITE_API_URL"] ?? "/api";
+
+/**
+ * The backend mounts every app under `/api/v1` (see `backend/config/urls.py`).
+ * This constant is the single source of truth for that prefix: services pass
+ * relative paths such as `/students`, and the client joins them onto it. Do
+ * not repeat the prefix inside individual services.
+ */
+export const API_PREFIX = "/api/v1";
+
+/**
+ * Strip trailing slashes so a misconfigured env var cannot produce `//`.
+ *
+ * A legacy `VITE_API_URL` ending in `/api` used to send every request to
+ * un-versioned `/api/...` endpoints, which 404 against the versioned backend.
+ * Rewrite that shape back to `API_PREFIX` so a stale env var cannot silently
+ * reintroduce the mismatch this module exists to prevent.
+ */
+function normaliseBaseUrl(value: string): string {
+  const trimmed = value.replace(/\/+$/, "");
+  if (/\/api$/i.test(trimmed)) return `${trimmed}${API_PREFIX.slice("/api".length)}`;
+  return trimmed;
+}
+
+export const API_BASE_URL = normaliseBaseUrl(import.meta.env["VITE_API_URL"] || API_PREFIX);
+
+/** Exposed so tests can pin the legacy-`/api` rewrite. */
+export const normaliseForTest = normaliseBaseUrl;
 
 export class ApiRequestError extends Error {
   status: number;
