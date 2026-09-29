@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
@@ -65,6 +65,7 @@ const STATUSES: { value: AttendanceStatus; label: string; className: string }[] 
 
 function AttendancePage() {
   const online = useOnlineStatus();
+  const queryClient = useQueryClient();
   const academics = useQuery({ queryKey: ["academics"], queryFn: () => getAcademicStructure() });
   const classes = academics.data?.classes ?? CLASSES;
 
@@ -130,6 +131,10 @@ function AttendancePage() {
         toast.success(`Attendance submitted for ${className}${arm ? ` ${arm}` : ""}.`);
       }
       void roster.refetch();
+      // The students list shows an attendance percentage derived from these
+      // same records. Without this it kept showing the figure from before the
+      // register was marked, which reads as the submission having done nothing.
+      void queryClient.invalidateQueries({ queryKey: ["students"] });
     },
   });
 

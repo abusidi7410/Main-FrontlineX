@@ -103,14 +103,15 @@ class StudentSerializer(serializers.ModelSerializer):
         # rather than two per student.
         cached = getattr(obj, 'attendance_total', None)
         if cached is not None:
-            if cached == 0:
-                return 100
             present = getattr(obj, 'attendance_present', 0) or 0
-            return round((present / cached) * 100, 1)
+            return round((present / cached) * 100, 1) if cached else 0
         records = obj.attendance.all()
         count = records.count()
         if count == 0:
-            return 100
+            # No records is not perfect attendance. This used to return 100, so
+            # every newly registered student showed a flawless record and the
+            # list rendered it green before a single day had been marked.
+            return 0
         present = records.filter(status__in=[AttendanceRecord.Status.PRESENT, AttendanceRecord.Status.LATE]).count()
         return round((present / count) * 100, 1)
 
