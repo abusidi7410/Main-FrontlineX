@@ -5,7 +5,13 @@ from .models import AttendanceRecord, Invoice, Payment, StaffMember, Student
 
 class StudentSerializer(serializers.ModelSerializer):
     id = serializers.SerializerMethodField()
-    admissionNumber = serializers.CharField(source='admission_number')
+    # Optional on input: the server generates the number when the client omits
+    # it (the default path). A school that keeps its own historical numbering
+    # can still supply one. The database constraint is (school, admission_number),
+    # so a duplicate has to be rejected here to return a 400 instead of a 500.
+    admissionNumber = serializers.CharField(
+        source='admission_number', required=False, allow_blank=True, max_length=30,
+    )
     firstName = serializers.CharField(source='first_name')
     lastName = serializers.CharField(source='last_name')
     dateOfBirth = serializers.DateField(source='date_of_birth', format='%Y-%m-%d', required=False)
@@ -52,6 +58,24 @@ class StudentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {'detail': 'Your account is not attached to a school.'},
                 )
+            # Uniqueness must be checked here rather than with a
+            # UniqueTogetherValidator: `school` is not a serializer field, so
+            # DRF would skip that validator and the IntegrityError would escape
+            # the view as a 500 instead of a readable 400.
+            number = attrs.get('admission_number')
+            if number and request.method in ('POST', 'PUT', 'PATCH'):
+                clash = Student.objects.filter(
+                    school_id=school_id, admission_number=number,
+                )
+                instance = getattr(self, 'instance', None)
+                if instance is not None:
+                    clash = clash.exclude(pk=instance.pk)
+                if clash.exists():
+                    raise serializers.ValidationError({
+                        'admissionNumber': (
+                            f'"{number}" is already used by another student in this school.'
+                        ),
+                    })
         return attrs
 
     def get_id(self, obj):

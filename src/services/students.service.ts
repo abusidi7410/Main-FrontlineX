@@ -35,7 +35,12 @@ export async function getStudentStats(): Promise<StudentStats> {
 export interface StudentInput {
   firstName: string;
   lastName: string;
-  admissionNumber: string;
+  /**
+   * Optional on create: omit it and the server issues the next number for the
+   * class and admission year. Required on update, since an admission number is
+   * permanent once written.
+   */
+  admissionNumber?: string;
   gender: "male" | "female";
   dateOfBirth: string;
   className: string;
@@ -51,6 +56,9 @@ export async function createStudent(input: StudentInput): Promise<Student> {
 
 export async function updateStudent(id: string, input: StudentInput): Promise<Student> {
   // SECURITY: Backend must verify permission students.write and schoolId match.
+  // An admission number is permanent once issued, so it must always be present
+  // on an update: pass `requireAdmissionNumber` through from the edit form,
+  // which prefills the existing value.
   return apiFetch(`/students/${id}`, { method: "PATCH", body: input });
 }
 

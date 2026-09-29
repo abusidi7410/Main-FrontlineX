@@ -39,7 +39,13 @@ function EditStudentPage() {
   });
 
   const mutation = useMutation({
-    mutationFn: (values: StudentValues) => updateStudent(studentId, values),
+    mutationFn: (values: StudentValues) =>
+      // The stored number is authoritative: an admission number is written
+      // once and never changes, so an edit cannot alter or clear it.
+      updateStudent(studentId, {
+        ...values,
+        admissionNumber: values.admissionNumber ?? "",
+      }),
     onSuccess: async (student) => {
       toast.success(`${student.firstName} ${student.lastName}'s details have been updated.`);
       await Promise.all([
@@ -96,6 +102,9 @@ function EditStudentPage() {
             }}
             submitLabel="Save changes"
             isPending={mutation.isPending}
+            // An existing student always has a number, and it is permanent:
+            // never let an edit blank it out and trigger generation of a new one.
+            admissionNumberLocked
             onSubmit={(values) => mutation.mutate(values)}
             cancelLink={
               <Button asChild type="button" variant="outline" className="h-12">

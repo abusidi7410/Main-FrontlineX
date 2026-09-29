@@ -18,7 +18,14 @@ import { ngPhone, requiredText } from "@/lib/validation";
 export const studentSchema = z.object({
   firstName: requiredText("First name"),
   lastName: requiredText("Surname"),
-  admissionNumber: requiredText("Admission number", 30),
+  // Optional: the server generates the number when this is left blank. Only
+  // schools migrating their own historical numbering need to supply one.
+  admissionNumber: z
+    .string()
+    .trim()
+    .max(30, { message: "Admission number must be under 30 characters" })
+    .transform((v) => (v.length === 0 ? undefined : v))
+    .optional(),
   gender: z.enum(["male", "female"]),
   dateOfBirth: requiredText("Date of birth"),
   className: requiredText("Class"),
@@ -35,12 +42,18 @@ export function StudentForm({
   isPending,
   onSubmit,
   cancelLink,
+  admissionNumberLocked = false,
 }: {
   defaultValues: StudentValues;
   submitLabel: string;
   isPending: boolean;
   onSubmit: (values: StudentValues) => void;
   cancelLink: React.ReactNode;
+  /**
+   * Edit mode: the number already exists and is permanent, so it is shown
+   * read-only instead of as an "auto-generate me" blank.
+   */
+  admissionNumberLocked?: boolean;
 }) {
   const form = useForm<StudentValues>({
     resolver: zodResolver(studentSchema),
@@ -59,12 +72,19 @@ export function StudentForm({
         <Field
           label="Admission number"
           id="admissionNumber"
+          optional={!admissionNumberLocked}
+          hint={
+            admissionNumberLocked
+              ? "An admission number is permanent once issued."
+              : "Leave blank and we'll generate one for you."
+          }
           error={form.formState.errors.admissionNumber?.message}
         >
           <Input
             id="admissionNumber"
             className="h-12"
-            placeholder="ALN/2024/001"
+            placeholder="Auto-generated"
+            readOnly={admissionNumberLocked}
             {...form.register("admissionNumber")}
           />
         </Field>
@@ -161,23 +181,36 @@ function Field({
   label,
   id,
   error,
+  hint,
+  optional = false,
   children,
 }: {
   label: string;
   id: string;
   error?: string | undefined;
+  /** Shown under the control; omitted when there is an error to avoid two messages. */
+  hint?: string;
+  /** Renders a muted "optional" marker instead of the required asterisk. */
+  optional?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>
-        {label} <span className="text-destructive">*</span>
+        {label}{" "}
+        {optional ? (
+          <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+        ) : (
+          <span className="text-destructive">*</span>
+        )}
       </Label>
       {children}
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
+      ) : hint ? (
+        <p className="text-sm text-muted-foreground">{hint}</p>
       ) : null}
     </div>
   );

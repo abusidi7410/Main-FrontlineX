@@ -27,6 +27,7 @@ from .models import (
     Student,
 )
 from .services import academic as academic_service
+from .services import admission as admission_service
 from .services import enrollment as enrollment_service
 from .student_import import (
     StudentImportError,
@@ -103,6 +104,55 @@ def _student_queryset(school_id):
 
 # ── Students ───────────────────────────────────────────────────────────────
 
+def _resolve_admission_level(school: School, class_name: str):
+    """Find the Level that owns `class_name` in this school.
+
+    The level segment of an admission number must come from the class's real
+    Level FK, never from parsing the class name (spec §21). If the class has
+    not been configured yet we fall back to the canonical levels so a first
+    registration still works.
+    """
+    school_class = SchoolClass.objects.filter(
+        school_id=school.id, name=class_name,
+    ).select_related('level').first()
+    if school_class is not None and school_class.level_id:
+        return school_class.level
+    levels = academic_service.ensure_levels(school)
+    return levels.get(academic_service.guess_level_code(class_name) or '') or next(
+        iter(levels.values()),
+    )
+
+
+def _admission_year(school: School) -> int:
+    """The admission year: the current session's start year (spec §22).
+
+    Never the calendar year - a session that opened in January must keep
+    producing last year's admission numbers.
+    """
+    session = academic_service.current_session(school)
+    if session is not None:
+        return session.start_year
+    return timezone.now().year
+
+
+def _issue_admission_number(school: School, class_name: str) -> str:
+    """Mint the next admission number for a new student.
+
+    Uses the locked `AdmissionSequence` row rather than `max() + 1`, so two
+    simultaneous registrations cannot collide.
+    """
+    code = academic_service.ensure_school_code(school)
+    if not code:
+        raise ValidationError({
+            'admissionNumber': (
+                'This school has no code yet, so admission numbers cannot be '
+                'issued. Ask an administrator to set one in school settings.'
+            ),
+        })
+    level = _resolve_admission_level(school, class_name)
+    return admission_service.generate_admission_number(school, level, _admission_year(school))
+
+
 class StudentListCreateView(APIView):
     """List the caller's school students, or create one.
 
@@ -137,11 +187,43 @@ class StudentListCreateView(APIView):
         return Response(data)
 
     def post(self, request):
-        serializer = StudentSerializer(data=request.data, context={'request': request})
-        serializer.is_valid(raise_exception=True)
-        # The school comes from the session, never the request body, so a
-        # crafted `schoolId` cannot create a student in another tenant.
-        serializer.save(school_id=request.user.school_id, status=Student.Status.ACTIVE)
+        school = request.user.school
+        supplied = (request.data.get('admissionNumber') or '').strip()
+
+        with transaction.atomic():
+            # The school comes from the session, never the request body, so a
+            # crafted `schoolId` cannot create a student in another tenant.
+            if supplied:
+                serializer = StudentSerializer(
+                    data=request.data, context={'request': request},
+                )
+                serializer.is_valid(raise_exception=True)
+                extra = {'school': school, 'status': Student.Status.ACTIVE}
+            else:
+                # Default path: the server issues the number.
+                number = _issue_admission_number(school, request.data.get('className', ''))
+                serializer = StudentSerializer(
+                    data={**request.data, 'admissionNumber': number},
+                    context={'request': request},
+                )
+                serializer.is_valid(raise_exception=True)
+                extra = {
+                    'school': school,
+                    'status': Student.Status.ACTIVE,
+                    'admission_number': number,
+                    'admission_number_source': (
+                        Student.AdmissionNumberSource.SYSTEM_GENERATED
+                    ),
+                    'admission_year': _admission_year(school),
+                }
+            try:
+                student = serializer.save(**extra)
+            except IntegrityError:
+                # A concurrent request took this number between validation and
+                # insert. Report it as a normal field error, not a 500.
+                raise ValidationError({
+                    'admissionNumber': 'That admission number has just been taken. Please try again.',
+                })
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 

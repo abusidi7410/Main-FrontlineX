@@ -5,8 +5,29 @@ import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { Button } from "@/components/ui/button";
 import { ARMS, CLASSES } from "@/constants/reference";
+import { ApiRequestError } from "@/api/client";
 import { createStudent } from "@/services/students.service";
 import { StudentForm } from "@/features/students/student-form";
+
+/**
+ * Turn DRF's `{ fieldErrors: {...} }` body into one readable sentence, so a
+ * validation failure tells the user what to fix instead of a generic apology.
+ */
+function describeFieldErrors(error: ApiRequestError): string {
+  const fieldErrors = error.fieldErrors;
+  if (fieldErrors && Object.keys(fieldErrors).length > 0) {
+    const messages = Object.values(fieldErrors)
+      .flatMap((value) => (Array.isArray(value) ? value : [value]))
+      .filter((value): value is string => typeof value === "string");
+    if (messages.length === 1 && messages[0] !== undefined) {
+      return messages[0];
+    }
+    if (messages.length > 1) {
+      return messages.join(" ");
+    }
+  }
+  return error.message;
+}
 
 export const Route = createFileRoute("/_app/students/new")({
   head: () => ({
@@ -40,8 +61,15 @@ function NewStudentPage() {
       await queryClient.invalidateQueries({ queryKey: ["students"] });
       void navigate({ to: "/students" });
     },
-    onError: () =>
-      toast.error("We couldn't save this student. Please check the details and try again."),
+    onError: (error) =>
+      // Surface the real reason. A duplicate admission number or a missing
+      // guardian field is a specific, fixable problem - a generic message
+      // made the form look broken with no indication of what to change.
+      toast.error(
+        error instanceof ApiRequestError
+          ? describeFieldErrors(error)
+          : "We couldn't save this student. Please check the details and try again.",
+      ),
   });
 
   return (
@@ -66,7 +94,15 @@ function NewStudentPage() {
           }}
           submitLabel="Save student"
           isPending={mutation.isPending}
-          onSubmit={(values) => mutation.mutate(values)}
+          onSubmit={(values) =>
+            // Drop the key entirely when blank so the server generates the
+            // number instead of receiving an empty string.
+            mutation.mutate(
+              values.admissionNumber
+                ? values
+                : (({ admissionNumber: _omitted, ...rest }) => rest)(values),
+            )
+          }
           cancelLink={
             <Button asChild type="button" variant="outline" className="h-12">
               <Link to="/students">Cancel</Link>

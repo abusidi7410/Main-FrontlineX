@@ -34,6 +34,7 @@ import {
   generateInvoices,
   getFeeStructure,
   listInvoices,
+  updateFeeStructure,
   type FeeItem,
 } from "@/services/finance.service";
 import { CLASSES } from "@/constants/reference";
@@ -192,6 +193,22 @@ function GenerateInvoicesDialog({
   }, [open, academics.data, classes]);
 
   const total = rows.reduce((sum, row) => sum + row.amount, 0);
+  // An empty list is a legitimate structure (no fees), but a half-filled row is
+  // not: the backend rejects blank labels and non-positive amounts.
+  const rowsValid = rows.every((r) => r.label.trim() !== "" && r.amount > 0);
+
+  const save = useMutation({
+    mutationFn: () => updateFeeStructure(rows),
+    onSuccess: (result) => {
+      setRows(result.items);
+      toast.success("Fee structure saved.");
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof ApiRequestError ? error.message : "Could not save the fee structure.",
+      );
+    },
+  });
 
   const generate = useMutation({
     mutationFn: () =>
@@ -261,11 +278,14 @@ function GenerateInvoicesDialog({
         </div>
 
         <div className="space-y-2">
-          <Label>Fee items</Label>
+          <div className="flex items-center justify-between">
+            <Label>Fee items</Label>
+            <span className="text-xs text-muted-foreground">Applies to all classes</span>
+          </div>
           {rows.length === 0 ? (
             <p className="rounded-lg border p-3 text-sm text-muted-foreground">
-              No fee structure yet. Add items — each is the amount every student in the class will
-              be billed.
+              No fee structure yet. Add items — each is the amount every student will be billed.
+              Save them here, then generate invoices whenever you are ready to bill a class.
             </p>
           ) : null}
           {rows.map((row, index) => (
@@ -326,13 +346,17 @@ function GenerateInvoicesDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>
+          {/* Saving is separate from generating: an admin needs to set the
+              structure for next term before any invoice exists to bill. */}
           <Button
-            disabled={
-              !className ||
-              !term ||
-              rows.length === 0 ||
-              rows.some((r) => !r.label || r.amount <= 0)
-            }
+            variant="secondary"
+            disabled={!rowsValid || save.isPending}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? "Saving…" : "Save fee structure"}
+          </Button>
+          <Button
+            disabled={!className || !term || !rowsValid || generate.isPending}
             onClick={() => generate.mutate()}
           >
             {generate.isPending ? "Generating…" : "Generate invoices"}
