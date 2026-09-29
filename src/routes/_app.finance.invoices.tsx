@@ -201,7 +201,23 @@ function GenerateInvoicesDialog({
     mutationFn: () => updateFeeStructure(rows),
     onSuccess: (result) => {
       setRows(result.items);
-      toast.success("Fee structure saved.");
+      // Students registered before any fee structure existed were sitting in
+      // pending_payment with no invoice and no way to ever be billed. Say so,
+      // because the admin has just created real debt for real families.
+      toast.success(
+        result.invoicedPendingStudents > 0
+          ? `Fee structure saved. ${result.invoicedPendingStudents} student${result.invoicedPendingStudents === 1 ? "" : "s"} who registered before fees were set up ${result.invoicedPendingStudents === 1 ? "has" : "have"} now been invoiced.`
+          : "Fee structure saved.",
+        {
+          description:
+            result.invoicedPendingStudents > 0
+              ? "They become active once the invoice is paid in full."
+              : undefined,
+          duration: result.invoicedPendingStudents > 0 ? 10000 : 4000,
+        },
+      );
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["students"] });
     },
     onError: (error) => {
       toast.error(

@@ -75,7 +75,11 @@ function initialsOf(name: string) {
 function StudentsPage() {
   const [search, setSearch] = useState("");
   const [className, setClassName] = useState("all");
-  const [status, setStatus] = useState("active");
+  // Defaults to "all", not "active": every new registration starts as
+  // pending_payment until its admission invoice is settled, so an "active"
+  // default would make a freshly registered student look like they had
+  // vanished.
+  const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
   const [transferTarget, setTransferTarget] = useState<Student | null>(null);
   const debounced = useDebounced(search, 300);
@@ -186,6 +190,7 @@ function StudentsPage() {
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
             <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="pending_payment">Pending payment</SelectItem>
             <SelectItem value="suspended">Suspended</SelectItem>
             <SelectItem value="graduated">Graduated</SelectItem>
             <SelectItem value="withdrawn">Withdrawn</SelectItem>
@@ -208,7 +213,7 @@ function StudentsPage() {
               onClick={() => {
                 setSearch("");
                 setClassName("all");
-                setStatus("active");
+                setStatus("all");
               }}
             >
               Clear filters

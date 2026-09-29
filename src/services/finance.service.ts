@@ -50,8 +50,13 @@ export async function getFeeStructure(): Promise<{ items: FeeItem[] }> {
   return apiFetch("/fees/structure");
 }
 
-export async function updateFeeStructure(items: FeeItem[]): Promise<{ items: FeeItem[] }> {
+export async function updateFeeStructure(
+  items: FeeItem[],
+): Promise<{ items: FeeItem[]; invoicedPendingStudents: number }> {
   // SECURITY: Backend must verify permission finance.write and schoolId match.
+  // Saving also invoices any students who registered before a fee structure
+  // existed, since the bulk generator only bills active students and those
+  // students would otherwise never be able to pay their way in.
   return apiFetch("/fees/structure", { method: "PUT", body: { items } });
 }
 

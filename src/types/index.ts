@@ -117,7 +117,7 @@ export interface Student {
   dateOfBirth: string;
   className: string;
   arm: string;
-  status: "active" | "suspended" | "graduated" | "withdrawn" | "transferred";
+  status: "active" | "pending_payment" | "suspended" | "graduated" | "withdrawn" | "transferred";
   guardianName: string;
   guardianPhone: string;
   photoUrl?: string;

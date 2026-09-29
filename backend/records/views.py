@@ -25,9 +25,11 @@ from .models import (
     Section,
     StaffMember,
     Student,
+    invoice_item_amount,
 )
 from .services import academic as academic_service
 from .services import admission as admission_service
+from .services import billing as billing_service
 from .services import enrollment as enrollment_service
 from .student_import import (
     StudentImportError,
@@ -103,6 +105,10 @@ def _student_queryset(school_id):
 
 
 # ── Students ───────────────────────────────────────────────────────────────
+
+# An admission invoice is due 30 days out, the same window the registration
+# workflow uses, so OVERDUE means the same thing on both paths.
+ADMISSION_INVOICE_DUE_DAYS = 30
 
 def _resolve_admission_level(school: School, class_name: str):
     """Find the Level that owns `class_name` in this school.
@@ -198,7 +204,7 @@ class StudentListCreateView(APIView):
                     data=request.data, context={'request': request},
                 )
                 serializer.is_valid(raise_exception=True)
-                extra = {'school': school, 'status': Student.Status.ACTIVE}
+                extra = {'school': school, 'status': Student.Status.PENDING_PAYMENT}
             else:
                 # Default path: the server issues the number.
                 number = _issue_admission_number(school, request.data.get('className', ''))
@@ -209,7 +215,7 @@ class StudentListCreateView(APIView):
                 serializer.is_valid(raise_exception=True)
                 extra = {
                     'school': school,
-                    'status': Student.Status.ACTIVE,
+                    'status': Student.Status.PENDING_PAYMENT,
                     'admission_number': number,
                     'admission_number_source': (
                         Student.AdmissionNumberSource.SYSTEM_GENERATED
@@ -224,7 +230,21 @@ class StudentListCreateView(APIView):
                 raise ValidationError({
                     'admissionNumber': 'That admission number has just been taken. Please try again.',
                 })
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+            # Registration and billing are one operation: the student is not
+            # usable until the fees are settled, so the invoice is raised here
+            # rather than waiting for someone to remember a separate billing
+            # run. A school with no fees configured still registers fine.
+            invoice = billing_service.create_invoice_from_school_fees(
+                school=school, student=student,
+                due_date=billing_service.default_due_date(None, days=ADMISSION_INVOICE_DUE_DAYS),
+            )
+        data = dict(serializer.data)
+        data['invoiceId'] = str(invoice.id) if invoice else ''
+        data['invoiceTotal'] = str(invoice.total) if invoice else ''
+        # False means registered, but unbillable until fees are set up.
+        data['feesConfigured'] = invoice is not None
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class StudentStatsView(APIView):
@@ -560,13 +580,16 @@ class InvoiceGenerateView(APIView):
             raise ValidationError(errors)
 
         school = get_object_or_404(School, id=request.user.school_id)
-        structure = school.fee_structure or []
-        items = [it for it in structure if it.get('className', '*') in ('*', class_name)]
+        # Same resolution the admission path uses, so a class cannot be billed
+        # two different ways depending on which screen started it.
+        items = billing_service.school_fee_items(school, class_name)
         if not items:
             raise ValidationError({
                 'className': f'No fee items are set up for {class_name}. Add a fee structure first.',
             })
-        total = Decimal(sum(Decimal(it['amount']) for it in items))
+        total = sum(
+            (invoice_item_amount(item) for item in items), Decimal('0'),
+        )
         students = Student.objects.filter(
             school_id=school.id, class_name=class_name, status=Student.Status.ACTIVE,
         )
@@ -629,7 +652,16 @@ class FeeStructureView(APIView):
             normalized.append({'label': label, 'amount': float(amount), 'className': class_name})
         school.fee_structure = normalized
         school.save(update_fields=['fee_structure'])
-        return Response({'items': school.fee_structure})
+        # Students registered before any fee structure existed are sitting in
+        # PENDING_PAYMENT with no invoice, and the bulk generator only bills
+        # active students, so they would never be invoiced and never become
+        # active. Raising their admission invoice here is the only moment the
+        # school has both the fees and the students.
+        invoiced = billing_service.invoice_pending_students(school)
+        return Response({
+            'items': school.fee_structure,
+            'invoicedPendingStudents': invoiced,
+        })
 
 
 class PaymentListView(APIView):
@@ -698,7 +730,15 @@ class PaymentListView(APIView):
             if verified:
                 invoice.paid += amount
                 invoice.save(update_fields=['paid'])
-        return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+            # Cash and POS are verified on the spot, so a family paying the
+            # admission fee at the bursar's desk is fully settled right here.
+            # Without this the student would sit in PENDING_PAYMENT until some
+            # later verification endpoint happened to run.
+            activated = billing_service.activate_student_if_fully_paid(invoice.student)
+        return Response(
+            {**PaymentSerializer(payment).data, 'studentActivated': activated},
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class PaymentVerifyView(APIView):
@@ -716,7 +756,10 @@ class PaymentVerifyView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if payment.status == Payment.Status.VERIFIED:
-                return Response(PaymentSerializer(payment).data)
+                # Already verified: re-running is a no-op for the money, but the
+                # student may still be held if the earlier run failed midway.
+                activated = billing_service.activate_student_if_fully_paid(payment.invoice.student)
+                return Response({**PaymentSerializer(payment).data, 'studentActivated': activated})
             invoice = Invoice.objects.select_for_update().get(pk=payment.invoice_id)
             outstanding = invoice.total - invoice.paid
             if payment.amount > outstanding:
@@ -728,7 +771,11 @@ class PaymentVerifyView(APIView):
             invoice.save(update_fields=['paid'])
             payment.status = Payment.Status.VERIFIED
             payment.save(update_fields=['status'])
-        return Response(PaymentSerializer(payment).data)
+            # Verifying the final instalment is what lets a new student start
+            # classes. Only promotes PENDING_PAYMENT forward, so this can never
+            # undo a suspension or a graduation.
+            activated = billing_service.activate_student_if_fully_paid(invoice.student)
+        return Response({**PaymentSerializer(payment).data, 'studentActivated': activated})
 
 
 class PaymentReverseView(APIView):

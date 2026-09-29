@@ -8,6 +8,7 @@ import { ARMS, CLASSES } from "@/constants/reference";
 import { ApiRequestError } from "@/api/client";
 import { createStudent } from "@/services/students.service";
 import { StudentForm } from "@/features/students/student-form";
+import { naira } from "@/lib/format";
 
 /**
  * Turn DRF's `{ fieldErrors: {...} }` body into one readable sentence, so a
@@ -54,11 +55,21 @@ function NewStudentPage() {
 
   const mutation = useMutation({
     mutationFn: createStudent,
-    onSuccess: async (student) => {
+    onSuccess: async ({ student, invoiceTotal, feesConfigured }) => {
+      // Registration raises the admission invoice, so say what is owed and
+      // that the student is not yet cleared for classes. A registrar who only
+      // sees "added to JSS 1" would reasonably assume the student can attend.
       toast.success(
-        `${student.firstName} ${student.lastName} has been added to ${student.className}${student.arm}.`,
+        `${student.firstName} ${student.lastName} registered in ${student.className}${student.arm}.`,
+        {
+          description: feesConfigured
+            ? `Admission invoice of ${naira(Number(invoiceTotal) || 0)} raised. The student becomes active once it is paid in full.`
+            : "No fee structure is set up yet, so no invoice was raised. Set one up under Finance to bill this student.",
+          duration: feesConfigured ? 8000 : 12000,
+        },
       );
       await queryClient.invalidateQueries({ queryKey: ["students"] });
+      await queryClient.invalidateQueries({ queryKey: ["invoices"] });
       void navigate({ to: "/students" });
     },
     onError: (error) =>

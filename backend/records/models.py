@@ -197,6 +197,10 @@ class Student(models.Model):
 
     class Status(models.TextChoices):
         ACTIVE = 'active', 'Active'
+        # Registered but not yet cleared for classes: an admission invoice is
+        # outstanding. Distinct from SUSPENDED, which is a punishment for an
+        # existing student, not a pre-enrolment billing hold.
+        PENDING_PAYMENT = 'pending_payment', 'Pending payment'
         SUSPENDED = 'suspended', 'Suspended'
         GRADUATED = 'graduated', 'Graduated'
         WITHDRAWN = 'withdrawn', 'Withdrawn'

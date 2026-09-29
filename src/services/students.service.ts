@@ -49,9 +49,27 @@ export interface StudentInput {
   guardianPhone: string;
 }
 
-export async function createStudent(input: StudentInput): Promise<Student> {
+export interface RegistrationOutcome {
+  student: Student;
+  /** The admission invoice raised at registration, absent when the school has no fee structure yet. */
+  invoiceId: string;
+  invoiceTotal: string;
+  feesConfigured: boolean;
+}
+
+export async function createStudent(input: StudentInput): Promise<RegistrationOutcome> {
   // SECURITY: Backend must verify permission students.write and schoolId match.
-  return apiFetch("/students", { method: "POST", body: input });
+  // Registration also raises the admission invoice, so the response carries
+  // enough for the registrar to tell the family what is owed.
+  const { invoiceId, invoiceTotal, feesConfigured, ...student } = await apiFetch<
+    Student & { invoiceId?: string; invoiceTotal?: string; feesConfigured?: boolean }
+  >("/students", { method: "POST", body: input });
+  return {
+    student: student as Student,
+    invoiceId: invoiceId ?? "",
+    invoiceTotal: invoiceTotal ?? "",
+    feesConfigured: Boolean(feesConfigured),
+  };
 }
 
 export async function updateStudent(id: string, input: StudentInput): Promise<Student> {
