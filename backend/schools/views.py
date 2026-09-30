@@ -23,16 +23,24 @@ class SchoolViewSet(viewsets.ModelViewSet):
     serializer_class = SchoolSerializer
     permission_classes = [IsSuperAdmin]
 
-
 @method_decorator(cache_page(60 * 5), name='list')
 class SubscriptionPlanViewSet(viewsets.ModelViewSet):
-    """Plans are public so the onboarding flow can read them.
+    """Plans are readable by anyone so the onboarding flow can show pricing.
 
     The list is cached in Redis for 5 minutes since plans change rarely.
+
+    Only the platform superadmin may change pricing. This used to be a plain
+    `AllowAny` on a full ModelViewSet, which let an anonymous caller create,
+    rewrite and delete the commercial plan data.
     """
+
     queryset = SubscriptionPlan.objects.filter(is_active=True)
     serializer_class = SubscriptionPlanSerializer
-    permission_classes = [AllowAny]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsSuperAdmin()]
 
 
 class SchoolRegisterView(APIView):

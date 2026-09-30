@@ -19,9 +19,14 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_active', True)
-        extra_fields.setdefault('role', 'superadmin')
+        # The role must be one the model actually accepts. This used to demand a
+        # 'superadmin' value that is not in `User.Role`, so `createsuperuser`
+        # always raised and the only way to create the first platform user
+        # (the `create_superadmin` command, which passes 'platform_manager')
+        # was rejected too.
+        extra_fields.setdefault('role', self.model.Role.PLATFORM_MANAGER)
 
-        if extra_fields.get('role') != 'superadmin':
-            raise ValueError('Superuser must have role=superadmin.')
+        if extra_fields.get('role') != self.model.Role.PLATFORM_MANAGER:
+            raise ValueError('Superuser must have role=platform_manager.')
 
         return self.create_user(email, password=password, **extra_fields)

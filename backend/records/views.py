@@ -60,6 +60,13 @@ CanCreateStudent = require_permissions('students.register')
 CanWriteStudent = require_permissions('students.write')
 CanReadAttendance = require_permissions('attendance.read')
 
+# Staff records and the school's class/subject configuration are writable
+# capabilities, not a consequence of merely being logged in. `HasSchool` alone
+# let any pupil or parent login create and delete staff (see the regression
+# tests in test_authorisation_regressions.py).
+CanWriteStaff = require_permissions('staff.write')
+CanWriteAcademics = require_permissions('academics.write')
+
 
 def _paginate(queryset, request, serializer_class, context=None):
     try:
@@ -500,6 +507,8 @@ class StaffListView(APIView):
         return Response(StaffMemberSerializer(qs, many=True).data)
 
     def post(self, request):
+        if not CanWriteStaff().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to manage staff.')
         serializer = StaffMemberSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(school_id=request.user.school_id, status=StaffMember.Status.ACTIVE)
@@ -516,6 +525,8 @@ class StaffDetailView(APIView):
         return Response(StaffMemberSerializer(self.get_object(request, pk)).data)
 
     def patch(self, request, pk):
+        if not CanWriteStaff().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to manage staff.')
         member = self.get_object(request, pk)
         serializer = StaffMemberSerializer(member, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -523,6 +534,8 @@ class StaffDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, pk):
+        if not CanWriteStaff().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to manage staff.')
         member = self.get_object(request, pk)
         member.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -596,8 +609,13 @@ class InvoiceGenerateView(APIView):
         generated = updated = 0
         with transaction.atomic():
             for student in students.select_for_update():
+                # A cancelled invoice is history, not a live charge. Looking it
+                # up here meant the overwrite branch below would rewrite a
+                # cancelled invoice's amounts and leave it cancelled, so the
+                # student was silently never re-billed.
                 invoice = Invoice.objects.filter(
                     school_id=school.id, student_id=student.id, term=term,
+                    is_cancelled=False,
                 ).first()
                 if invoice:
                     if overwrite and total >= invoice.paid:
@@ -1055,6 +1073,8 @@ class AcademicsView(APIView):
         return Response(self._payload(self._school(request)))
 
     def patch(self, request):
+        if not CanWriteAcademics().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to change academic settings.')
         school = self._school(request)
         session = (request.data.get('session') or '').strip()
         term = (request.data.get('term') or '').strip()

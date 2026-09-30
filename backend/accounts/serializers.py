@@ -90,7 +90,7 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 password=validated_data['admin_password'],
                 first_name=validated_data['admin_first_name'],
                 last_name=validated_data['admin_last_name'],
-                role=User.Role.ADMIN,
+                role=User.Role.SCHOOL_ADMIN,
                 school=school,
                 is_verified=True,
             )

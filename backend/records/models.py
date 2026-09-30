@@ -489,9 +489,13 @@ class Invoice(models.Model):
             models.CheckConstraint(
                 condition=Q(total__gte=0), name='invoice_total_non_negative',
             ),
+            # Only live invoices occupy the slot. A cancelled invoice is kept as
+            # history, so without the `is_cancelled=False` condition it would
+            # block the school from ever re-issuing that student an invoice for
+            # the same term.
             models.UniqueConstraint(
                 fields=['student', 'academic_session', 'term'],
-                condition=Q(academic_session__isnull=False),
+                condition=Q(academic_session__isnull=False, is_cancelled=False),
                 name='unique_invoice_per_student_session_term',
             ),
         ]
