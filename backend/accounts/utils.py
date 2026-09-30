@@ -43,18 +43,33 @@ def generate_temp_password():
     return f'Fnx{secrets.token_urlsafe(9)}'
 
 
-def audit(request, action, target, detail='', severity='info'):
-    """Record an audit event with the actor resolved from the request."""
-    actor = request.user.get_full_name() or request.user.email
+def audit(
+    request, action, target, detail='', severity='info',
+    *, entity='', entity_id='', before=None, after=None,
+):
+    """Record an audit event with the actor resolved from the request.
+
+    `actor` stays a readable string for the platform screens. `user`, `entity`
+    and `entity_id` are what a reviewer filters on when following one record's
+    trail, and `before`/`after` hold the values an operation changed so the
+    entry is reviewable without diffing every table.
+    """
+    user = getattr(request, 'user', None)
+    actor = (user.get_full_name() or user.email) if user else 'system'
     AuditLog.objects.create(
-        actor=f'{actor} ({request.user.email})',
-        role=request.user.role,
+        actor=f'{actor} ({user.email})' if user else actor,
+        role=getattr(user, 'role', '') or '',
         action=action,
         target=str(target)[:255],
         detail=str(detail)[:2000],
         ip=_client_ip(request),
         severity=severity,
-        school=request.user.school,
+        school=getattr(user, 'school', None),
+        user=user if getattr(user, 'is_authenticated', False) else None,
+        entity=entity or '',
+        entity_id=str(entity_id or '')[:40],
+        before=before or {},
+        after=after or {},
     )
 
 

@@ -38,6 +38,20 @@ class School(models.Model):
     classes = models.JSONField(default=list, blank=True)
     subjects = models.JSONField(default=list, blank=True)
     fee_structure = models.JSONField(default=list, blank=True)
+    # Financial clearance policy (spec 21, 44).
+    #
+    # False (default): a registration fee alone is enough to clear a new
+    # student, so a family that has paid the admission charge is enrolled even
+    # while tuition is arranged separately.
+    # True: every required fee on the admission invoice must be paid in full
+    # before the student is financially cleared.
+    #
+    # Either way a student still needs a valid `Enrollment` to appear in a class
+    # roster: payment never activates a student by itself.
+    # `db_default` as well as `default`: the database itself needs a default so
+    # the column is safe to add to existing rows and so any write that does not
+    # name the field (a bulk load, a historical model, raw SQL) still works.
+    activation_requires_full_settlement = models.BooleanField(default=False, db_default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -150,6 +164,20 @@ class AuditLog(models.Model):
     role = models.CharField(max_length=20, blank=True, default='')
     action = models.CharField(max_length=100)
     target = models.CharField(max_length=255, blank=True, default='')
+    # The acting account, so an audit entry is attributable even if the person
+    # later leaves the school or their name/email changes. `actor` above stays
+    # as the human-readable string the platform screens already display.
+    user = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='audit_entries',
+    )
+    # The record the entry is about, e.g. 'student' / 'payment' / 'enrollment'.
+    entity = models.CharField(max_length=40, blank=True, default='')
+    entity_id = models.CharField(max_length=40, blank=True, default='')
+    # Before/after values for the fields an operation changed, so a reviewer can
+    # see what moved without diffing every table.
+    before = models.JSONField(default=dict, blank=True)
+    after = models.JSONField(default=dict, blank=True)
     detail = models.TextField(blank=True, default='')
     ip = models.CharField(max_length=64, blank=True, default='')
     severity = models.CharField(
@@ -159,6 +187,12 @@ class AuditLog(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            # The audit screen filters a school's entries by action, and a
+            # per-entity trail filters by school + entity + id.
+            models.Index(fields=['school', 'action']),
+            models.Index(fields=['school', 'entity', 'entity_id']),
+        ]
         indexes = [
             models.Index(fields=['school']),
             models.Index(fields=['-created_at']),

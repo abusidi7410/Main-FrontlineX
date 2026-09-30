@@ -23,7 +23,9 @@ export interface StudentStats {
   total: number;
   active: number;
   suspended: number;
-  averageAttendance: number;
+  // `null` when the school has no attendance records at all. A 0 here would
+  // read as "every student is absent", so the absence has to be visible.
+  averageAttendance: number | null;
   outstandingFees: number;
 }
 

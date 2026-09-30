@@ -1,19 +1,26 @@
 import uuid
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
-from django.db.models import Prefetch, Q, Sum
+from django.db.models import Count, Prefetch, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import HasSchool, require_permissions, require_roles
+from accounts.permissions import (
+    HasSchool,
+    has_permission,
+    require_permissions,
+    require_roles,
+)
+from accounts.utils import audit as log_audit
 from schools.models import School, SchoolSubscription
 from .models import (
     EPOCH,
@@ -23,6 +30,7 @@ from .models import (
     FeeStructure,
     Invoice,
     Payment,
+    ResultSheet,
     SchoolClass,
     Section,
     StaffMember,
@@ -31,8 +39,10 @@ from .models import (
 )
 from .services import academic as academic_service
 from .services import admission as admission_service
+from .services import ai_tools
 from .services import billing as billing_service
 from .services import enrollment as enrollment_service
+from .services import results as result_service
 from .student_import import (
     StudentImportError,
     analyse_import,
@@ -76,12 +86,20 @@ CanWriteFeeStructure = require_permissions('finance.structure')
 
 
 def _paginate(queryset, request, serializer_class, context=None):
+    """Offset pagination bounded to 25 rows a page, 100 at most.
+
+    Both `pageSize` and the snake_case `page_size` are accepted so the frontend
+    can use either convention. The ceiling is deliberate: a client must not be
+    able to ask for the whole school in one response, because every list screen
+    is paged and an unbounded page silently becomes a full-table scan.
+    """
     try:
         page = max(int(request.query_params.get('page', 1)), 1)
-        page_size = int(request.query_params.get('pageSize', 20))
+        raw_size = request.query_params.get('page_size') or request.query_params.get('pageSize')
+        page_size = int(raw_size) if raw_size not in (None, '') else 25
     except ValueError:
-        page, page_size = 1, 20
-    page_size = min(max(page_size, 1), 2000)
+        page, page_size = 1, 25
+    page_size = min(max(page_size, 1), 100)
     count = queryset.count()
     start = (page - 1) * page_size
     items = queryset[start:start + page_size]
@@ -91,6 +109,7 @@ def _paginate(queryset, request, serializer_class, context=None):
         'count': count,
         'page': page,
         'pageSize': page_size,
+        'totalPages': max((count + page_size - 1) // page_size, 1),
     }
 
 
@@ -123,6 +142,36 @@ def _student_queryset(school_id):
 # An admission invoice is due 30 days out, the same window the registration
 # workflow uses, so OVERDUE means the same thing on both paths.
 ADMISSION_INVOICE_DUE_DAYS = 30
+
+
+def _filtered_students(request, *, search='', class_name='', class_id='', student_status=''):
+    """The student list, filtered in the database rather than in the client.
+
+    The base queryset is already school-scoped, so a `class_id` belonging to
+    another school matches nothing instead of leaking that school's class.
+    """
+    qs = _student_queryset(request.user.school_id)
+    if search:
+        qs = qs.filter(
+            Q(first_name__icontains=search)
+            | Q(last_name__icontains=search)
+            | Q(admission_number__icontains=search)
+        )
+    if class_id:
+        # Membership comes from the active enrollment, not the denormalised
+        # `Student.class_name` mirror, so a stale mirror cannot decide the list.
+        qs = qs.filter(
+            enrollments__class_obj_id=class_id,
+            enrollments__status=Enrollment.Status.ACTIVE,
+        ).distinct()
+    elif class_name:
+        qs = qs.filter(class_name=class_name)
+    if student_status:
+        if student_status not in Student.Status.values:
+            raise ValidationError({'status': f'"{student_status}" is not a student status.'})
+        qs = qs.filter(status=student_status)
+    return qs
+
 
 def _resolve_admission_level(school: School, class_name: str):
     """Find the Level that owns `class_name` in this school.
@@ -173,6 +222,72 @@ def _issue_admission_number(school: School, class_name: str) -> str:
     return admission_service.generate_admission_number(school, level, _admission_year(school))
 
 
+class StudentPromotionView(APIView):
+    """Carry a student into the next session at the top of their class.
+
+    Promotion writes a *new* enrollment in the destination session and closes
+    the source one as COMPLETED. The historical row is never overwritten, so a
+    transcript can always show where the student was and when::
+
+        2025/2026  JSS 1A  COMPLETED
+        2026/2027  JSS 2A  ACTIVE
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, require_permissions('enrollment.manage')]
+
+    def post(self, request, pk):
+        school = request.user.school
+        student = get_object_or_404(Student, id=pk, school_id=school.id)
+
+        to_session = get_object_or_404(
+            AcademicSession.objects.filter(school_id=school.id),
+            id=request.data.get('toSessionId'),
+        )
+        to_class = get_object_or_404(
+            SchoolClass.objects.filter(school_id=school.id),
+            id=request.data.get('toClassId'),
+        )
+        to_section = None
+        if request.data.get('toSectionId'):
+            to_section = get_object_or_404(
+                Section.objects.filter(school_id=school.id, class_obj=to_class),
+                id=request.data.get('toSectionId'),
+            )
+
+        from_session = None
+        if request.data.get('fromSessionId'):
+            from_session = get_object_or_404(
+                AcademicSession.objects.filter(school_id=school.id),
+                id=request.data.get('fromSessionId'),
+            )
+        else:
+            from_session = academic_service.current_session(school)
+
+        with transaction.atomic():
+            promoted = enrollment_service.promote_student(
+                student,
+                from_session=from_session,
+                to_session=to_session,
+                class_obj=to_class,
+                section=to_section,
+                actor=request.user,
+            )
+            log_audit(
+                request, 'student.promoted', target='Student',
+                detail=f'{from_session.name} {student.class_name} -> {to_session.name} {to_class.name}',
+                entity='student', entity_id=str(student.pk),
+                after={'session': to_session.name, 'class': to_class.name},
+            )
+
+        return Response({
+            'studentId': str(student.pk),
+            'enrollmentId': str(promoted.pk),
+            'session': to_session.name,
+            'className': to_class.name,
+            'sectionName': to_section.name if to_section else '',
+        })
+
+
 class StudentListCreateView(APIView):
     """List the caller's school students, or create one.
 
@@ -189,21 +304,15 @@ class StudentListCreateView(APIView):
         return [IsAuthenticated(), HasSchool(), require_permissions('students.read')()]
 
     def get(self, request):
-        qs = _student_queryset(request.user.school_id)
         search = request.query_params.get('search', '').strip()
-        if search:
-            qs = qs.filter(
-                Q(first_name__icontains=search)
-                | Q(last_name__icontains=search)
-                | Q(admission_number__icontains=search)
-            )
         class_name = request.query_params.get('className', '').strip()
-        if class_name:
-            qs = qs.filter(class_name=class_name)
+        class_id = request.query_params.get('class_id') or request.query_params.get('classId')
         student_status = request.query_params.get('status', '').strip()
-        if student_status:
-            qs = qs.filter(status=student_status)
-        data = _paginate(qs, request, StudentSerializer, context={'request': request})
+        data = _paginate(
+            _filtered_students(request, search=search, class_name=class_name,
+                               class_id=class_id, student_status=student_status),
+            request, StudentSerializer, context={'request': request},
+        )
         return Response(data)
 
     def post(self, request):
@@ -261,24 +370,48 @@ class StudentListCreateView(APIView):
         return Response(data, status=status.HTTP_201_CREATED)
 
 
+def _average_attendance(school_id, *, days: int = 30):
+    """Mean attendance rate over the last `days` of marked registers.
+
+    Computed in the database so a school with years of history does not load
+    every record to produce one number. A school that has taken no register yet
+    reports ``None`` rather than a flattering 100%, so the UI can show an empty
+    state instead of inventing a figure.
+    """
+    since = timezone.now().date() - timedelta(days=days)
+    counts = AttendanceRecord.objects.filter(
+        school_id=school_id, date__gte=since,
+    ).aggregate(
+        present=Count('pk', filter=Q(
+            status__in=[AttendanceRecord.Status.PRESENT, AttendanceRecord.Status.LATE],
+        )),
+        total=Count('pk'),
+    )
+    if not counts['total']:
+        return None
+    return round(counts['present'] * 100 / counts['total'], 1)
+
+
 class StudentStatsView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, require_permissions('students.read')]
 
     def get(self, request):
-        qs = Student.objects.filter(school_id=request.user.school_id)
+        school_id = request.user.school_id
+        qs = Student.objects.filter(school_id=school_id)
         total = qs.count()
         active = qs.filter(status=Student.Status.ACTIVE).count()
         suspended = qs.filter(status=Student.Status.SUSPENDED).count()
         # Aggregate in the database rather than loading every invoice row into
         # Python (spec §72).
         outstanding = Invoice.objects.filter(
-            school_id=request.user.school_id,
+            school_id=school_id,
         ).aggregate(net=Sum('total') - Sum('paid'))['net'] or Decimal('0')
         return Response({
             'total': total,
             'active': active,
+            'pendingPayment': qs.filter(status=Student.Status.PENDING_PAYMENT).count(),
             'suspended': suspended,
-            'averageAttendance': 100,
+            'averageAttendance': _average_attendance(school_id),
             'outstandingFees': float(outstanding),
         })
 
@@ -421,18 +554,32 @@ class StudentTransferView(APIView):
             session = academic_service.current_session(request.user.school)
 
         with transaction.atomic():
-            enrollment = enrollment_service.move_active_enrollment(
+            previous, enrollment = enrollment_service.transfer_active_enrollment(
                 student,
                 session,
                 target_class,
                 target_section,
                 actor=request.user,
             )
-            enrollment_service.sync_student_class_mirror(student, enrollment)
             student.status = Student.Status.ACTIVE
             student.save(update_fields=['status'])
+            log_audit(
+                request, 'student.transferred', target='Student',
+                detail=f'{previous.class_obj.name if previous else student.class_name} -> {target_class.name}',
+                entity='student', entity_id=str(student.pk),
+                before={
+                    'class': previous.class_obj.name if previous else student.class_name,
+                    'section': previous.section.name if previous and previous.section_id else '',
+                } if previous else {},
+                after={
+                    'class': target_class.name,
+                    'section': target_section.name if target_section else '',
+                },
+            )
 
-        return Response(StudentSerializer(student, context={'request': request}).data)
+        payload = StudentSerializer(student, context={'request': request}).data
+        payload['previousClass'] = previous.class_obj.name if previous else ''
+        return Response(payload)
 
 
 class StudentImportAnalysisView(APIView):
@@ -1071,11 +1218,252 @@ class SubscriptionView(APIView):
 
 # ── Results (contract stub; full module later) ────────────────────────────
 
+class _ResultSheetListSerializer(serializers.Serializer):
+    """Flat summary of a sheet for the paged results list."""
+
+    def to_representation(self, instance):
+        return {
+            'id': instance.id,
+            'session': instance.academic_session.name,
+            'className': instance.class_obj.name,
+            'subject': instance.subject,
+            'assessment': instance.assessment,
+            'assessmentMax': str(instance.assessment_max),
+            'term': instance.term,
+            'status': instance.status,
+            'isLocked': instance.is_locked,
+        }
+
+
 class ResultSheetListView(APIView):
+    """List a school's result sheets, or open one to read its scores.
+
+    Always scoped to the caller's school, and the session/class filters are
+    resolved against that school too, so a School A user cannot read a School B
+    sheet by changing the id in the query string.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, require_permissions('results.read')]
+
+    def get(self, request):
+        school = request.user.school
+        queryset = (
+            ResultSheet.objects
+            .filter(school=school)
+            .select_related('academic_session', 'class_obj')
+        )
+        session_id = request.query_params.get('sessionId')
+        if session_id:
+            session = get_object_or_404(
+                AcademicSession.objects.filter(school=school), id=session_id,
+            )
+            queryset = queryset.filter(academic_session=session)
+        else:
+            session = academic_service.current_session(school)
+            if session is not None:
+                queryset = queryset.filter(academic_session=session)
+
+        class_name = request.query_params.get('className', '').strip()
+        if class_name:
+            queryset = queryset.filter(class_obj__name=class_name)
+        subject = request.query_params.get('subject', '').strip()
+        if subject:
+            queryset = queryset.filter(subject__iexact=subject)
+        status_filter = request.query_params.get('status', '').strip()
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+
+        data = _paginate(
+            queryset,
+            request,
+            _ResultSheetListSerializer,
+        )
+        if request.query_params.get('page') or request.query_params.get('pageSize'):
+            return Response(data)
+
+        return Response([
+            {
+                'id': sheet.id,
+                'session': sheet.academic_session.name,
+                'className': sheet.class_obj.name,
+                'subject': sheet.subject,
+                'assessment': sheet.assessment,
+                'term': sheet.term,
+                'status': sheet.status,
+                'isLocked': sheet.is_locked,
+            }
+            for sheet in queryset
+        ])
+
+
+class ResultSheetDetailView(APIView):
+    """One sheet with its scores."""
+
+    permission_classes = [IsAuthenticated, HasSchool, require_permissions('results.read')]
+
+    def get(self, request, pk):
+        sheet = get_object_or_404(
+            ResultSheet.objects.select_related('academic_session', 'class_obj'),
+            id=pk, school_id=request.user.school_id,
+        )
+        return Response(result_service.sheet_detail(sheet))
+
+
+class ResultSheetActionView(APIView):
+    """Drive a sheet through its lifecycle.
+
+    One endpoint, many actions, so the state machine lives in
+    `records.services.results` rather than being spread across routes. Each
+    action requires the permission that owns that step, and the transition
+    itself is validated server-side: a client cannot jump a sheet straight to
+    PUBLISHED or unlock a LOCKED one without an authorised correction.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    #: action -> permission required to perform it.
+    ACTION_PERMISSIONS = {
+        'scores': 'results.write',
+        'submit': 'results.write',
+        'review': 'results.approve',
+        'approve': 'results.approve',
+        'publish': 'results.publish',
+        'lock': 'results.publish',
+        'request-correction': 'results.write',
+        'release-correction': 'results.publish',
+    }
+
+    def post(self, request, pk):
+        action = request.data.get('action', '').strip()
+        required = self.ACTION_PERMISSIONS.get(action)
+        if required is None:
+            raise ValidationError({
+                'action': f'"{action}" is not a results action.',
+            })
+        if not has_permission(request.user.role, required):
+            raise PermissionDenied(
+                f'You do not have permission to {action.replace("-", " ")} a result sheet.',
+            )
+
+        sheet = get_object_or_404(
+            ResultSheet.objects.select_related('academic_session', 'class_obj', 'school'),
+            id=pk, school_id=request.user.school_id,
+        )
+
+        if action == 'scores':
+            updated = result_service.record_scores(sheet, request.data.get('scores') or {})
+            return Response({'updated': updated, **result_service.sheet_detail(sheet)})
+        if action == 'request-correction':
+            result_service.request_correction(
+                sheet, str(request.data.get('reason') or ''), actor=request.user,
+            )
+        elif action == 'release-correction':
+            result_service.release_for_correction(sheet, actor=request.user)
+        else:
+            target = {
+                'submit': ResultSheet.Status.SUBMITTED,
+                'review': ResultSheet.Status.UNDER_REVIEW,
+                'approve': ResultSheet.Status.APPROVED,
+                'publish': ResultSheet.Status.PUBLISHED,
+                'lock': ResultSheet.Status.LOCKED,
+            }[action]
+            result_service.advance(sheet, target, actor=request.user)
+
+        sheet.refresh_from_db()
+        log_audit(
+            request, f'result.{action}', target=f'ResultSheet {sheet.id}',
+            detail=f'{sheet.class_obj.name} {sheet.subject} {sheet.assessment} -> {sheet.status}',
+            entity='result_sheet', entity_id=str(sheet.pk), after={'status': sheet.status},
+        )
+        return Response(result_service.sheet_detail(sheet))
+
+
+class AssistantToolsView(APIView):
+    """What the assistant is allowed to do, for this user, right now.
+
+    The catalogue is computed from the same permission table the enforcement
+    uses, so the UI cannot offer a capability the backend would refuse.
+    """
+
     permission_classes = [IsAuthenticated, HasSchool]
 
     def get(self, request):
-        return Response([])
+        granted = ai_tools.assistant_permissions(request.user)
+        return Response({
+            'assistantPermissions': granted,
+            'tools': ai_tools.tool_catalogue(request.user),
+        })
+
+
+class AssistantQueryView(APIView):
+    """The assistant endpoint (spec 62-68).
+
+    It accepts a tool name plus arguments, and does exactly three things:
+    authorise, call the real service, return the result. There is no free-form
+    data path and no server-side prompt that could widen access, because a
+    model's choice of tool is untrusted input and is authorised exactly like any
+    other request.
+
+    Writes are two-phase: the first call returns a confirmation token, and only
+    a second call carrying that token performs the action.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def post(self, request):
+        if not ai_tools.assistant_permissions(request.user):
+            raise PermissionDenied('Your role does not have access to the assistant.')
+
+        action = str(request.data.get('action') or '').strip()
+        if action == 'confirm':
+            return Response(ai_tools.confirm_write(
+                request.user,
+                str(request.data.get('writeAction') or ''),
+                str(request.data.get('confirmationToken') or ''),
+            ))
+        if action == 'propose':
+            return Response(ai_tools.propose_write(
+                request.user,
+                str(request.data.get('writeAction') or ''),
+                request.data.get('arguments') or {},
+            ))
+
+        tool = str(request.data.get('tool') or '').strip()
+        if not tool:
+            raise ValidationError({'tool': 'Name the assistant tool to run.'})
+        result = ai_tools.call_tool(request.user, tool, request.data.get('arguments') or {})
+        return Response({'tool': tool, 'data': result})
+
+
+class ResultSheetCreateView(APIView):
+    """Create a DRAFT sheet for a class/subject/assessment, seeded from the roster."""
+
+    permission_classes = [IsAuthenticated, HasSchool, require_permissions('results.write')]
+
+    def post(self, request):
+        school = request.user.school
+        session = academic_service.current_session(school)
+        if session is None:
+            raise ValidationError({'session': 'This school has no current academic session.'})
+        class_obj = get_object_or_404(
+            SchoolClass.objects.filter(school=school), id=request.data.get('classId'),
+        )
+        subject = str(request.data.get('subject') or '').strip()
+        assessment = str(request.data.get('assessment') or '').strip()
+        if not subject or not assessment:
+            raise ValidationError({
+                'fields': 'A result sheet needs both a subject and an assessment name.',
+            })
+        sheet = result_service.create_sheet(
+            school=school,
+            academic_session=session,
+            class_obj=class_obj,
+            subject=subject,
+            assessment=assessment,
+            assessment_max=request.data.get('assessmentMax') or '100',
+            term=str(request.data.get('term') or ''),
+        )
+        return Response(result_service.sheet_detail(sheet), status=status.HTTP_201_CREATED)
 
 
 # ── Attendance ─────────────────────────────────────────────────────────────

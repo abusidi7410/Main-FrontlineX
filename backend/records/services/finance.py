@@ -23,6 +23,7 @@ from django.db import IntegrityError, transaction
 from rest_framework.exceptions import ValidationError
 
 from . import billing
+from . import clearance
 from ..models import Enrollment, Invoice, Payment, Registration
 
 # Statuses that no longer represent money the school holds.
@@ -167,6 +168,7 @@ def apply_verified_payment(
             'registration': None,
             'enrollment': None,
             'autoApproved': False,
+            'awaitingFullSettlement': False,
         }
 
         if invoice.status != 'paid':
@@ -175,10 +177,23 @@ def apply_verified_payment(
         registration = (
             Registration.objects
             .filter(invoice=invoice, status=Registration.Status.PENDING)
-            .select_related('student', 'academic_session', 'intended_class', 'intended_section')
+            .select_related('student', 'academic_session', 'intended_class', 'intended_section',
+                            'school')
             .first()
         )
         if registration is None:
+            return outcome
+
+        # The school's own clearance policy decides whether this payment is
+        # enough. Under full settlement a registration fee on its own clears
+        # nothing; under the default policy the registration charge stands in
+        # for the whole invoice. Either way payment still only *allows* the
+        # enrollment - it never creates one by itself.
+        if not clearance.is_invoice_cleared(
+            invoice,
+            requires_full_settlement=registration.school.activation_requires_full_settlement,
+        ):
+            outcome['awaitingFullSettlement'] = True
             return outcome
 
         # Full payment auto-approves a *valid pending* registration only. A

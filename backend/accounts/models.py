@@ -52,6 +52,18 @@ class User(AbstractUser):
         related_name='user_account',
     )
 
+    # Which students a parent/guardian account may see (spec 62, 65).
+    #
+    # Explicit, and never inferred from a surname or a phone number: a match on
+    # a shared phone or family name would silently hand one family another
+    # family's attendance and results. Nothing is visible until an
+    # administrator links the account here.
+    linked_students = models.ManyToManyField(
+        'records.Student',
+        blank=True,
+        related_name='guardian_accounts',
+    )
+
     # True when a login was provisioned with a generated one-time password;
     # the user must change it on first successful authentication.
     must_change_password = models.BooleanField(default=False)

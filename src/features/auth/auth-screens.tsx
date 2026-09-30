@@ -28,8 +28,6 @@ import {
 } from "@/components/ui/select";
 import { useSession } from "@/auth/session";
 import { HOME_BY_ROLE } from "@/permissions/navigation";
-import { ROLE_LABELS } from "@/permissions";
-import { DEMO_ACCOUNTS } from "@/services/auth.service";
 import { SUBSCRIPTION_TIERS, tierById } from "@/constants/plans";
 import { STATES } from "@/constants/reference";
 import { emailField, ngPhone, passwordField, requiredText } from "@/lib/validation";
@@ -376,37 +374,6 @@ function LoginContent({
           </button>
         </div>
       </form>
-
-      <section aria-labelledby="demo-heading" className="space-y-2">
-        <h2
-          id="demo-heading"
-          className="text-[10px] font-semibold uppercase tracking-[0.14em]"
-          style={{ color: SOFT }}
-        >
-          Development accounts
-        </h2>
-        <ul className="space-y-1.5">
-          {DEMO_ACCOUNTS.map((account) => (
-            <li key={account.email}>
-              <button
-                type="button"
-                onClick={() => {
-                  form.setValue("identifier", account.email);
-                  form.setValue("password", "nexus1234");
-                }}
-                className="auth-chip"
-              >
-                <span className="font-semibold" style={{ color: INK }}>
-                  {ROLE_LABELS[account.role]}
-                </span>
-                <span className="truncate text-[11px]" style={{ color: MUTED }}>
-                  {account.description}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
 
       <p
         className="border-t text-[11.5px] leading-relaxed"

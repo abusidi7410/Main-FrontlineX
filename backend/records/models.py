@@ -196,15 +196,38 @@ class Student(models.Model):
         FEMALE = 'female', 'Female'
 
     class Status(models.TextChoices):
-        ACTIVE = 'active', 'Active'
-        # Registered but not yet cleared for classes: an admission invoice is
-        # outstanding. Distinct from SUSPENDED, which is a punishment for an
-        # existing student, not a pre-enrolment billing hold.
+        # Full admission lifecycle (spec 19, 30, 32).
+        #
+        # The states before ACTIVE are the interesting part: a student record
+        # existing is NOT membership of a class. APPLICANT has applied and been
+        # admitted; ADMITTED has an admission decision; REGISTERING is filling
+        # in the joining details; PENDING_PAYMENT is waiting on the bursary;
+        # CLEARED has met the financial gate; ENROLLED holds a valid
+        # Enrollment. Only then does the student become ACTIVE, which is what
+        # puts them in a class roster.
+        APPLICANT = 'applicant', 'Applicant'
+        ADMITTED = 'admitted', 'Admitted'
+        REGISTERING = 'registering', 'Registering'
         PENDING_PAYMENT = 'pending_payment', 'Pending payment'
+        CLEARED = 'cleared', 'Cleared'
+        ENROLLED = 'enrolled', 'Enrolled'
+        ACTIVE = 'active', 'Active'
         SUSPENDED = 'suspended', 'Suspended'
         GRADUATED = 'graduated', 'Graduated'
         WITHDRAWN = 'withdrawn', 'Withdrawn'
         TRANSFERRED = 'transferred', 'Transferred'
+        EXPELLED = 'expelled', 'Expelled'
+
+    #: States that mean the student counts towards a class roster / statistics.
+    #: Spelled as literals because a comprehension cannot see the enclosing
+    #: class namespace, and they must stay in step with the choices above.
+    ACTIVE_MEMBERSHIP_STATES = frozenset({
+        'active', 'cleared', 'enrolled', 'registering', 'admitted', 'applicant',
+    })
+    #: States that mean the student has left the school for good.
+    EXITED_STATES = frozenset({
+        'graduated', 'withdrawn', 'transferred', 'expelled',
+    })
 
     class AdmissionNumberSource(models.TextChoices):
         SCHOOL_ASSIGNED = 'school_assigned', 'School assigned'
@@ -259,6 +282,9 @@ class Student(models.Model):
             # Roster and student-list lookups are always school-scoped.
             models.Index(fields=['school', 'class_name']),
             models.Index(fields=['school', 'status']),
+            # The student register screen: school + lifecycle + class together,
+            # which none of the single-column indexes above can serve.
+            models.Index(fields=['school', 'status', 'class_name']),
         ]
 
     objects = StudentQuerySet.as_manager()
@@ -315,6 +341,12 @@ class AttendanceRecord(models.Model):
             models.UniqueConstraint(
                 fields=['student', 'date', 'subject'], name='unique_attendance_per_student_day'
             )
+        ]
+        indexes = [
+            # The register screen: one school, one day, one class. Without this
+            # it scans every attendance row the school has ever taken.
+            models.Index(fields=['school', 'date', 'class_name']),
+            models.Index(fields=['school', 'student', 'date']),
         ]
 
     def __str__(self):
@@ -676,6 +708,12 @@ class Enrollment(models.Model):
         NOT_ENROLLED = 'not_enrolled', 'Not enrolled'
         ACTIVE = 'active', 'Active'
         SUSPENDED = 'suspended', 'Suspended'
+        # The student moved class. The row is closed, never deleted or rewritten,
+        # so the class they came from stays on the record (spec §36, §58).
+        TRANSFERRED = 'transferred', 'Transferred'
+        # The student left the school. Distinct from TRANSFERRED, which is a
+        # move inside one school.
+        WITHDRAWN = 'withdrawn', 'Withdrawn'
         COMPLETED = 'completed', 'Completed'
 
     class ActivationSource(models.TextChoices):
@@ -773,3 +811,138 @@ class ImportBatch(models.Model):
 
     def __str__(self):
         return f'{self.batch_code} ({self.created_count} created)'
+
+class ResultSheet(models.Model):
+    """One class's results for one subject and assessment (spec 51-55).
+
+    Results follow a single, enforced lifecycle::
+
+        DRAFT -> SUBMITTED -> UNDER_REVIEW -> APPROVED -> PUBLISHED -> LOCKED
+
+    A sheet is only ever moved forward, and only by the role that owns the next
+    step. Once LOCKED a score cannot be edited at all: a correction has to go
+    through `request_correction`, which records who asked, why, and who
+    authorised it, so a published result is never quietly rewritten.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = 'draft', 'Draft'
+        SUBMITTED = 'submitted', 'Submitted'
+        UNDER_REVIEW = 'under_review', 'Under review'
+        APPROVED = 'approved', 'Approved'
+        PUBLISHED = 'published', 'Published'
+        LOCKED = 'locked', 'Locked'
+
+    #: The only transitions the API accepts. Linear on purpose: a sheet cannot
+    #: skip approval just because it was entered quickly.
+    ALLOWED_TRANSITIONS = {
+        Status.DRAFT: Status.SUBMITTED,
+        Status.SUBMITTED: Status.UNDER_REVIEW,
+        Status.UNDER_REVIEW: Status.APPROVED,
+        Status.APPROVED: Status.PUBLISHED,
+        Status.PUBLISHED: Status.LOCKED,
+    }
+
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='result_sheets')
+    academic_session = models.ForeignKey(
+        AcademicSession, on_delete=models.PROTECT, related_name='result_sheets',
+    )
+    class_obj = models.ForeignKey(
+        SchoolClass, on_delete=models.PROTECT, related_name='result_sheets',
+    )
+    subject = models.CharField(max_length=100)
+    assessment = models.CharField(max_length=100)
+    # Grading stays configurable: a school may score out of 20, 50 or 100.
+    assessment_max = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('100.00'))
+    term = models.CharField(max_length=50, blank=True, default='')
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    is_locked = models.BooleanField(default=False)
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='locked_result_sheets',
+    )
+    published_at = models.DateTimeField(null=True, blank=True)
+    submitted_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='submitted_result_sheets',
+    )
+    approved_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='approved_result_sheets',
+    )
+    # Pending correction request, while a locked score is being challenged.
+    correction_requested_at = models.DateTimeField(null=True, blank=True)
+    correction_reason = models.CharField(max_length=255, blank=True, default='')
+    correction_authorised_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='authorised_result_corrections',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'school', 'academic_session', 'class_obj', 'subject', 'assessment', 'term',
+                ],
+                name='unique_result_sheet',
+            ),
+        ]
+        indexes = [
+            # The results screen: one school's sheets, newest first, filtered by
+            # session and state.
+            models.Index(fields=['school', 'academic_session', 'status']),
+            models.Index(fields=['school', 'class_obj', 'subject']),
+        ]
+
+    def __str__(self):
+        return f'{self.class_obj.name} {self.subject} {self.assessment} ({self.status})'
+
+
+class ResultEntry(models.Model):
+    """One student's score on a `ResultSheet`.
+
+    A student only gets a row once they are on the class roster, so a result can
+    never be recorded for someone who is not in the class.
+    """
+
+    class Grade(models.TextChoices):
+        A = 'A', 'A'
+        B = 'B', 'B'
+        C = 'C', 'C'
+        D = 'D', 'D'
+        E = 'E', 'E'
+        F = 'F', 'F'
+
+    sheet = models.ForeignKey(ResultSheet, on_delete=models.CASCADE, related_name='entries')
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='results')
+    enrollment = models.ForeignKey(
+        Enrollment, on_delete=models.PROTECT, related_name='result_entries',
+    )
+    score = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    grade = models.CharField(max_length=2, choices=Grade.choices, blank=True, default='')
+    remark = models.CharField(max_length=255, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['student__last_name', 'student__first_name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sheet', 'student'], name='unique_result_per_student_sheet',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['student', 'sheet']),
+        ]
+
+    def __str__(self):
+        return f'{self.student_id} {self.score}'
+
+    @property
+    def percentage(self) -> Decimal:
+        if self.score is None or not self.sheet.assessment_max:
+            return Decimal('0')
+        return (self.score * 100 / self.sheet.assessment_max).quantize(Decimal('0.01'))

@@ -124,6 +124,133 @@ def activate_enrollment(
     )
 
 
+def transfer_active_enrollment(
+    student: Student,
+    academic_session,
+    class_obj,
+    section=None,
+    *,
+    actor=None,
+) -> tuple[Enrollment, Enrollment]:
+    """Move a student between classes, keeping both rows.
+
+    A transfer is ``old -> TRANSFERRED`` then ``new -> ACTIVE``. The previous
+    row is closed rather than deleted or re-pointed, so the class the student
+    came from survives on the record and a partial unique index on
+    (student, session) WHERE status=active still holds.
+
+    Returns `(previous, current)`. `previous` is None when the student had no
+    active enrollment, which is then a first enrollment rather than a transfer.
+    """
+    with transaction.atomic():
+        previous = (
+            Enrollment.objects
+            .select_for_update()
+            .filter(
+                student=student,
+                academic_session=academic_session,
+                status=Enrollment.Status.ACTIVE,
+            )
+            .first()
+        )
+        if previous is not None:
+            previous.status = Enrollment.Status.TRANSFERRED
+            previous.review_note = (previous.review_note or '')[:255]
+            previous.save(update_fields=['status', 'updated_at'])
+
+        current = _ensure_one_active_enrollment(
+            student, academic_session, class_obj, section,
+            Enrollment.ActivationSource.ADMIN_APPROVAL, actor,
+        )
+        sync_student_class_mirror(student, current)
+        return previous, current
+
+
+def withdraw_active_enrollment(
+    student: Student,
+    academic_session,
+    *,
+    actor=None,
+    note: str = '',
+) -> Enrollment | None:
+    """Close a student's active enrollment as WITHDRAWN.
+
+    The row stays, so the student leaves the roster (rosters read ACTIVE only)
+    without their history being erased.
+    """
+    with transaction.atomic():
+        enrollment = (
+            Enrollment.objects
+            .select_for_update()
+            .filter(
+                student=student,
+                academic_session=academic_session,
+                status=Enrollment.Status.ACTIVE,
+            )
+            .first()
+        )
+        if enrollment is None:
+            return None
+        enrollment.status = Enrollment.Status.WITHDRAWN
+        if note:
+            enrollment.review_note = note[:255]
+        enrollment.save(update_fields=['status', 'review_note', 'updated_at'])
+        return enrollment
+
+
+def promote_student(
+    student: Student,
+    *,
+    from_session,
+    to_session,
+    class_obj,
+    section=None,
+    actor=None,
+) -> Enrollment:
+    """Carry a student into a new session at the top of their class.
+
+    The old session's enrollment is CLOSED (``COMPLETED``) and a brand new
+    ACTIVE enrollment is written in the new session, which is the same shape as
+    a transfer but across sessions. The historical row is never overwritten::
+
+        2025/2026  JSS 1A  COMPLETED
+        2026/2027  JSS 2A  ACTIVE
+    """
+    if from_session.pk == to_session.pk:
+        raise ValidationError({
+            'toSession': 'A promotion must move the student into a different academic session.',
+        })
+    if class_obj.school_id != student.school_id:
+        raise ValidationError({'classObj': 'That class belongs to another school.'})
+    if section is not None and section.class_obj_id != class_obj.pk:
+        raise ValidationError({'section': 'That section does not belong to the destination class.'})
+
+    with transaction.atomic():
+        previous = (
+            Enrollment.objects
+            .select_for_update()
+            .filter(
+                student=student,
+                academic_session=from_session,
+                status=Enrollment.Status.ACTIVE,
+            )
+            .first()
+        )
+        if previous is None:
+            raise ValidationError({
+                'student': 'This student has no active enrollment to promote.',
+            })
+        previous.status = Enrollment.Status.COMPLETED
+        previous.save(update_fields=['status', 'updated_at'])
+
+        promoted = _ensure_one_active_enrollment(
+            student, to_session, class_obj, section,
+            Enrollment.ActivationSource.ADMIN_APPROVAL, actor,
+        )
+        sync_student_class_mirror(student, promoted)
+        return promoted
+
+
 def move_active_enrollment(
     student: Student,
     academic_session,

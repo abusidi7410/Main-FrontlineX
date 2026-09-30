@@ -10,65 +10,6 @@ export interface Session {
 
 const STORAGE_KEY = "fn.session.v1";
 
-export interface DemoAccount {
-  role: Role;
-  fullName: string;
-  email: string;
-  description: string;
-}
-
-/** Development accounts. In live mode the backend issues the session. */
-export const DEMO_ACCOUNTS: DemoAccount[] = [
-  {
-    role: "school_admin",
-    fullName: "Aisha Bello",
-    email: "admin@alnoor.edu.ng",
-    description: "Runs the entire school",
-  },
-  {
-    role: "principal",
-    fullName: "Ibrahim Danjuma",
-    email: "principal@alnoor.edu.ng",
-    description: "Academic oversight & approvals",
-  },
-  {
-    role: "teacher",
-    fullName: "Ibrahim Sani",
-    email: "teacher@alnoor.edu.ng",
-    description: "Attendance, results, lesson plans",
-  },
-  {
-    role: "accountant",
-    fullName: "Halima Yusuf",
-    email: "bursar@alnoor.edu.ng",
-    description: "Fees, payments, receipts",
-  },
-  {
-    role: "secretary",
-    fullName: "Grace Uche",
-    email: "secretary@alnoor.edu.ng",
-    description: "Registration & communication",
-  },
-  {
-    role: "parent",
-    fullName: "Mr. Abubakar",
-    email: "parent@example.com",
-    description: "Children, results, fees",
-  },
-  {
-    role: "student",
-    fullName: "Ahmed Abubakar",
-    email: "student@alnoor.edu.ng",
-    description: "Timetable, results, materials",
-  },
-  {
-    role: "platform_manager",
-    fullName: "Nexus Operations",
-    email: "ops@frontlinenexus.com",
-    description: "Frontline Nexus platform team",
-  },
-];
-
 export function readStoredSession(): Session | null {
   if (typeof window === "undefined") return null;
   try {

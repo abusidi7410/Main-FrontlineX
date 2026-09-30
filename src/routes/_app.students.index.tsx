@@ -61,7 +61,9 @@ export const Route = createFileRoute("/_app/students/")({
   component: StudentsPage,
 });
 
-const PAGE_SIZE = 10;
+// Matches the backend's default page size, so the list and the API agree
+// without the caller having to ask for a size.
+const PAGE_SIZE = 25;
 
 function initialsOf(name: string) {
   return name
@@ -119,6 +121,13 @@ function StudentsPage() {
   });
 
   const totalPages = query.data ? Math.max(1, Math.ceil(query.data.count / PAGE_SIZE)) : 1;
+  // "Showing 1-25 of 64". Zero results reads "Showing 0 of 0" rather than a
+  // misleading 1-0, and the range is driven by the server's own count so it
+  // cannot drift from what was actually returned.
+  const firstShown = query.data?.count ? (page - 1) * PAGE_SIZE + 1 : 0;
+  const lastShown = query.data
+    ? Math.min(page * PAGE_SIZE, query.data.count)
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -320,7 +329,9 @@ function StudentsPage() {
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              Showing {query.data.results.length} of {numberFmt(query.data.count)} students
+              {query.data.count
+                ? `Showing ${firstShown}-${lastShown} of ${numberFmt(query.data.count)} students`
+                : "No students match these filters"}
             </p>
             <div className="flex items-center gap-2">
               <Button
