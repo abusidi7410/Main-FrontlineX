@@ -48,7 +48,11 @@ describe("isDuplicateFee", () => {
     isDuplicateFee(rows[index] as LevelFee, rows, index);
 
   it("flags the same fee type in the same term", () => {
-    const rows = [fee(), fee({ label: "Bus fare", feeType: "transport" }), fee({ feeType: "transport" })];
+    const rows = [
+      fee(),
+      fee({ label: "Bus fare", feeType: "transport" }),
+      fee({ feeType: "transport" }),
+    ];
     expect(dupesWith(rows, 2)).toBe(true);
   });
 

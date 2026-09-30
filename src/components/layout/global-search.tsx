@@ -56,7 +56,10 @@ export function GlobalSearch() {
       <Button
         variant="outline"
         onClick={() => setOpen(true)}
-        className="h-10 justify-start gap-2 text-muted-foreground md:w-64"
+        // Icon-only on a phone: the label and shortcut are already hidden below
+        // `md`, so trimming the horizontal padding there buys back the room the
+        // offline pill needs to keep the header on one line at 360px.
+        className="h-10 justify-start gap-2 px-2.5 text-muted-foreground md:w-64 md:px-4"
         aria-label="Search students, pages and records"
       >
         <Search className="size-4" aria-hidden="true" />

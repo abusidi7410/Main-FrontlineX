@@ -187,7 +187,64 @@ function StaffPage() {
           />
         ) : (
           <>
-            <div className="fn-panel overflow-x-auto">
+            {/* Phone: one card per staff member, so subjects/classes/phone are
+                readable without scrolling a 46rem table sideways. */}
+            <ul className="fn-panel divide-y md:hidden">
+              {filtered.map((member) => (
+                <li key={member.id} className="space-y-2 p-4">
+                  <Link
+                    to="/staff/$staffId"
+                    params={{ staffId: member.id }}
+                    className="block font-medium text-primary hover:underline"
+                  >
+                    {member.fullName}
+                  </Link>
+                  <p className="break-all text-sm text-muted-foreground">{member.email}</p>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border bg-surface px-2.5 py-1 text-xs font-medium">
+                      {ROLE_LABELS[member.role]}
+                    </span>
+                    <StatusBadge status={member.status} />
+                  </div>
+
+                  <dl className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">Subjects</dt>
+                      <dd className="truncate text-muted-foreground">
+                        {member.subjects.length > 0 ? member.subjects.join(", ") : "—"}
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">Classes</dt>
+                      <dd className="truncate text-muted-foreground">
+                        {member.classes.length > 0 ? member.classes.join(", ") : "—"}
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">Phone</dt>
+                      <dd className="truncate text-muted-foreground">{member.phone}</dd>
+                    </div>
+                  </dl>
+
+                  <IfAllowed permission="staff.write">
+                    <div className="flex justify-end">
+                      <StaffRowActions
+                        member={member}
+                        suspendPending={suspend.isPending && suspend.variables === member.id}
+                        reinstatePending={reinstate.isPending && reinstate.variables === member.id}
+                        onSuspend={() => suspend.mutate(member.id)}
+                        onReinstate={() => reinstate.mutate(member.id)}
+                        onDelete={() => setDeleteTarget(member)}
+                        onAssignClass={() => setAssignTarget(member)}
+                      />
+                    </div>
+                  </IfAllowed>
+                </li>
+              ))}
+            </ul>
+
+            <div className="fn-panel hidden overflow-x-auto md:block">
               <table className="w-full min-w-[46rem] text-left">
                 <caption className="sr-only">Staff roster</caption>
                 <thead className="border-b bg-muted/40 text-sm text-muted-foreground">

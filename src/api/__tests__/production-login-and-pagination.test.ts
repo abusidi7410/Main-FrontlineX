@@ -17,7 +17,7 @@ import * as authService from "@/services/auth.service";
 describe("production login", () => {
   it("exposes no demo accounts", () => {
     const exported = authService as unknown as Record<string, unknown>;
-    expect(exported.DEMO_ACCOUNTS).toBeUndefined();
+    expect(exported["DEMO_ACCOUNTS"]).toBeUndefined();
   });
 
   it("has no hardcoded credential strings in the auth service", async () => {
@@ -56,7 +56,7 @@ describe("student list pagination", () => {
       globalThis.fetch = original;
     }
 
-    const url = new URL(calls[0], "http://test.local");
+    const url = new URL(calls[0] ?? "", "http://test.local");
     expect(url.searchParams.get("page")).toBe("1");
     expect(url.searchParams.get("pageSize")).toBe("25");
   });

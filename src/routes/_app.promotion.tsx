@@ -134,30 +134,37 @@ function PromotionPage() {
                         → {group.nextClass ?? "Graduation"}
                       </span>
                     </span>
-                    <span className="grid grid-cols-4 divide-x">
-                      <span className="px-4 py-3">
+                    {/* 2-up on a phone: 4 fixed columns left ~50px per cell at
+                        360px, which a four-digit count overflows. `min-w-0` +
+                        `truncate` stop a long value breaking the grid. */}
+                    <span className="grid grid-cols-2 divide-x sm:grid-cols-4">
+                      <span className="min-w-0 px-4 py-3">
                         <span className="block text-lg font-semibold">
                           {numberFmt(group.total)}
                         </span>
-                        <span className="text-xs text-muted-foreground">Students</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          Students
+                        </span>
                       </span>
-                      <span className="px-4 py-3">
+                      <span className="min-w-0 px-4 py-3">
                         <span className="block text-lg font-semibold text-success">
                           {numberFmt(group.promote)}
                         </span>
-                        <span className="text-xs text-muted-foreground">Promote</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          Promote
+                        </span>
                       </span>
-                      <span className="px-4 py-3">
+                      <span className="min-w-0 px-4 py-3">
                         <span className="block text-lg font-semibold text-warning">
                           {numberFmt(group.review)}
                         </span>
-                        <span className="text-xs text-muted-foreground">Review</span>
+                        <span className="block truncate text-xs text-muted-foreground">Review</span>
                       </span>
-                      <span className="px-4 py-3">
+                      <span className="min-w-0 px-4 py-3">
                         <span className="block text-lg font-semibold text-destructive">
                           {numberFmt(group.repeat)}
                         </span>
-                        <span className="text-xs text-muted-foreground">Repeat</span>
+                        <span className="block truncate text-xs text-muted-foreground">Repeat</span>
                       </span>
                     </span>
                   </button>

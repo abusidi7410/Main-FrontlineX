@@ -89,7 +89,8 @@ export function toTermValue(term: string): string {
 /** Two lines collide if they share a fee type and a term. */
 export function isDuplicateFee(fee: LevelFee, others: LevelFee[], ignoreIndex?: number): boolean {
   return others.some(
-    (other, index) => index !== ignoreIndex && other.feeType === fee.feeType && other.term === fee.term,
+    (other, index) =>
+      index !== ignoreIndex && other.feeType === fee.feeType && other.term === fee.term,
   );
 }
 

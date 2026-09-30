@@ -80,7 +80,11 @@ export function ScoresDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-96 overflow-y-auto rounded-xl border">
+        {/* `overflow-auto`, not `overflow-y-auto`: the table is wider than a
+            phone, and relying on the `visible`-computes-to-`auto` rule also
+            defeats the sticky header. Stating both axes keeps the header
+            pinned while the columns scroll sideways. */}
+        <div className="max-h-96 overflow-auto rounded-xl border">
           <table className="w-full min-w-[34rem] text-left text-sm">
             <thead className="sticky top-0 border-b bg-muted/40 text-muted-foreground">
               <tr>

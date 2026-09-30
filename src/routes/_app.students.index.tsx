@@ -125,9 +125,7 @@ function StudentsPage() {
   // misleading 1-0, and the range is driven by the server's own count so it
   // cannot drift from what was actually returned.
   const firstShown = query.data?.count ? (page - 1) * PAGE_SIZE + 1 : 0;
-  const lastShown = query.data
-    ? Math.min(page * PAGE_SIZE, query.data.count)
-    : 0;
+  const lastShown = query.data ? Math.min(page * PAGE_SIZE, query.data.count) : 0;
 
   return (
     <div className="space-y-6">
@@ -231,7 +229,89 @@ function StudentsPage() {
         />
       ) : (
         <>
-          <div className="fn-panel overflow-x-auto">
+          {/* Phone: one card per student. Seven columns do not fit a 360px
+              screen, and a 52rem table meant scrolling sideways past most of the
+              data to reach the actions. Hidden from `md` up, where the table
+              below takes over. */}
+          <ul className="fn-panel divide-y md:hidden">
+            {query.data.results.map((student) => (
+              <li key={student.id} className="space-y-3 p-4">
+                <Link
+                  to="/students/$studentId"
+                  params={{ studentId: student.id }}
+                  className="group flex items-center gap-3"
+                >
+                  <Avatar className="size-9 shrink-0">
+                    <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
+                      {initialsOf(`${student.firstName} ${student.lastName}`)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-primary group-hover:underline">
+                      {student.firstName} {student.lastName}
+                    </span>
+                    <span className="block truncate text-sm text-muted-foreground">
+                      {student.admissionNumber}
+                    </span>
+                  </span>
+                </Link>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border bg-surface px-2.5 py-1 text-xs font-medium">
+                    {student.className}
+                    {student.arm}
+                  </span>
+                  <StatusBadge status={student.status} />
+                </div>
+
+                <dl className="grid grid-cols-3 gap-2 text-sm">
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">Attendance</dt>
+                    <dd
+                      className={cn(
+                        "tabular-nums",
+                        student.attendanceRate >= 75 ? "text-success" : "text-warning",
+                      )}
+                    >
+                      {percent(student.attendanceRate)}
+                    </dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">Average</dt>
+                    <dd className="tabular-nums">{percent(student.average)}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">Fees owed</dt>
+                    <dd
+                      className={cn(
+                        "truncate tabular-nums",
+                        student.outstandingFees > 0 ? "text-warning" : "text-muted-foreground",
+                      )}
+                    >
+                      {naira(student.outstandingFees)}
+                    </dd>
+                  </div>
+                </dl>
+
+                <IfAllowed permission="students.write">
+                  <div className="flex justify-end">
+                    <StudentRowActions
+                      student={student}
+                      busy={
+                        (suspend.isPending && suspend.variables === student.id) ||
+                        (reinstate.isPending && reinstate.variables === student.id)
+                      }
+                      onSuspend={() => suspend.mutate(student.id)}
+                      onReinstate={() => reinstate.mutate(student.id)}
+                      onTransfer={() => setTransferTarget(student)}
+                    />
+                  </div>
+                </IfAllowed>
+              </li>
+            ))}
+          </ul>
+
+          <div className="fn-panel hidden overflow-x-auto md:block">
             <table className="w-full min-w-[52rem] text-left">
               <caption className="sr-only">Student roster</caption>
               <thead className="border-b bg-muted/40 text-sm text-muted-foreground">

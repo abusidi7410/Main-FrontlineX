@@ -59,7 +59,10 @@ export function PaymentStructurePanel({ canWrite }: { canWrite: boolean }) {
   return (
     <div className="space-y-4">
       {!anythingPriced && hasLegacyList ? (
-        <p className="rounded-xl border border-info/30 bg-info-soft px-4 py-3 text-sm" role="status">
+        <p
+          className="rounded-xl border border-info/30 bg-info-soft px-4 py-3 text-sm"
+          role="status"
+        >
           You are on a single school-wide fee list, so every student is billed the same. Set a
           figure for each level below to price them separately. Your current list keeps working
           until you do.
@@ -67,7 +70,10 @@ export function PaymentStructurePanel({ canWrite }: { canWrite: boolean }) {
       ) : null}
 
       {!anythingPriced && !hasLegacyList ? (
-        <p className="rounded-xl border border-info/30 bg-info-soft px-4 py-3 text-sm" role="status">
+        <p
+          className="rounded-xl border border-info/30 bg-info-soft px-4 py-3 text-sm"
+          role="status"
+        >
           No fees are set yet. Students can still be registered — they stay pending payment until
           you price a level and their invoice is raised.
         </p>
@@ -152,8 +158,19 @@ function LevelCard({
   const setRegistration = (patch: Partial<LevelFee>) => {
     const next: LevelFee = registration
       ? { ...registration, ...patch }
-      : { feeType: "registration", label: "Registration fee", amount: 0, term: WHOLE_SESSION, isRequired: true, ...patch };
-    setRows(registration ? fees.map((fee, i) => (i === fees.indexOf(registration) ? next : fee)) : [...fees, next]);
+      : {
+          feeType: "registration",
+          label: "Registration fee",
+          amount: 0,
+          term: WHOLE_SESSION,
+          isRequired: true,
+          ...patch,
+        };
+    setRows(
+      registration
+        ? fees.map((fee, i) => (i === fees.indexOf(registration) ? next : fee))
+        : [...fees, next],
+    );
   };
 
   const addRow = () =>
@@ -244,7 +261,9 @@ function LevelCard({
                 <Select
                   value={fee.feeType}
                   disabled={!canWrite}
-                  onValueChange={(value) => update(fees.indexOf(fee), { feeType: value as FeeType })}
+                  onValueChange={(value) =>
+                    update(fees.indexOf(fee), { feeType: value as FeeType })
+                  }
                 >
                   <SelectTrigger id={`fee-type-${level.code}-${index}`} className="h-11">
                     <SelectValue />
@@ -324,7 +343,9 @@ function LevelCard({
                   onClick={() => setRows(fees.filter((row) => row !== fee))}
                 >
                   <Trash2 className="size-4" aria-hidden="true" />
-                  <span className="sr-only">Remove {fee.label || FEE_TYPE_LABELS[fee.feeType]}</span>
+                  <span className="sr-only">
+                    Remove {fee.label || FEE_TYPE_LABELS[fee.feeType]}
+                  </span>
                 </Button>
               ) : null}
 

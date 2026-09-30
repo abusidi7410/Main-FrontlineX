@@ -200,9 +200,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          {/* `min-w-0` + `shrink-0` on the pill: this row measures ~342px
+              against ~336px of space at 360px, so without the constraint the
+              word "Offline" wrapped onto two lines inside the pill and pushed
+              the whole header into a page-level horizontal scroll. */}
+          <div className="ml-auto flex min-w-0 items-center gap-2">
             {!online ? (
-              <span className="flex items-center gap-1.5 rounded-full border border-warning/30 bg-warning-soft px-2.5 py-1 text-xs font-medium text-warning">
+              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-warning/30 bg-warning-soft px-2.5 py-1 text-xs font-medium text-warning">
                 <WifiOff className="size-3.5" aria-hidden="true" /> Offline
               </span>
             ) : null}

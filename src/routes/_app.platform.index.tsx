@@ -539,7 +539,72 @@ function PlatformOverview() {
                 </Link>
               </div>
               <div className="border-t border-border/60">
-                <Table className="min-w-[900px]">
+                {/* Phone: cards. 900px of table meant scrolling past four of
+                    the seven columns to reach the renewal action. */}
+                {data.atRiskSchools.length > 0 ? (
+                  <ul className="divide-y md:hidden">
+                    {data.atRiskSchools.map((school) => (
+                      <li key={school.id} className="space-y-2 p-4">
+                        <div>
+                          <p className="font-medium text-foreground">{school.name}</p>
+                          <p className="text-xs text-muted-foreground">{school.state}</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border bg-surface px-2.5 py-1 text-xs font-medium">
+                            {planLabel(school.plan)}
+                          </span>
+                          <StatusBadge status={school.status} />
+                        </div>
+                        <dl className="grid grid-cols-3 gap-2 text-sm">
+                          <div className="min-w-0">
+                            <dt className="text-xs text-muted-foreground">Students</dt>
+                            <dd className="tabular-nums">{numberFmt(school.students)}</dd>
+                          </div>
+                          <div className="min-w-0">
+                            <dt className="text-xs text-muted-foreground">Last active</dt>
+                            <dd className="truncate text-muted-foreground">
+                              {formatLastActive(school.lastActive)}
+                            </dd>
+                          </div>
+                          <div className="min-w-0">
+                            <dt className="text-xs text-muted-foreground">Renewal</dt>
+                            <dd className="truncate text-muted-foreground">
+                              {formatRenewal(school.renewalDate)}
+                            </dd>
+                          </div>
+                        </dl>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="whitespace-nowrap"
+                            onClick={() => toast.info(`Opening renewal tools for ${school.name}`)}
+                          >
+                            <CalendarPlus className="size-3.5" aria-hidden="true" />
+                            Extend trial
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label={`Call ${school.name}`}
+                            onClick={() => toast.info(`Starting a call with ${school.name}`)}
+                          >
+                            <Phone className="size-4" aria-hidden="true" />
+                          </Button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-2 p-8 text-center md:hidden">
+                    <CheckCircle2 className="size-8 text-success" aria-hidden="true" />
+                    <p className="font-medium">No schools need attention</p>
+                    <p className="text-sm text-muted-foreground">
+                      Every tenant is in good standing.
+                    </p>
+                  </div>
+                )}
+                <Table className="hidden min-w-[900px] md:table">
                   <TableHeader>
                     <TableRow>
                       <TableHead>School</TableHead>
