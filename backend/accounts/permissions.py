@@ -46,6 +46,9 @@ ROLE_PERMISSIONS = {
         'attendance.read', 'results.read', 'results.approve',
         'timetable.read', 'lessonplans.read',
         'communication.read', 'communication.write',
+        # Read-only view of the money: a principal signs off on fees but does
+        # not reprice the school, so `finance.read` without `finance.structure`.
+        'finance.read',
         'reports.read', 'settings.read', 'ai.academic',
     ],
     'teacher': [
@@ -56,7 +59,7 @@ ROLE_PERMISSIONS = {
     ],
     'accountant': [
         'students.read', 'finance.read', 'finance.write', 'finance.verify',
-        'finance.invoice', 'finance.payment',
+        'finance.structure', 'finance.invoice', 'finance.payment',
         'reports.read', 'ai.finance',
     ],
     'secretary': [

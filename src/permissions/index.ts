@@ -85,6 +85,9 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "lessonplans.read",
     "communication.read",
     "communication.write",
+    // A principal signs off on fees but does not reprice the school, so
+    // `finance.read` without `finance.structure`. Mirrors the backend matrix.
+    "finance.read",
     "reports.read",
     "settings.read",
     "ai.academic",
@@ -106,6 +109,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "finance.read",
     "finance.write",
     "finance.verify",
+    "finance.structure",
     "finance.invoice",
     "finance.payment",
     "reports.read",

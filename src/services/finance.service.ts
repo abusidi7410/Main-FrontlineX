@@ -45,15 +45,115 @@ export interface FeeItem {
   className?: string;
 }
 
-export async function getFeeStructure(): Promise<{ items: FeeItem[] }> {
+/** Mirrors the backend `FeeStructure.FeeType` vocabulary. */
+export const FEE_TYPES = [
+  "registration",
+  "tuition",
+  "development",
+  "ict",
+  "uniform",
+  "exam",
+  "transport",
+  "meals",
+  "other",
+] as const;
+
+export type FeeType = (typeof FEE_TYPES)[number];
+
+/**
+ * `WHOLE_SESSION` is stored as an empty term string, which the backend reads as
+ * "applies to every term" (`FeeStructure.term` is blank for session-wide fees).
+ * A Radix `Select` cannot hold an empty item value, so the UI selects
+ * `ALL_TERMS` and `toTerm()` converts it on the way to the API.
+ */
+export const WHOLE_SESSION = "";
+export const ALL_TERMS = "__all__";
+
+export const FEE_TERMS = [
+  { value: ALL_TERMS, label: "Whole session" },
+  { value: "First Term", label: "First term only" },
+  { value: "Second Term", label: "Second term only" },
+  { value: "Third Term", label: "Third term only" },
+] as const;
+
+/** Select value -> the term string the API stores. */
+export function toTerm(selectValue: string): string {
+  return selectValue === ALL_TERMS ? WHOLE_SESSION : selectValue;
+}
+
+/** The term string the API stores -> its select value. */
+export function toTermValue(term: string): string {
+  return term === WHOLE_SESSION ? ALL_TERMS : term;
+}
+
+/** Two lines collide if they share a fee type and a term. */
+export function isDuplicateFee(fee: LevelFee, others: LevelFee[], ignoreIndex?: number): boolean {
+  return others.some(
+    (other, index) => index !== ignoreIndex && other.feeType === fee.feeType && other.term === fee.term,
+  );
+}
+
+export const FEE_TYPE_LABELS: Record<FeeType, string> = {
+  registration: "Registration",
+  tuition: "Tuition",
+  development: "Development",
+  ict: "ICT",
+  uniform: "Uniform",
+  exam: "Examination",
+  transport: "Transport",
+  meals: "Meals",
+  other: "Other",
+};
+
+export interface LevelFee {
+  id?: number;
+  feeType: FeeType;
+  label: string;
+  amount: number;
+  term: string;
+  isRequired: boolean;
+}
+
+export interface LevelFeeStructure {
+  id: number;
+  code: string;
+  name: string;
+  fees: LevelFee[];
+}
+
+export interface FeeStructure {
+  /** Legacy school-wide list. Still returned for schools that predate per-level fees. */
+  items: FeeItem[];
+  levels: LevelFeeStructure[];
+}
+
+export async function getFeeStructure(): Promise<FeeStructure> {
   // SECURITY: Backend must verify permission finance.read and schoolId match.
   return apiFetch("/fees/structure");
+}
+
+export interface SaveLevelFeesResult {
+  levels: LevelFeeStructure[];
+  items: FeeItem[];
+  invoicedPendingStudents: number;
+  invoicedPendingStudentsByLevel: Record<string, number>;
+}
+
+/**
+ * Save one level's Payment Structure. Every other level is left untouched.
+ * SECURITY: Backend must verify permission finance.structure and schoolId match.
+ */
+export async function saveLevelFees(
+  levelId: number,
+  fees: LevelFee[],
+): Promise<SaveLevelFeesResult> {
+  return apiFetch("/fees/structure", { method: "PUT", body: { levels: [{ levelId, fees }] } });
 }
 
 export async function updateFeeStructure(
   items: FeeItem[],
 ): Promise<{ items: FeeItem[]; invoicedPendingStudents: number }> {
-  // SECURITY: Backend must verify permission finance.write and schoolId match.
+  // SECURITY: Backend must verify permission finance.structure and schoolId match.
   // Saving also invoices any students who registered before a fee structure
   // existed, since the bulk generator only bills active students and those
   // students would otherwise never be able to pay their way in.

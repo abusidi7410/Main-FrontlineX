@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/auth/session";
+import { PaymentStructurePanel } from "@/features/finance/payment-structure-panel";
 import { ROLE_LABELS } from "@/permissions";
 
 export const Route = createFileRoute("/_app/settings")({
@@ -49,7 +50,7 @@ function SettingsPage() {
   });
 
   return (
-    <PermissionGate permission="settings.read">
+    <PermissionGate anyOf={["settings.read", "finance.read"]}>
       <div className="space-y-6">
         <PageHeader
           title="Settings"
@@ -65,12 +66,21 @@ function SettingsPage() {
           </p>
         ) : null}
 
-        <Tabs defaultValue="school">
+        <Tabs defaultValue={can("settings.read") ? "school" : "fees"}>
           <TabsList>
-            <TabsTrigger value="school">School profile</TabsTrigger>
-            <TabsTrigger value="academic">Academic session</TabsTrigger>
-            <TabsTrigger value="notifications">Notifications</TabsTrigger>
-            <TabsTrigger value="security">Security</TabsTrigger>
+            {can("settings.read") ? (
+              <>
+                <TabsTrigger value="school">School profile</TabsTrigger>
+                <TabsTrigger value="academic">Academic session</TabsTrigger>
+              </>
+            ) : null}
+            <TabsTrigger value="fees">Payment structure</TabsTrigger>
+            {can("settings.read") ? (
+              <>
+                <TabsTrigger value="notifications">Notifications</TabsTrigger>
+                <TabsTrigger value="security">Security</TabsTrigger>
+              </>
+            ) : null}
           </TabsList>
 
           <TabsContent value="school" className="mt-4">
@@ -169,6 +179,10 @@ function SettingsPage() {
                 </Button>
               </div>
             </form>
+          </TabsContent>
+
+          <TabsContent value="fees" className="mt-4">
+            <PaymentStructurePanel canWrite={can("finance.structure")} />
           </TabsContent>
 
           <TabsContent value="notifications" className="mt-4">

@@ -16,9 +16,11 @@ from rest_framework.views import APIView
 from accounts.permissions import HasSchool, require_permissions, require_roles
 from schools.models import School, SchoolSubscription
 from .models import (
+    EPOCH,
     AcademicSession,
     AttendanceRecord,
     Enrollment,
+    FeeStructure,
     Invoice,
     Payment,
     SchoolClass,
@@ -66,6 +68,11 @@ CanReadAttendance = require_permissions('attendance.read')
 # tests in test_authorisation_regressions.py).
 CanWriteStaff = require_permissions('staff.write')
 CanWriteAcademics = require_permissions('academics.write')
+# Configuring the Payment Structure is its own capability, separate from
+# recording invoices and payments. A bursar who can bill a class but must not
+# reprice the school would be blocked by a finance.write check, and a principal
+# who should see prices but not change them is correctly excluded.
+CanWriteFeeStructure = require_permissions('finance.structure')
 
 
 def _paginate(queryset, request, serializer_class, context=None):
@@ -595,7 +602,9 @@ class InvoiceGenerateView(APIView):
         school = get_object_or_404(School, id=request.user.school_id)
         # Same resolution the admission path uses, so a class cannot be billed
         # two different ways depending on which screen started it.
-        items = billing_service.school_fee_items(school, class_name)
+        items = billing_service.resolve_invoice_items(
+            school=school, class_name=class_name, term=term,
+        )
         if not items:
             raise ValidationError({
                 'className': f'No fee items are set up for {class_name}. Add a fee structure first.',
@@ -641,17 +650,216 @@ class InvoiceGenerateView(APIView):
         })
 
 
+# Human names for the fee vocabulary, used to make validation messages legible.
+FEE_TYPE_DISPLAY = {value: label for value, label in FeeStructure.FeeType.choices}
+
+
 class FeeStructureView(APIView):
-    permission_classes = [IsAuthenticated, HasSchool, CanWriteFinance]
+    """Read and write the school's Payment Structure.
+
+    Two shapes, because the product grew in two steps:
+
+    * `levels` (preferred) — the per-level Payment Structure from school
+      settings. Each entry carries its own fee lines, including a registration
+      fee, so a Primary student and a Senior Secondary student are priced
+      independently. This is written to the relational `FeeStructure` table.
+    * `items` (legacy) — the older flat school-wide list still on
+      `School.fee_structure`. Kept working so schools that have not opened the
+      new editor are unaffected.
+
+    Reads always return both, and invoicing prefers `levels` and falls back to
+    `items` (see `billing.resolve_invoice_items`).
+    """
+
+    def get_permissions(self):
+        # `finance.structure` is the capability being exercised, not a role
+        # name. `principal` deliberately does not hold it, so a principal can
+        # read the structure but not reprice the school.
+        if self.request.method in ('PUT', 'PATCH', 'POST'):
+            return [IsAuthenticated(), HasSchool(), CanWriteFeeStructure()]
+        return [IsAuthenticated(), HasSchool(), require_permissions('finance.read')()]
 
     def _school(self, request):
         return get_object_or_404(School, id=request.user.school_id)
 
+    def _session(self, school):
+        return academic_service.current_session(school)
+
+    def _levels_payload(self, school):
+        """Per-level fee lines for the current session, in catalogue order."""
+        session = self._session(school)
+        if session is None:
+            return []
+        # Only LEVEL-scope rows belong to the per-level editor. A CLASS- or
+        # SCHOOL-scope row that merely carries a `level` (migration 0006 writes
+        # class-scoped rows for legacy per-class fees) would otherwise be shown
+        # here, and the next save would deactivate it while writing a duplicate.
+        rows = (
+            FeeStructure.objects
+            .filter(
+                school=school,
+                academic_session=session,
+                is_active=True,
+                scope=FeeStructure.Scope.LEVEL,
+            )
+            .select_related('level')
+        )
+        by_level: dict[str | None, list[dict]] = {}
+        for row in rows:
+            if row.level_id is None:
+                continue
+            by_level.setdefault(row.level.code, []).append({
+                'id': row.id,
+                'feeType': row.fee_type,
+                'label': row.label,
+                'amount': float(row.amount),
+                'term': row.term,
+                'isRequired': row.is_required,
+                'scope': row.scope,
+            })
+        levels = []
+        for level in school.levels.filter(is_active=True).order_by('sort_order', 'name'):
+            levels.append({
+                'id': level.id,
+                'code': level.code,
+                'name': level.name,
+                'fees': sorted(
+                    by_level.get(level.code, []),
+                    key=lambda f: (f['feeType'] != FeeStructure.FeeType.REGISTRATION, f['label']),
+                ),
+            })
+        return levels
+
     def get(self, request):
-        return Response({'items': self._school(request).fee_structure or []})
+        school = self._school(request)
+        return Response({
+            'items': school.fee_structure or [],
+            'levels': self._levels_payload(school),
+        })
+
+    def _write_level_fees(self, school, session, level, fees, actor):
+        """Replace one level's fee lines.
+
+        Rows are matched on the same key the conflict constraint uses, so saving
+        a level twice updates in place rather than raising IntegrityError. Fees
+        the editor removed are deactivated rather than deleted: an invoice that
+        already snapshotted them must keep resolving to the same figure.
+        """
+        if not isinstance(fees, list):
+            raise ValidationError({'fees': 'Each level needs a list of fees.'})
+
+        # The conflict constraint allows one row per fee type per scope, so a
+        # payload with two "other" lines would fail on the second write with an
+        # IntegrityError the client cannot interpret. Reject it up front with a
+        # message naming the duplicate instead.
+        seen: set[tuple[str, str]] = set()
+        for index, fee in enumerate(fees):
+            if not isinstance(fee, dict):
+                raise ValidationError({'fees': f'Fee {index + 1} is not a valid fee line.'})
+            key = (
+                str(fee.get('feeType') or '').strip() or FeeStructure.FeeType.OTHER,
+                str(fee.get('term') or '').strip(),
+            )
+            if key in seen:
+                label = str(fee.get('label') or '').strip() or FEE_TYPE_DISPLAY.get(key[0], key[0])
+                raise ValidationError({
+                    'fees': (
+                        f'"{label}" repeats the {FEE_TYPE_DISPLAY.get(key[0], key[0])} fee. '
+                        'Each fee type can be set once per term - merge them into a single fee.'
+                    ),
+                })
+            seen.add(key)
+
+        kept = []
+        for fee in fees:
+            label = str(fee.get('label') or '').strip()
+            fee_type = str(fee.get('feeType') or '').strip() or FeeStructure.FeeType.OTHER
+            if fee_type not in FeeStructure.FeeType.values:
+                raise ValidationError({'fees': f'"{fee_type}" is not a valid fee type.'})
+            try:
+                amount = Decimal(str(fee.get('amount')))
+            except (TypeError, ValueError, InvalidOperation):
+                raise ValidationError({'fees': f'"{label}" has an invalid amount.'})
+            if not label:
+                raise ValidationError({'fees': 'Every fee needs a label.'})
+            if amount <= 0:
+                raise ValidationError({'fees': f'Amount for "{label}" must be greater than zero.'})
+            term = str(fee.get('term') or '').strip()
+            row, _created = FeeStructure.objects.update_or_create(
+                school=school,
+                academic_session=session,
+                term=term,
+                scope=FeeStructure.Scope.LEVEL,
+                scope_key=str(level.id),
+                fee_type=fee_type,
+                effective_from=EPOCH,
+                defaults={
+                    'level': level,
+                    'label': label,
+                    'amount': amount,
+                    'is_required': bool(fee.get('isRequired', True)),
+                    'is_active': True,
+                    'created_by': actor,
+                },
+            )
+            kept.append(row.id)
+
+        FeeStructure.objects.filter(
+            school=school, academic_session=session,
+            scope=FeeStructure.Scope.LEVEL, scope_key=str(level.id),
+        ).exclude(id__in=kept).update(is_active=False)
+        return kept
 
     def put(self, request):
         school = self._school(request)
+        session = self._session(school)
+        if session is None:
+            raise ValidationError({
+                'levels': 'Set the school academic session before configuring fees.',
+            })
+
+        # ── per-level Payment Structure ──
+        if 'levels' in request.data:
+            levels = request.data.get('levels')
+            if not isinstance(levels, list):
+                raise ValidationError({'levels': 'Levels must be a list.'})
+            school_levels = {
+                level.id: level for level in school.levels.filter(is_active=True)
+            }
+            touched = []
+            with transaction.atomic():
+                for entry in levels:
+                    level_id = entry.get('levelId')
+                    level = school_levels.get(level_id)
+                    if level is None:
+                        raise ValidationError({
+                            'levels': f'Level {level_id} does not belong to this school.',
+                        })
+                    self._write_level_fees(
+                        school, session, level, entry.get('fees') or [], request.user,
+                    )
+                    touched.append(level)
+
+            # Students registered before any fees existed are sitting in
+            # PENDING_PAYMENT with no invoice, and the bulk generator only bills
+            # active students, so they would never be invoiced and never become
+            # active. Only the levels just priced are invoiced: saving Junior
+            # Secondary fees must not bill a Nursery family that has none.
+            invoiced = 0
+            per_level = {}
+            for level in touched:
+                created = billing_service.invoice_pending_students(school, level=level)
+                per_level[str(level.code)] = created
+                invoiced += created
+
+            return Response({
+                'levels': self._levels_payload(school),
+                'items': school.fee_structure or [],
+                'invoicedPendingStudents': invoiced,
+                'invoicedPendingStudentsByLevel': per_level,
+            })
+
+        # ── legacy school-wide list ──
         items = request.data.get('items', [])
         if not isinstance(items, list):
             raise ValidationError({'items': 'Fee structure must be a list of items.'})
@@ -670,14 +878,10 @@ class FeeStructureView(APIView):
             normalized.append({'label': label, 'amount': float(amount), 'className': class_name})
         school.fee_structure = normalized
         school.save(update_fields=['fee_structure'])
-        # Students registered before any fee structure existed are sitting in
-        # PENDING_PAYMENT with no invoice, and the bulk generator only bills
-        # active students, so they would never be invoiced and never become
-        # active. Raising their admission invoice here is the only moment the
-        # school has both the fees and the students.
         invoiced = billing_service.invoice_pending_students(school)
         return Response({
             'items': school.fee_structure,
+            'levels': self._levels_payload(school),
             'invoicedPendingStudents': invoiced,
         })
 

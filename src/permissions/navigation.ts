@@ -20,6 +20,7 @@ const SCHOOL_ADMIN: NavItem[] = [
   { label: "Lesson Plans", to: "/lesson-plans", icon: "notebook", group: "Academics" },
   { label: "Promotion Centre", to: "/promotion", icon: "promotion", group: "Academics" },
   { label: "Finance", to: "/finance", icon: "wallet", group: "Finance", mobile: true },
+  { label: "Invoices", to: "/finance/invoices", icon: "receipt", group: "Finance" },
   { label: "Announcements", to: "/communication", icon: "megaphone", group: "Engagement" },
   { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Engagement" },
   { label: "Reports", to: "/reports", icon: "chart", group: "Manage" },
@@ -38,9 +39,13 @@ const PRINCIPAL: NavItem[] = [
   { label: "Results", to: "/results", icon: "award", group: "Academics", mobile: true },
   { label: "Timetable", to: "/timetable", icon: "calendar", group: "Academics" },
   { label: "Promotion Centre", to: "/promotion", icon: "promotion", group: "Academics" },
+  { label: "Invoices", to: "/finance/invoices", icon: "receipt", group: "Finance" },
   { label: "Announcements", to: "/communication", icon: "megaphone", group: "Engagement" },
   { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Engagement" },
   { label: "Reports", to: "/reports", icon: "chart", group: "Manage" },
+  // Settings is where the Payment Structure lives, so a principal needs it in
+  // order to see prices. It renders read-only without `finance.structure`.
+  { label: "Settings", to: "/settings", icon: "settings", group: "Manage" },
 ];
 
 const TEACHER: NavItem[] = [
@@ -60,6 +65,7 @@ const ACCOUNTANT: NavItem[] = [
   { label: "Invoices", to: "/finance/invoices", icon: "receipt", group: "Finance", mobile: true },
   { label: "Payments", to: "/finance", icon: "wallet", group: "Finance", mobile: true },
   { label: "Reports", to: "/reports", icon: "chart", group: "Finance" },
+  { label: "Settings", to: "/settings", icon: "settings", group: "Support" },
   { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Support", mobile: true },
 ];
 

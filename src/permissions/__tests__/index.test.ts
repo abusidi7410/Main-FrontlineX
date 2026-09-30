@@ -71,6 +71,30 @@ describe("ROLE_PERMISSIONS", () => {
     expect(acct).not.toContain("settings.write");
   });
 
+  it("accountant can price the school but not administer it", () => {
+    const acct = ROLE_PERMISSIONS.accountant;
+    expect(acct).toContain("finance.structure");
+    expect(acct).not.toContain("settings.write");
+    expect(acct).not.toContain("academics.write");
+  });
+
+  it("principal can read fees but cannot reprice the school", () => {
+    const principal = ROLE_PERMISSIONS.principal;
+    expect(principal).toContain("finance.read");
+    expect(principal).not.toContain("finance.structure");
+    expect(principal).not.toContain("finance.write");
+  });
+
+  it("only finance roles can read the payment structure", () => {
+    const readers = ["school_admin", "principal", "accountant"] as const;
+    for (const role of readers) {
+      expect(ROLE_PERMISSIONS[role]).toContain("finance.read");
+    }
+    for (const role of ["teacher", "secretary", "parent", "student"] as const) {
+      expect(ROLE_PERMISSIONS[role]).not.toContain("finance.read");
+    }
+  });
+
   it("parent has only ai.parent", () => {
     expect(ROLE_PERMISSIONS.parent).toEqual(["ai.parent"]);
   });

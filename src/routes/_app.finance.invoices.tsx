@@ -1,8 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatusBadge } from "@/components/common/status-badge";
@@ -28,15 +28,9 @@ import {
 import { ApiRequestError } from "@/api/client";
 import { useSession } from "@/auth/session";
 import { useDebounced } from "@/hooks/use-debounced";
-import { compactNaira, naira, numberFmt } from "@/lib/format";
+import { compactNaira, naira } from "@/lib/format";
 import { getAcademicStructure, TERM_OPTIONS } from "@/services/academics.service";
-import {
-  generateInvoices,
-  getFeeStructure,
-  listInvoices,
-  updateFeeStructure,
-  type FeeItem,
-} from "@/services/finance.service";
+import { generateInvoices, listInvoices } from "@/services/finance.service";
 import { CLASSES } from "@/constants/reference";
 
 export const Route = createFileRoute("/_app/finance/invoices")({
@@ -103,6 +97,13 @@ function InvoicesPage() {
           <EmptyState
             title="No invoices found"
             description="Generate invoices from a class fee structure, or try a different search."
+            action={
+              can("finance.structure") ? (
+                <Button asChild variant="outline" className="h-11">
+                  <Link to="/settings">Set up the Payment Structure</Link>
+                </Button>
+              ) : undefined
+            }
           />
         ) : (
           <div className="fn-panel overflow-x-auto">
@@ -165,6 +166,12 @@ function InvoicesPage() {
   );
 }
 
+/**
+ * Billing only. Prices live in Settings > Payment Structure, which is a
+ * separate screen on purpose: saving a structure there can create real debt for
+ * students who registered before fees existed, and that must not be a
+ * side effect of a button labelled "Generate invoices".
+ */
 function GenerateInvoicesDialog({
   open,
   onOpenChange,
@@ -178,53 +185,13 @@ function GenerateInvoicesDialog({
 
   const [className, setClassName] = useState(classes[0] ?? "");
   const [term, setTerm] = useState(academics.data?.term ?? "First Term");
-  const [rows, setRows] = useState<FeeItem[]>([]);
   const [overwrite, setOverwrite] = useState(false);
 
   useEffect(() => {
-    if (!open) return;
-    if (academics.data) {
-      setClassName(classes[0] ?? "");
-      setTerm(academics.data.term || "First Term");
-    }
-    void getFeeStructure()
-      .then((structure) => setRows(structure.items))
-      .catch(() => setRows([]));
+    if (!open || !academics.data) return;
+    setClassName(classes[0] ?? "");
+    setTerm(academics.data.term || "First Term");
   }, [open, academics.data, classes]);
-
-  const total = rows.reduce((sum, row) => sum + row.amount, 0);
-  // An empty list is a legitimate structure (no fees), but a half-filled row is
-  // not: the backend rejects blank labels and non-positive amounts.
-  const rowsValid = rows.every((r) => r.label.trim() !== "" && r.amount > 0);
-
-  const save = useMutation({
-    mutationFn: () => updateFeeStructure(rows),
-    onSuccess: (result) => {
-      setRows(result.items);
-      // Students registered before any fee structure existed were sitting in
-      // pending_payment with no invoice and no way to ever be billed. Say so,
-      // because the admin has just created real debt for real families.
-      toast.success(
-        result.invoicedPendingStudents > 0
-          ? `Fee structure saved. ${result.invoicedPendingStudents} student${result.invoicedPendingStudents === 1 ? "" : "s"} who registered before fees were set up ${result.invoicedPendingStudents === 1 ? "has" : "have"} now been invoiced.`
-          : "Fee structure saved.",
-        {
-          description:
-            result.invoicedPendingStudents > 0
-              ? "They become active once the invoice is paid in full."
-              : undefined,
-          duration: result.invoicedPendingStudents > 0 ? 10000 : 4000,
-        },
-      );
-      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      void queryClient.invalidateQueries({ queryKey: ["students"] });
-    },
-    onError: (error) => {
-      toast.error(
-        error instanceof ApiRequestError ? error.message : "Could not save the fee structure.",
-      );
-    },
-  });
 
   const generate = useMutation({
     mutationFn: () =>
@@ -245,18 +212,14 @@ function GenerateInvoicesDialog({
     },
   });
 
-  const updateRow = (index: number, patch: Partial<FeeItem>) => {
-    setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
-  };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Generate term invoices</DialogTitle>
           <DialogDescription>
-            One invoice is created per active student in the class, using the fee items below.
-            Already-drafted invoices for the term are left untouched.
+            One invoice is created per active student in the class, priced from the Payment
+            Structure in Settings. Already-drafted invoices for the term are left untouched.
           </DialogDescription>
         </DialogHeader>
 
@@ -293,86 +256,22 @@ function GenerateInvoicesDialog({
           </div>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label>Fee items</Label>
-            <span className="text-xs text-muted-foreground">Applies to all classes</span>
-          </div>
-          {rows.length === 0 ? (
-            <p className="rounded-lg border p-3 text-sm text-muted-foreground">
-              No fee structure yet. Add items — each is the amount every student will be billed.
-              Save them here, then generate invoices whenever you are ready to bill a class.
-            </p>
-          ) : null}
-          {rows.map((row, index) => (
-            <div key={index} className="flex items-center gap-2">
-              <Input
-                className="h-11 flex-1"
-                value={row.label}
-                placeholder="Item label"
-                onChange={(event) => updateRow(index, { label: event.target.value })}
-              />
-              <Input
-                className="h-11 w-32"
-                inputMode="numeric"
-                value={row.amount}
-                placeholder={naira(0)}
-                onChange={(event) =>
-                  updateRow(index, { amount: Number(event.target.value.replace(/[^0-9]/g, "")) })
-                }
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-11 text-muted-foreground hover:text-destructive"
-                onClick={() => setRows((prev) => prev.filter((_, i) => i !== index))}
-              >
-                <Trash2 className="size-4" aria-hidden="true" />
-                <span className="sr-only">Remove {row.label}</span>
-              </Button>
-            </div>
-          ))}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-10"
-            onClick={() => setRows((prev) => [...prev, { label: "", amount: 0, className: "*" }])}
-          >
-            <Plus className="size-4" aria-hidden="true" />
-            Add item
-          </Button>
-        </div>
-
-        <div className="flex items-center justify-between rounded-lg border border-muted bg-muted/30 px-3 py-2 text-sm">
-          <label className="flex items-center gap-2 font-medium">
-            <input
-              type="checkbox"
-              className="size-4 accent-foreground"
-              checked={overwrite}
-              onChange={(event) => setOverwrite(event.target.checked)}
-            />
-            Recalculate existing invoices for this term
-          </label>
-          <span className="font-semibold tabular-nums">Total per student: {numberFmt(total)}</span>
-        </div>
+        <label className="flex items-center gap-2 rounded-lg border border-muted bg-muted/30 px-3 py-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            className="size-4 accent-foreground"
+            checked={overwrite}
+            onChange={(event) => setOverwrite(event.target.checked)}
+          />
+          Recalculate existing invoices for this term
+        </label>
 
         <DialogFooter className="gap-2 sm:gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>
-          {/* Saving is separate from generating: an admin needs to set the
-              structure for next term before any invoice exists to bill. */}
           <Button
-            variant="secondary"
-            disabled={!rowsValid || save.isPending}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? "Saving…" : "Save fee structure"}
-          </Button>
-          <Button
-            disabled={!className || !term || !rowsValid || generate.isPending}
+            disabled={!className || !term || generate.isPending}
             onClick={() => generate.mutate()}
           >
             {generate.isPending ? "Generating…" : "Generate invoices"}

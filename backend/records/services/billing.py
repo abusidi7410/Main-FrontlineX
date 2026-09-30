@@ -156,8 +156,17 @@ def create_invoice_for_student(
     """
     term = (term or '').strip()
     if items is None:
-        rows = resolve_fee_structure(school, session, school_class, term)
-        items, computed_total = build_invoice_snapshot(rows)
+        # `resolve_invoice_items` is defined below and is what every other
+        # billing path uses, so a bulk-generated invoice and an admission
+        # invoice for the same student cannot disagree.
+        items = resolve_invoice_items(
+            school=school,
+            class_name=student.class_name if student is not None else '',
+            session=session,
+            school_class=school_class,
+            term=term,
+        )
+        computed_total = snapshot_total(items)
     else:
         items = [dict(item) for item in items]
         computed_total = snapshot_total(items)
@@ -200,18 +209,23 @@ def default_due_date(session: AcademicSession, *, days: int = 30):
     return timezone.now().date() + datetime.timedelta(days=days) if days else None
 
 
-# ── The live Payment Structure (School.fee_structure) ──────────────────────
+# ── The legacy Payment Structure (School.fee_structure) ─────────────────────
 #
 # There are two fee representations in this schema. The relational
-# `FeeStructure` table is the spec model and everything above reads it, but
-# nothing in the app writes it: the admin editor at `FeeStructureView` persists
-# to `School.fee_structure` (JSON), so that is what a real school has rows in.
-# Invoicing therefore has to resolve the JSON too, and both the bulk generator
-# and admission use these two helpers so the rules cannot drift apart.
+# `FeeStructure` table is the spec model, and the editor in school settings
+# now writes it per level. `School.fee_structure` (JSON) is the older, school-wide
+# flat list that predates per-level pricing, and it is what schools that have
+# never opened the new editor still have.
+#
+# Invoicing therefore has to read both, in that order: relational rows first,
+# and the JSON only when a school has no relational rows for the scope being
+# billed. Both the bulk generator and the admission path go through
+# `resolve_invoice_items` so the two screens cannot disagree about what a
+# student owes.
 
 
 def school_fee_items(school, class_name: str = '') -> list[dict]:
-    """Fee items from `School.fee_structure` that apply to a class.
+    """Fee items from the legacy `School.fee_structure` JSON that apply to a class.
 
     A row applies when its className is the wildcard or the class itself.
     Amounts become strings so the invoice snapshot round-trips exactly, the
@@ -232,6 +246,55 @@ def school_fee_items(school, class_name: str = '') -> list[dict]:
     return items
 
 
+def _class_for_name(school, class_name: str) -> SchoolClass | None:
+    """The `SchoolClass` a denormalised `Student.class_name` refers to.
+
+    Fees are keyed on level/class, but the student row and the JSON fee list
+    both only carry the class *name*, so the level has to be recovered from the
+    class table. Missing classes are not an error: a school may register a
+    student before configuring the class, and those students simply bill from
+    the school-wide default.
+    """
+    name = (class_name or '').strip()
+    if not name:
+        return None
+    return school.school_classes.filter(name=name).first()
+
+
+def resolve_invoice_items(
+    *,
+    school,
+    class_name: str = '',
+    session: AcademicSession | None = None,
+    school_class: SchoolClass | None = None,
+    term: str = '',
+) -> list[dict]:
+    """The fee lines a class is billed, preferring per-level relational rows.
+
+    Relational rows win because that is the per-level Payment Structure the
+    school settings editor writes. The legacy JSON is consulted only when the
+    school has no relational rows at all for this session, which is every school
+    that has not yet used the new editor.
+
+    Both shapes are invoice-item dicts keyed by `label`/`amount`, so the caller
+    cannot tell which source it got and the snapshot format is identical.
+    """
+    if school_class is None:
+        school_class = _class_for_name(school, class_name)
+    if session is None:
+        from . import academic as academic_service
+
+        session = academic_service.current_session(school)
+
+    if session is not None:
+        rows = resolve_fee_structure(school, session, school_class, (term or '').strip())
+        if rows:
+            items, _total = build_invoice_snapshot(rows)
+            return items
+
+    return school_fee_items(school, class_name)
+
+
 def create_invoice_from_school_fees(
     *,
     school,
@@ -239,16 +302,19 @@ def create_invoice_from_school_fees(
     term: str = '',
     due_date=None,
     source: str = Invoice.Source.ADMISSION,
+    session: AcademicSession | None = None,
 ) -> Invoice | None:
     """Issue a student's admission invoice from the school's configured fees.
 
-    Returns None when the school has not configured any applicable fee, which
-    is the normal state of a brand new school. Registration must still succeed
-    in that case: the student simply stays PENDING_PAYMENT until fees are set
+    Returns None when the school has not configured any applicable fee, which is
+    the normal state of a brand new school. Registration must still succeed in
+    that case: the student simply stays PENDING_PAYMENT until fees are set
     and an invoice is raised, so nobody is locked out of enrolling a first
     student.
     """
-    items = school_fee_items(school, student.class_name)
+    items = resolve_invoice_items(
+        school=school, class_name=student.class_name, session=session, term=term,
+    )
     if not items:
         return None
     total = sum((invoice_item_amount(item) for item in items), Decimal('0'))
@@ -309,7 +375,7 @@ def activate_student_if_fully_paid(student) -> bool:
     return True
 
 
-def invoice_pending_students(school) -> int:
+def invoice_pending_students(school, *, level: Level | None = None) -> int:
     """Raise the missing admission invoice for students registered before fees.
 
     A school can register its first students before anyone has set up the
@@ -317,11 +383,26 @@ def invoice_pending_students(school) -> int:
     invoice. The bulk generator only bills active students, so nothing else
     would ever invoice them and they could never be activated. Called when the
     fee structure is saved to close that gap. Returns how many were invoiced.
+
+    `level` narrows the run to one level. Saving fees for Junior Secondary must
+    not silently invoice every pending Nursery and Senior student, because those
+    students have no applicable fee and would only receive a partial or empty
+    bill. Passing None keeps the school-wide behaviour for the legacy
+    school-wide editor.
     """
     created = 0
     pending = Student.objects.filter(
         school=school, status=Student.Status.PENDING_PAYMENT,
     ).order_by('id')
+    if level is not None:
+        # `class_name` is the denormalised mirror the student rows carry, so the
+        # narrowing has to happen on the name even though fees are keyed on the
+        # class row.
+        names = list(
+            school.school_classes.filter(level=level, is_active=True)
+            .values_list('name', flat=True)
+        )
+        pending = pending.filter(class_name__in=names)
     for student in pending:
         if live_invoices(student):
             continue
