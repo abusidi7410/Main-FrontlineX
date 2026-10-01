@@ -24,12 +24,28 @@ from records.models import (
     AttendanceRecord,
     ClassTeacherAssignment,
     Enrollment,
+    SchoolClass,
     Section,
     StaffMember,
     Student,
 )
 
 from .test_security import SecurityTestBase
+
+
+def remove_all_classes(school):
+    """Delete a school's `SchoolClass` rows.
+
+    `Enrollment`, `ResultSheet` and registrations PROTECT them, which is the point:
+    a class that has students cannot vanish. Clearing the referencing rows first is
+    the only way to reach the "this school has no classes at all" state.
+    """
+    from records.models import Registration, ResultSheet
+
+    Enrollment.objects.filter(school=school).delete()
+    ResultSheet.objects.filter(school=school).delete()
+    Registration.objects.filter(school=school).delete()
+    SchoolClass.objects.filter(school=school).delete()
 
 
 class DailyAttendanceTests(SecurityTestBase):
@@ -844,3 +860,135 @@ class AcademicsClassSourceOfTruthTests(SecurityTestBase):
             self.school.school_classes.get(name='JSS 2').is_active,
         )
         self.assertNotIn('JSS 2', self.client.get(self.url('/academics/')).json()['classes'])
+
+    def test_a_school_with_real_classes_but_an_empty_mirror_lists_them(self):
+        """The live bug: `School.classes` was never written, so the dropdown was
+        empty while the register endpoint resolved the same classes fine."""
+        self.school.classes = []
+        self.school.save(update_fields=['classes'])
+
+        self.auth(self.admin)
+        payload = self.client.get(self.url('/academics/')).json()
+        self.assertEqual(sorted(payload['classes']), ['JSS 1', 'JSS 2', 'SSS 1'])
+        # ...and the mirror is repaired as a side effect, not just the response.
+        self.school.refresh_from_db()
+        self.assertEqual(sorted(self.school.classes), ['JSS 1', 'JSS 2', 'SSS 1'])
+
+    def test_a_retired_class_drops_out_of_the_dropdown(self):
+        self.school.classes = ['JSS 1', 'JSS 2', 'SSS 1']
+        self.school.save(update_fields=['classes'])
+        self.jss2.is_active = False
+        self.jss2.save(update_fields=['is_active'])
+
+        self.auth(self.admin)
+        payload = self.client.get(self.url('/academics/')).json()
+        self.assertEqual(sorted(payload['classes']), ['JSS 1', 'SSS 1'])
+
+    def test_a_school_with_no_class_rows_gets_an_empty_list_not_the_defaults(self):
+        """Inventing 14 class names would be fabricating data. An administrator
+        adds real ones through the academics screen."""
+        remove_all_classes(self.school)
+        self.school.classes = []
+        self.school.save(update_fields=['classes'])
+
+        self.auth(self.admin)
+        self.assertEqual(self.client.get(self.url('/academics/')).json()['classes'], [])
+
+
+class ClassMirrorBackfillMigrationTests(SecurityTestBase):
+    """`schools.0014` repairs the mirror at rest, so the dropdown is right even
+    before the new read path has been deployed anywhere."""
+
+    def run_migration(self):
+        """Invoke the migration body the way Django does."""
+        import importlib
+
+        from django.apps import apps as global_apps
+        from django.db.migrations import RunPython
+        from django.db import connection
+
+        module = importlib.import_module('schools.migrations.0014_backfill_class_mirror')
+
+        class FakeSchemaEditor:
+            connection = type('C', (), {'alias': 'default'})()
+
+        module.rebuild_class_mirror(global_apps, FakeSchemaEditor())
+        return module
+
+    def test_the_migration_rebuilds_an_empty_mirror_from_the_class_rows(self):
+        self.assertEqual(self.school.classes, [])
+
+        self.run_migration()
+
+        self.school.refresh_from_db()
+        self.assertEqual(self.school.classes, ['JSS 1', 'JSS 2', 'SSS 1'])
+
+    def test_the_migration_drops_a_class_that_no_longer_exists(self):
+        self.school.classes = ['JSS 1', 'JSS 2', 'SSS 1', 'OLD CLASS']
+        self.school.save(update_fields=['classes'])
+
+        self.run_migration()
+
+        self.school.refresh_from_db()
+        self.assertEqual(self.school.classes, ['JSS 1', 'JSS 2', 'SSS 1'])
+
+    def test_the_migration_excludes_a_retired_class(self):
+        self.jss2.is_active = False
+        self.jss2.save(update_fields=['is_active'])
+
+        self.run_migration()
+
+        self.school.refresh_from_db()
+        self.assertEqual(self.school.classes, ['JSS 1', 'SSS 1'])
+
+    def test_the_migration_clears_a_mirror_with_no_class_rows(self):
+        """A name in the mirror with no `SchoolClass` row behind it is exactly the
+        state that produced the 404s, so it must not survive."""
+        remove_all_classes(self.school)
+        self.school.classes = ['JSS 1', 'GHOST CLASS']
+        self.school.save(update_fields=['classes'])
+
+        self.run_migration()
+
+        self.school.refresh_from_db()
+        self.assertEqual(self.school.classes, [])
+
+    def test_the_migration_repairs_every_school_not_just_one(self):
+        """Drift is not per-school, so the repair must not stop at the first one:
+        the rival school also holds a real `SchoolClass` with an empty mirror."""
+        self.assertEqual(self.other_school.classes or [], [])
+
+        self.run_migration()
+
+        self.other_school.refresh_from_db()
+        self.assertEqual(self.other_school.classes, ['JSS 1'])
+
+    def test_the_migration_is_idempotent(self):
+        self.run_migration()
+        self.school.refresh_from_db()
+        first = list(self.school.classes)
+
+        self.run_migration()
+
+        self.school.refresh_from_db()
+        self.assertEqual(self.school.classes, first)
+
+    def test_reverse_is_a_noop(self):
+        from django.db.migrations import RunPython
+
+        module = self.run_migration()
+        self.assertIs(module.Migration.operations[0].reverse_code, RunPython.noop)
+
+    def test_the_migration_and_the_read_path_agree(self):
+        """The data migration and `sync_school_class_names` must not drift: if they
+        did, deploying one and not the other would change the dropdown."""
+        from records.services import academic as academic_service
+
+        self.run_migration()
+        self.school.refresh_from_db()
+        from_migration = list(self.school.classes)
+
+        self.school.classes = []
+        self.school.save(update_fields=['classes'])
+
+        self.assertEqual(academic_service.sync_school_class_names(self.school), from_migration)
