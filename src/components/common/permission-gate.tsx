@@ -39,13 +39,21 @@ export function PermissionGate({
   );
 }
 
+/**
+ * Renders `children` only when the role holds `permission`, otherwise `fallback`.
+ *
+ * `fallback` exists for the read-only case: a role that may *see* a value but not
+ * change it should still see it, rather than seeing a blank where the value goes.
+ */
 export function IfAllowed({
   permission,
   children,
+  fallback = null,
 }: {
   permission: Permission;
   children: ReactNode;
+  fallback?: ReactNode;
 }) {
   const { can } = useSession();
-  return can(permission) ? <>{children}</> : null;
+  return can(permission) ? <>{children}</> : <>{fallback}</>;
 }

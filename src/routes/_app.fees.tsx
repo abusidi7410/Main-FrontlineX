@@ -29,7 +29,7 @@ import { useSession } from "@/auth/session";
 import { ApiRequestError } from "@/api/client";
 import { dateTimeFmt, naira, titleCase } from "@/lib/format";
 import { printHtml } from "@/lib/print";
-import { listInvoices, listPayments, recordPayment } from "@/services/finance.service";
+import { getFinanceSummary, recordPayment } from "@/services/finance.service";
 import type { Invoice, Payment } from "@/types";
 
 export const Route = createFileRoute("/_app/fees")({
@@ -58,16 +58,17 @@ function balanceOf(invoice: Invoice) {
 }
 
 function printInvoice(invoice: Invoice, school: { name: string; address: string }) {
+  const invoiceKind = invoice.source === "admission" ? "Registration invoice" : "Fee invoice";
   const rows = invoice.items
     .map((item) => `<tr><td>${item.label}</td><td class="right">${naira(item.amount)}</td></tr>`)
     .join("");
   const ok = printHtml({
-    title: "Invoice",
+    title: invoiceKind,
     bodyHtml: `<p class="school">${school.name} · ${school.address}</p>
 <div class="doc">
-<h1>Fee invoice</h1>
+<h1>${invoiceKind}</h1>
 <p><strong>${invoice.studentName}</strong><br/>
-${invoice.className} · ${invoice.term} · ${invoice.id}</p>
+${invoice.className} · ${invoice.source === "admission" ? "One-time registration" : invoice.term} · ${invoice.id}</p>
 <table>
 <thead><tr><th>Item</th><th class="right">Amount</th></tr></thead>
 <tbody>${rows}
@@ -108,15 +109,14 @@ function FeesPage() {
   const { session } = useSession();
   const queryClient = useQueryClient();
 
-  const invoicesQuery = useQuery({ queryKey: ["invoices", "fees"], queryFn: () => listInvoices() });
-  const paymentsQuery = useQuery({ queryKey: ["payments", "fees"], queryFn: listPayments });
+  const financeQuery = useQuery({ queryKey: ["finance-summary"], queryFn: getFinanceSummary });
 
   const [activeInvoice, setActiveInvoice] = useState<Invoice | null>(null);
 
-  const mine = (invoicesQuery.data ?? []).slice(0, 3);
-  const receipts = (paymentsQuery.data ?? []).slice(0, 6);
-  const billed = mine.reduce((sum, i) => sum + i.total, 0);
-  const paid = mine.reduce((sum, i) => sum + i.paid, 0);
+  const mine = financeQuery.data?.recentInvoices ?? [];
+  const receipts = financeQuery.data?.recentPayments ?? [];
+  const billed = financeQuery.data?.billed ?? 0;
+  const paid = financeQuery.data?.paid ?? 0;
   const school = {
     name: session?.school?.name ?? "Al-Noor Model Academy",
     address: session?.school ? `${session.school.address}, ${session.school.state}` : "Nigeria",
@@ -126,17 +126,12 @@ function FeesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Fees"
-        description="What each child owes this term, and every payment the school has recorded for you."
+        description="Current-term balances, recent invoices, and recent payments recorded for your family."
       />
 
-      {invoicesQuery.isError || paymentsQuery.isError ? (
-        <ErrorState
-          onRetry={() => {
-            void invoicesQuery.refetch();
-            void paymentsQuery.refetch();
-          }}
-        />
-      ) : invoicesQuery.isPending || paymentsQuery.isPending ? (
+      {financeQuery.isError ? (
+        <ErrorState onRetry={() => void financeQuery.refetch()} />
+      ) : financeQuery.isPending ? (
         <ListSkeleton />
       ) : (
         <>
@@ -165,7 +160,9 @@ function FeesPage() {
                       <div className="min-w-0">
                         <p className="font-medium">{invoice.studentName}</p>
                         <p className="text-sm text-muted-foreground">
-                          {invoice.className} · {invoice.term} · {invoice.id}
+                          {invoice.className} ·{" "}
+                          {invoice.source === "admission" ? "One-time registration" : invoice.term}{" "}
+                          · {invoice.id}
                         </p>
                       </div>
                       <StatusBadge status={invoice.status} />
@@ -255,6 +252,7 @@ function FeesPage() {
         onPaid={() => {
           void queryClient.invalidateQueries({ queryKey: ["invoices"] });
           void queryClient.invalidateQueries({ queryKey: ["payments"] });
+          void queryClient.invalidateQueries({ queryKey: ["finance-summary"] });
         }}
         school={school}
       />

@@ -267,3 +267,74 @@ class PlatformOverviewTests(TestCase):
         self.assertEqual(first.status_code, 200)
         self.assertEqual(first.json(), second.json())
         self.assertEqual(cache.get('platform:overview:7:all'), second.json())
+
+
+class PublicSchoolRegistrationPaymentTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.plan = SubscriptionPlan.objects.create(
+            name='t100', min_students=1, max_students=100, monthly_price=100.00,
+        )
+
+    def _payload(self):
+        return {
+            'school': {
+                'name': 'New Academy',
+                'type': 'primary',
+                'address': '1 New Road',
+                'state': 'Lagos',
+                'lga': 'Ikeja',
+                'phone': '+2348000000100',
+                'email': 'new-academy@example.com',
+            },
+            'admin': {
+                'fullName': 'New Admin',
+                'phone': '+2348000000101',
+                'email': 'new-admin@example.com',
+                'password': 'Strong-Pass-1!',
+            },
+            'tierId': 't100',
+        }
+
+    def test_public_registration_creates_inactive_pending_school_and_admin(self):
+        response = self.client.post(
+            '/api/v1/schools/register/', self._payload(), format='json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        school = School.objects.get(id=response.json()['schoolId'])
+        subscription = SchoolSubscription.objects.get(school=school)
+        admin = User.objects.get(email='new-admin@example.com')
+        self.assertFalse(school.is_active)
+        self.assertEqual(subscription.status, SchoolSubscription.Status.PENDING)
+        self.assertEqual(subscription.plan, self.plan)
+        self.assertFalse(admin.is_active)
+        self.assertFalse(admin.is_verified)
+        login_response = self.client.post(
+            '/api/v1/auth/login/',
+            {'identifier': admin.email, 'password': 'Strong-Pass-1!'},
+            format='json',
+        )
+        self.assertEqual(login_response.status_code, 401)
+
+    def test_payment_verification_never_trusts_a_public_reference(self):
+        response = self.client.post(
+            '/api/v1/schools/register/', self._payload(), format='json',
+        )
+        reference = response.json()['paymentRef']
+
+        valid_reference_response = self.client.get(
+            f'/api/v1/schools/payments/{reference}/verify/',
+        )
+        fake_reference_response = self.client.get(
+            '/api/v1/schools/payments/FN-not-a-real-payment/verify/',
+        )
+
+        self.assertEqual(valid_reference_response.json(), {'status': 'pending'})
+        self.assertEqual(fake_reference_response.json(), {'status': 'pending'})
+        school = School.objects.get(id=response.json()['schoolId'])
+        self.assertFalse(school.is_active)
+        self.assertEqual(
+            school.subscription.status,
+            SchoolSubscription.Status.PENDING,
+        )

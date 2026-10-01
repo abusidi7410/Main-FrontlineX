@@ -1,16 +1,14 @@
-"""Registration is billing-gated: a new student starts PENDING_PAYMENT and
-becomes usable only once the admission invoice is settled in full.
+"""New admissions pay a one-time registration invoice when one is configured.
 
 Two behaviours are pinned here:
 
-* registering raises the invoice straight away, so nobody has to remember a
-  separate billing run before a family can pay;
-* activation is driven by *verified* money only, so a pending or partial
-  payment can never wave a student through.
+Regular school fees are billed separately by term. Students without a
+registration fee can start immediately and receive term invoices later.
 
-The deliberate exception is a school with no fee structure configured: that is
-the normal state of a brand new school, and locking students out of
-registration there would leave the first enrollee permanently stuck.
+Registration activation is driven by *verified* money only, so a pending or
+partial payment can never wave a student through.
+
+The same behaviour applies to schools with no fee structure configured.
 """
 from decimal import Decimal
 
@@ -19,6 +17,7 @@ from records.models import Invoice, Payment, Student
 from .test_security import SecurityTestBase
 
 FEES = [
+    {'label': 'Registration fee', 'amount': 5000.0, 'className': '*'},
     {'label': 'Tuition', 'amount': 50000.0, 'className': '*'},
     {'label': 'Development levy', 'amount': 5000.0, 'className': 'JSS 1'},
 ]
@@ -96,7 +95,7 @@ class AutoInvoiceTests(RegistrationBillingTests):
         r = self.register()
         self.assertEqual(r.status_code, 201, r.content)
         invoice = Invoice.objects.get(student=self.latest())
-        self.assertEqual(invoice.total, Decimal('55000.00'))
+        self.assertEqual(invoice.total, Decimal('5000.00'))
         self.assertEqual(invoice.source, Invoice.Source.ADMISSION)
         self.assertEqual(invoice.paid, Decimal('0'))
 
@@ -105,30 +104,30 @@ class AutoInvoiceTests(RegistrationBillingTests):
         invoice = Invoice.objects.get(student=self.latest())
         self.assertEqual(
             sorted(item['label'] for item in invoice.items),
-            ['Development levy', 'Tuition'],
+            ['Registration fee'],
         )
         self.assertIsNotNone(invoice.due_date)
 
     def test_response_tells_the_ui_the_invoice_exists(self):
         r = self.register()
         body = r.json()
-        self.assertTrue(body['feesConfigured'])
+        self.assertTrue(body['registrationFeeConfigured'])
         self.assertTrue(body['invoiceId'])
-        self.assertEqual(Decimal(body['invoiceTotal']), Decimal('55000.00'))
+        self.assertEqual(Decimal(body['invoiceTotal']), Decimal('5000.00'))
 
     def test_class_specific_fee_does_not_leak_to_another_class(self):
         self.register(className='JSS 2')
         invoice = Invoice.objects.get(student=self.latest())
-        self.assertEqual(invoice.total, Decimal('50000.00'))
+        self.assertEqual(invoice.total, Decimal('5000.00'))
 
     def test_registering_twice_creates_one_invoice_each(self):
         self.register(firstName='Ada')
         self.register(firstName='Bisi', admissionNumber='SUA/JSS/2026/009901')
         self.assertEqual(Invoice.objects.filter(school=self.school).count(), 2)
 
-    def test_bulk_generator_and_registration_agree_on_the_total(self):
-        """One fee rule, whichever screen raised the invoice."""
+    def test_registration_and_term_fees_are_billed_as_separate_invoices(self):
         self.register()
+        admission_invoice = Invoice.objects.get(student=self.latest())
         self.auth(self.accountant)
         r = self.client.post(
             self.url('/invoices/generate/'),
@@ -136,8 +135,10 @@ class AutoInvoiceTests(RegistrationBillingTests):
             format='json',
         )
         self.assertEqual(r.status_code, 200, r.content)
-        for invoice in Invoice.objects.filter(school=self.school):
-            self.assertEqual(invoice.total, Decimal('55000.00'))
+        self.assertEqual(r.json()['generated'], 1)
+        term_invoice = Invoice.objects.get(student=self.student, term='First Term')
+        self.assertEqual(admission_invoice.total, Decimal('5000.00'))
+        self.assertEqual(term_invoice.total, Decimal('55000.00'))
 
 
 class NoFeeStructureTests(RegistrationBillingTests):
@@ -152,11 +153,21 @@ class NoFeeStructureTests(RegistrationBillingTests):
         r = self.register()
         self.assertEqual(r.status_code, 201, r.content)
 
-    def test_student_is_created_and_still_pending_payment(self):
+    def test_student_without_registration_fee_is_active_immediately(self):
         self.register()
         student = self.latest()
-        self.assertEqual(student.status, Student.Status.PENDING_PAYMENT)
+        self.assertEqual(student.status, Student.Status.ACTIVE)
         self.assertTrue(student.admission_number)
+
+    def test_regular_fees_without_a_registration_fee_do_not_create_an_admission_invoice(self):
+        self.school.fee_structure = [
+            {'label': 'Tuition', 'amount': 50000.0, 'className': '*'},
+        ]
+        self.school.save(update_fields=['fee_structure'])
+        response = self.register()
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(self.latest().status, Student.Status.ACTIVE)
+        self.assertFalse(Invoice.objects.filter(student=self.latest()).exists())
 
     def test_no_invoice_is_created(self):
         self.register()
@@ -165,13 +176,10 @@ class NoFeeStructureTests(RegistrationBillingTests):
     def test_response_flags_that_fees_are_unconfigured(self):
         r = self.register()
         body = r.json()
-        self.assertFalse(body['feesConfigured'])
+        self.assertFalse(body['registrationFeeConfigured'])
         self.assertEqual(body['invoiceId'], '')
 
-    def test_saving_fees_later_invoices_the_earlier_registrations(self):
-        """The deadlock this closes: a student registered before any fees
-        existed had no invoice, and the bulk generator bills active students
-        only, so they could never be billed and never become active."""
+    def test_saving_fees_later_keeps_existing_active_student_active(self):
         self.register()
         student = self.latest()
         self.assertFalse(Invoice.objects.filter(student=student).exists())
@@ -180,10 +188,11 @@ class NoFeeStructureTests(RegistrationBillingTests):
             self.url('/fees/structure/'), {'items': FEES}, format='json',
         )
         self.assertEqual(r.status_code, 200, r.content)
-        self.assertEqual(r.json()['invoicedPendingStudents'], 1)
-        invoice = Invoice.objects.get(student=student)
-        self.assertEqual(invoice.total, Decimal('55000.00'))
-        self.assertEqual(invoice.source, Invoice.Source.ADMISSION)
+        self.assertEqual(r.json()['invoicedPendingStudents'], 0)
+        self.assertEqual(r.json()['activatedPendingStudents'], 0)
+        student.refresh_from_db()
+        self.assertEqual(student.status, Student.Status.ACTIVE)
+        self.assertFalse(Invoice.objects.filter(student=student).exists())
 
 
 
@@ -217,20 +226,20 @@ class ActivationOnSettlementTests(RegistrationBillingTests):
 
     def test_full_verified_payment_activates_the_student(self):
         self.register()
-        r = self.settle('55000.00')
+        r = self.settle('5000.00')
         self.assertEqual(r.status_code, 201, r.content)
         self.assertTrue(r.json()['studentActivated'])
         self.assertEqual(self.latest().status, Student.Status.ACTIVE)
 
     def test_partial_payment_does_not_activate(self):
         self.register()
-        self.settle('20000.00')
+        self.settle('2000.00')
         self.assertEqual(self.latest().status, Student.Status.PENDING_PAYMENT)
 
     def test_pending_payment_does_not_activate(self):
         """Only verified money counts, so a bank transfer in flight is not paid."""
         self.register()
-        self.settle('55000.00', verified=False)
+        self.settle('5000.00', verified=False)
         self.assertEqual(self.latest().status, Student.Status.PENDING_PAYMENT)
         self.assertEqual(
             Invoice.objects.get(student=self.latest()).status, 'unpaid',
@@ -238,14 +247,14 @@ class ActivationOnSettlementTests(RegistrationBillingTests):
 
     def test_second_instalment_activates_the_student(self):
         self.register()
-        self.settle('20000.00')
+        self.settle('2000.00')
         self.assertEqual(self.latest().status, Student.Status.PENDING_PAYMENT)
-        self.settle('35000.00')
+        self.settle('3000.00')
         self.assertEqual(self.latest().status, Student.Status.ACTIVE)
 
     def test_verifying_a_pending_transfer_activates_the_student(self):
         self.register()
-        created = self.settle('55000.00', verified=False)
+        created = self.settle('5000.00', verified=False)
         payment_id = created.json()['id']
         self.assertEqual(self.latest().status, Student.Status.PENDING_PAYMENT)
         self.auth(self.accountant)
@@ -284,7 +293,7 @@ class ActivationOnSettlementTests(RegistrationBillingTests):
         student = self.latest()
         student.status = Student.Status.SUSPENDED
         student.save(update_fields=['status'])
-        self.settle('55000.00')
+        self.settle('5000.00')
         self.assertEqual(self.latest().status, Student.Status.SUSPENDED)
 
     def test_activation_never_reactivates_a_graduated_student(self):
@@ -292,21 +301,20 @@ class ActivationOnSettlementTests(RegistrationBillingTests):
         student = self.latest()
         student.status = Student.Status.GRADUATED
         student.save(update_fields=['status'])
-        self.settle('55000.00')
+        self.settle('5000.00')
         self.assertEqual(self.latest().status, Student.Status.GRADUATED)
 
-    def test_outstanding_on_a_second_invoice_keeps_the_student_pending(self):
-        """Settling one invoice is not enough while another is open."""
+    def test_outstanding_school_fees_keep_student_pending(self):
         self.register()
         student = self.latest()
-        first_term = Invoice.objects.get(
+        registration_invoice = Invoice.objects.get(
             student=student, term='', source=Invoice.Source.ADMISSION,
         )
         Invoice.objects.create(
             school=self.school, student=student, term='Second Term',
             total=Decimal('10000.00'), items=[{'label': 'Exam', 'amount': '10000.00'}],
         )
-        self.settle('55000.00', invoice=first_term)
+        self.settle('5000.00', invoice=registration_invoice)
         self.assertEqual(self.latest().status, Student.Status.PENDING_PAYMENT)
 
 
@@ -382,4 +390,3 @@ class ExistingStudentsUnaffectedTests(SecurityTestBase):
             ).count(),
             1,
         )
-

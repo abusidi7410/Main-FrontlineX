@@ -8,6 +8,7 @@ const TONES: Record<string, string> = {
   paid: "bg-success-soft text-success border-success/25",
   synced: "bg-success-soft text-success border-success/25",
   published: "bg-success-soft text-success border-success/25",
+  locked: "bg-success-soft text-success border-success/25",
   approved: "bg-success-soft text-success border-success/25",
   present: "bg-success-soft text-success border-success/25",
   pending: "bg-warning-soft text-warning border-warning/25",

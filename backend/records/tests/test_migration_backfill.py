@@ -18,7 +18,7 @@ class BackfillMigrationTests(TransactionTestCase):
     """Migrate back to the pre-backfill state, seed legacy data, migrate forward."""
 
     migrate_from = [('records', '0002_admission_foundation')]
-    migrate_to = [('records', '0003_backfill_class_enrollments')]
+    migrate_to = [('records', '0008_attendance_daily_register')]
 
     def _migrate(self, targets):
         executor = MigrationExecutor(connection)

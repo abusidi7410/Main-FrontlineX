@@ -1,14 +1,64 @@
-import { apiFetch } from "@/api/client";
+import { apiFetch, type Paginated } from "@/api/client";
 import type { Invoice, Payment } from "@/types";
 
 export async function listInvoices(search = ""): Promise<Invoice[]> {
+  const invoices: Invoice[] = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const response = await apiFetch<Paginated<Invoice>>("/invoices", {
+      query: { search, page, pageSize: 100 },
+    });
+    invoices.push(...response.results);
+    totalPages = response.totalPages;
+    page += 1;
+  } while (page <= totalPages);
+  return invoices;
+}
+
+export async function listInvoicePage(
+  search: string,
+  page: number,
+  pageSize = 25,
+): Promise<Paginated<Invoice>> {
   // SECURITY: Backend must verify permission finance.read and schoolId match, or restrict students to their own invoices.
-  return apiFetch("/invoices", { query: { search } });
+  return apiFetch("/invoices", { query: { search, page, pageSize } });
 }
 
 export async function listPayments(): Promise<Payment[]> {
+  const payments: Payment[] = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const response = await apiFetch<Paginated<Payment>>("/payments", {
+      query: { page, pageSize: 100 },
+    });
+    payments.push(...response.results);
+    totalPages = response.totalPages;
+    page += 1;
+  } while (page <= totalPages);
+  return payments;
+}
+
+export interface FinanceSummary {
+  term: string;
+  billed: number;
+  paid: number;
+  outstanding: number;
+  collectedToday: number;
+  pendingPaymentCount: number;
+  cashToday: number;
+  recentInvoices: Invoice[];
+  recentPayments: Payment[];
+}
+
+export async function getFinanceSummary(): Promise<FinanceSummary> {
+  return apiFetch("/finance/summary");
+}
+
+export async function listPaymentPage(page: number, pageSize = 25): Promise<Paginated<Payment>> {
   // SECURITY: Backend must verify permission finance.read and schoolId match, or restrict students to their own payments.
-  return apiFetch("/payments");
+  return apiFetch("/payments", { query: { page, pageSize } });
 }
 
 export interface RecordPaymentInput {
@@ -138,6 +188,8 @@ export interface SaveLevelFeesResult {
   items: FeeItem[];
   invoicedPendingStudents: number;
   invoicedPendingStudentsByLevel: Record<string, number>;
+  activatedPendingStudents: number;
+  activatedPendingStudentsByLevel: Record<string, number>;
 }
 
 /**
@@ -151,13 +203,14 @@ export async function saveLevelFees(
   return apiFetch("/fees/structure", { method: "PUT", body: { levels: [{ levelId, fees }] } });
 }
 
-export async function updateFeeStructure(
-  items: FeeItem[],
-): Promise<{ items: FeeItem[]; invoicedPendingStudents: number }> {
+export async function updateFeeStructure(items: FeeItem[]): Promise<{
+  items: FeeItem[];
+  invoicedPendingStudents: number;
+  activatedPendingStudents: number;
+}> {
   // SECURITY: Backend must verify permission finance.structure and schoolId match.
-  // Saving also invoices any students who registered before a fee structure
-  // existed, since the bulk generator only bills active students and those
-  // students would otherwise never be able to pay their way in.
+  // Saving can issue a registration invoice for earlier admissions or activate
+  // students when no registration charge is configured.
   return apiFetch("/fees/structure", { method: "PUT", body: { items } });
 }
 

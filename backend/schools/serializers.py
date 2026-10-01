@@ -61,12 +61,13 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 index = int(tier_id[1:]) if tier_id[1:].isdigit() else None
                 if index is not None:
                     plan = SubscriptionPlan.objects.filter(
+                        is_active=True,
                         min_students__lte=index
                     ).order_by('-min_students').first()
             except ValueError:
                 plan = None
         if plan is None:
-            plan = SubscriptionPlan.objects.first()
+            plan = SubscriptionPlan.objects.filter(is_active=True).first()
 
         with transaction.atomic():
             school = School.objects.create(
@@ -78,7 +79,7 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 phone=school_data['phone'],
                 email=school_data['email'],
                 website=school_data.get('website', ''),
-                is_active=True,
+                is_active=False,
             )
 
             full_name = admin_data.get('fullName', '')
@@ -94,15 +95,15 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 last_name=last_name,
                 role=User.Role.SCHOOL_ADMIN,
                 school=school,
-                is_verified=True,
+                is_active=False,
+                is_verified=False,
             )
             admin.save()
 
             SchoolSubscription.objects.create(
                 school=school,
                 plan=plan,
-                status=SchoolSubscription.Status.ACTIVE,
-                starts_at=school.created_at,
+                status=SchoolSubscription.Status.PENDING,
             )
 
         return {

@@ -63,7 +63,8 @@ def _session_payload(user, access_token):
 
 class SchoolRegistrationView(APIView):
     """POST /auth/school/register/
-    Creates a School + its first Admin and returns tokens.
+    Creates a pending School + first Admin. Access is enabled only after
+    payment is confirmed through a trusted gateway.
     """
     permission_classes = [AllowAny]
 
@@ -71,18 +72,13 @@ class SchoolRegistrationView(APIView):
         serializer = SchoolRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user, school = serializer.save()
+        _, school = serializer.save()
 
-        access_token, refresh = _issue_tokens(user)
-
-        resp = Response({
-            'detail': 'School registered successfully.',
-            'access': access_token,
-            'user': UserSerializer(user).data,
+        return Response({
+            'detail': 'School registration received. Payment confirmation is pending.',
             'school': {'id': school.id, 'name': school.name, 'slug': school.slug},
+            'status': 'pending',
         }, status=status.HTTP_201_CREATED)
-
-        return _set_refresh_cookie(resp, refresh)
 
 
 # ── Login / Logout / Refresh ─────────────────────────────────────────────────
@@ -341,16 +337,19 @@ def authenticate_by_login(login_id, password):
     ``authenticate()``, which only forwards ``USERNAME_FIELD`` (email)
     through the backend and therefore cannot match on phone.
     """
-    try:
-        if '@' in login_id:
-            user = User.objects.select_related('school').get(email=login_id)
-        else:
-            user = User.objects.select_related('school').get(phone=normalize_phone(login_id))
-    except User.DoesNotExist:
+    login_id = login_id.strip()
+    queryset = User.objects.select_related('school')
+    if '@' in login_id:
+        matches = list(queryset.filter(email__iexact=login_id)[:2])
+    else:
+        matches = list(queryset.filter(phone=normalize_phone(login_id))[:2])
+    if len(matches) != 1:
         # Run the default password hasher once to reduce the timing
-        # difference between existing and non-existing users (#20760).
+        # difference between existing and non-existing users, and refuse
+        # ambiguous legacy email matches rather than selecting an account.
         User().set_password(password)
         return None
+    user = matches[0]
 
     if user.check_password(password) and user.is_active:
         return user

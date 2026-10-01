@@ -8,11 +8,26 @@ import { IfAllowed, PermissionGate } from "@/components/common/permission-gate";
 import { StatusBadge } from "@/components/common/status-badge";
 import { ErrorState, ListSkeleton } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { NewSheetDialog } from "@/features/results/new-sheet-dialog";
 import { ScoresDialog } from "@/features/results/scores-dialog";
 import { useSession } from "@/auth/session";
-import { getResultSheets, updateResultSheetStatus } from "@/services/school.service";
-import type { ResultSheet } from "@/types";
+import {
+  getResultSheet,
+  getResultSheetPage,
+  releaseResultCorrection,
+  requestResultCorrection,
+  updateResultSheetStatus,
+} from "@/services/school.service";
+import type { ResultSheetStatus } from "@/types";
 
 export const Route = createFileRoute("/_app/results")({
   head: () => ({
@@ -30,15 +45,16 @@ export const Route = createFileRoute("/_app/results")({
   component: ResultsPage,
 });
 
-function nextStatus(status: ResultSheet["status"]): ResultSheet["status"] | null {
+function nextStatus(status: ResultSheetStatus): ResultSheetStatus | null {
   if (status === "draft") return "submitted";
   if (status === "submitted") return "under_review";
   if (status === "under_review") return "approved";
   if (status === "approved") return "published";
+  if (status === "published") return "locked";
   return null;
 }
 
-function actionLabel(status: ResultSheet["status"]) {
+function actionLabel(status: ResultSheetStatus) {
   return status === "draft"
     ? "Submit for approval"
     : status === "submitted"
@@ -47,27 +63,59 @@ function actionLabel(status: ResultSheet["status"]) {
         ? "Approve"
         : status === "approved"
           ? "Publish to parents"
-          : "Published";
+          : status === "published"
+            ? "Lock results"
+            : "Locked";
 }
 
 function ResultsPage() {
   const { can } = useSession();
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: ["results"], queryFn: getResultSheets });
+  const [page, setPage] = useState(1);
+  const query = useQuery({
+    queryKey: ["results", page],
+    queryFn: () => getResultSheetPage(page),
+  });
   const [openId, setOpenId] = useState<string | null>(null);
-  const [scoresSheet, setScoresSheet] = useState<ResultSheet | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [correctionId, setCorrectionId] = useState<string | null>(null);
+  const [correctionReason, setCorrectionReason] = useState("");
   const [newSheetOpen, setNewSheetOpen] = useState(false);
+  const detailId = editingId ?? openId;
+  const detailQuery = useQuery({
+    queryKey: ["result-sheet", detailId],
+    queryFn: () => getResultSheet(detailId!),
+    enabled: detailId !== null,
+  });
 
   const advance = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: ResultSheet["status"] }) =>
+    mutationFn: ({ id, status }: { id: string; status: ResultSheetStatus }) =>
       updateResultSheetStatus(id, status),
     onSuccess: async (sheet) => {
       toast.success(
         `${sheet.className} ${sheet.subject} is now ${sheet.status.replace(/_/g, " ")}.`,
       );
       await queryClient.invalidateQueries({ queryKey: ["results"] });
+      await queryClient.invalidateQueries({ queryKey: ["result-sheet", sheet.id] });
     },
     onError: () => toast.error("We couldn't update that result sheet. Please try again."),
+  });
+  const correction = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      reason === undefined ? releaseResultCorrection(id) : requestResultCorrection(id, reason),
+    onSuccess: async (sheet) => {
+      toast.success(
+        sheet.status === "draft"
+          ? "Correction approved. The sheet is editable and must be reviewed again."
+          : "Correction request recorded.",
+      );
+      setCorrectionId(null);
+      setCorrectionReason("");
+      await queryClient.invalidateQueries({ queryKey: ["results"] });
+      await queryClient.invalidateQueries({ queryKey: ["result-sheet", sheet.id] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Could not update the correction."),
   });
 
   return (
@@ -91,12 +139,12 @@ function ResultsPage() {
           <ListSkeleton />
         ) : (
           <ul className="space-y-4">
-            {query.data.map((sheet) => {
+            {query.data.results.map((sheet) => {
               const target = nextStatus(sheet.status);
               const allowed =
                 sheet.status === "draft"
                   ? can("results.write")
-                  : sheet.status === "approved"
+                  : sheet.status === "approved" || sheet.status === "published"
                     ? can("results.publish")
                     : can("results.approve");
               const expanded = openId === sheet.id;
@@ -108,14 +156,17 @@ function ResultsPage() {
                         {sheet.className} · {sheet.subject}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {sheet.term} · {sheet.rows.length} students
+                        {sheet.term} · {sheet.studentCount} students
                       </p>
                     </div>
                     <StatusBadge status={sheet.status} />
                     <Button
                       variant="outline"
                       className="h-11"
-                      onClick={() => setOpenId(expanded ? null : sheet.id)}
+                      onClick={() => {
+                        setEditingId(null);
+                        setOpenId(expanded ? null : sheet.id);
+                      }}
                     >
                       {expanded ? "Hide scores" : "View scores"}
                     </Button>
@@ -123,7 +174,10 @@ function ResultsPage() {
                       <Button
                         variant="outline"
                         className="h-11"
-                        onClick={() => setScoresSheet(sheet)}
+                        onClick={() => {
+                          setOpenId(sheet.id);
+                          setEditingId(sheet.id);
+                        }}
                       >
                         <Pencil className="size-4" aria-hidden="true" /> Enter scores
                       </Button>
@@ -137,8 +191,37 @@ function ResultsPage() {
                         {actionLabel(sheet.status)}
                       </Button>
                     ) : null}
+                    {sheet.status === "locked" &&
+                    sheet.correctionRequested &&
+                    can("results.publish") ? (
+                      <Button
+                        className="h-11"
+                        variant="outline"
+                        disabled={correction.isPending}
+                        onClick={() => correction.mutate({ id: sheet.id })}
+                      >
+                        Approve correction
+                      </Button>
+                    ) : null}
+                    {sheet.status === "locked" &&
+                    !sheet.correctionRequested &&
+                    can("results.write") ? (
+                      <Button
+                        className="h-11"
+                        variant="outline"
+                        onClick={() => setCorrectionId(sheet.id)}
+                      >
+                        Request correction
+                      </Button>
+                    ) : null}
                   </div>
-                  {expanded ? (
+                  {expanded && detailQuery.isPending ? (
+                    <p className="px-5 py-4 text-sm text-muted-foreground">Loading scores…</p>
+                  ) : null}
+                  {expanded && detailQuery.isError ? (
+                    <ErrorState onRetry={() => void detailQuery.refetch()} />
+                  ) : null}
+                  {expanded && detailQuery.data?.id === sheet.id ? (
                     <div className="overflow-x-auto">
                       <table className="w-full min-w-[36rem] text-left">
                         <caption className="sr-only">
@@ -167,12 +250,7 @@ function ResultsPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y">
-                          {sheet.rows.slice(0, 12).map((row) => {
-                            const total =
-                              (row.ca1 ?? 0) +
-                              (row.ca2 ?? 0) +
-                              (row.assignment ?? 0) +
-                              (row.exam ?? 0);
+                          {detailQuery.data.rows.map((row) => {
                             return (
                               <tr key={row.studentId}>
                                 <td className="px-4 py-3">{row.studentName}</td>
@@ -180,7 +258,9 @@ function ResultsPage() {
                                 <td className="px-4 py-3 tabular-nums">{row.ca2 ?? "—"}</td>
                                 <td className="px-4 py-3 tabular-nums">{row.assignment ?? "—"}</td>
                                 <td className="px-4 py-3 tabular-nums">{row.exam ?? "—"}</td>
-                                <td className="px-4 py-3 font-medium tabular-nums">{total}</td>
+                                <td className="px-4 py-3 font-medium tabular-nums">
+                                  {row.score ?? "—"} {row.grade ? `(${row.grade})` : ""}
+                                </td>
                               </tr>
                             );
                           })}
@@ -193,16 +273,86 @@ function ResultsPage() {
             })}
           </ul>
         )}
+        {query.data && query.data.totalPages > 1 ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Page {query.data.page} of {query.data.totalPages}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="h-10"
+                disabled={page <= 1 || query.isFetching}
+                onClick={() => setPage((current) => current - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                className="h-10"
+                disabled={page >= query.data.totalPages || query.isFetching}
+                onClick={() => setPage((current) => current + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         <NewSheetDialog open={newSheetOpen} onOpenChange={setNewSheetOpen} />
 
         <ScoresDialog
-          sheet={scoresSheet}
-          open={scoresSheet !== null}
+          sheet={editingId && detailQuery.data?.id === editingId ? detailQuery.data : null}
+          open={editingId !== null && detailQuery.data?.id === editingId}
           onOpenChange={(open) => {
-            if (!open) setScoresSheet(null);
+            if (!open) setEditingId(null);
           }}
         />
+        <Dialog
+          open={correctionId !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setCorrectionId(null);
+              setCorrectionReason("");
+            }
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Request a result correction</DialogTitle>
+              <DialogDescription>
+                Explain what needs to change. A results publisher must approve the request before
+                scores can be edited.
+              </DialogDescription>
+            </DialogHeader>
+            <Textarea
+              value={correctionReason}
+              onChange={(event) => setCorrectionReason(event.target.value)}
+              maxLength={255}
+              placeholder="Reason for the correction"
+              aria-label="Reason for the correction"
+            />
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCorrectionId(null)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={
+                  !correctionReason.trim() ||
+                  correctionReason.length > 255 ||
+                  correction.isPending ||
+                  correctionId === null
+                }
+                onClick={() =>
+                  correctionId &&
+                  correction.mutate({ id: correctionId, reason: correctionReason.trim() })
+                }
+              >
+                {correction.isPending ? "Submitting…" : "Submit request"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </PermissionGate>
   );

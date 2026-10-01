@@ -7,7 +7,14 @@ import {
   initials,
   greeting,
   titleCase,
+  schoolToday,
 } from "@/lib/format";
+
+describe("schoolToday", () => {
+  it("uses the school's local date rather than the UTC date", () => {
+    expect(schoolToday(new Date("2026-09-18T23:30:00.000Z"))).toBe("2026-09-19");
+  });
+});
 
 describe("naira", () => {
   it("formats zero naira", () => {

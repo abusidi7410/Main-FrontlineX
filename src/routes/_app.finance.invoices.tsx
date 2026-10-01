@@ -28,9 +28,9 @@ import {
 import { ApiRequestError } from "@/api/client";
 import { useSession } from "@/auth/session";
 import { useDebounced } from "@/hooks/use-debounced";
-import { compactNaira, naira } from "@/lib/format";
+import { naira } from "@/lib/format";
 import { getAcademicStructure, TERM_OPTIONS } from "@/services/academics.service";
-import { generateInvoices, listInvoices } from "@/services/finance.service";
+import { generateInvoices, listInvoicePage } from "@/services/finance.service";
 import { CLASSES } from "@/constants/reference";
 
 export const Route = createFileRoute("/_app/finance/invoices")({
@@ -57,20 +57,23 @@ function InvoicesPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const debounced = useDebounced(search, 300);
+  const [page, setPage] = useState(1);
   const query = useQuery({
-    queryKey: ["invoices", debounced],
-    queryFn: () => listInvoices(debounced),
+    queryKey: ["invoices", debounced, page],
+    queryFn: () => listInvoicePage(debounced, page),
   });
   const [generateOpen, setGenerateOpen] = useState(false);
-
-  const outstanding = query.data?.reduce((sum, i) => sum + (i.total - i.paid), 0) ?? 0;
 
   return (
     <PermissionGate permission="finance.read">
       <div className="space-y-6">
         <PageHeader
           title="Invoices"
-          description={`Outstanding across the current term: ${compactNaira(outstanding)}.`}
+          description={
+            query.data
+              ? `Showing ${query.data.results.length} of ${query.data.count} invoices.`
+              : "Invoices and balances for your school."
+          }
           actions={
             can("finance.write") ? (
               <Button className="h-11" onClick={() => setGenerateOpen(true)}>
@@ -86,14 +89,17 @@ function InvoicesPage() {
           placeholder="Search by student name or invoice number"
           aria-label="Search invoices"
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setPage(1);
+          }}
         />
 
         {query.isError ? (
           <ErrorState onRetry={() => void query.refetch()} />
         ) : query.isPending ? (
           <ListSkeleton />
-        ) : query.data.length === 0 ? (
+        ) : query.data.results.length === 0 ? (
           <EmptyState
             title="No invoices found"
             description="Generate invoices from a class fee structure, or try a different search."
@@ -132,11 +138,13 @@ function InvoicesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {query.data.map((invoice) => (
+                {query.data.results.map((invoice) => (
                   <tr key={invoice.id}>
                     <td className="px-4 py-3">
                       <span className="font-medium">{invoice.studentName}</span>
-                      <span className="block text-sm text-muted-foreground">{invoice.term}</span>
+                      <span className="block text-sm text-muted-foreground">
+                        {invoice.source === "admission" ? "One-time registration" : invoice.term}
+                      </span>
                     </td>
                     <td className="px-4 py-3">{invoice.className}</td>
                     <td className="px-4 py-3 tabular-nums">{naira(invoice.total)}</td>
@@ -153,12 +161,40 @@ function InvoicesPage() {
             </table>
           </div>
         )}
+        {query.data && query.data.totalPages > 1 ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Page {query.data.page} of {query.data.totalPages}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="h-10"
+                disabled={page <= 1 || query.isFetching}
+                onClick={() => setPage((current) => current - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                className="h-10"
+                disabled={page >= query.data.totalPages || query.isFetching}
+                onClick={() => setPage((current) => current + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         <GenerateInvoicesDialog
           open={generateOpen}
           onOpenChange={(open) => {
             setGenerateOpen(open);
-            if (!open) void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+            if (!open) {
+              void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+              void queryClient.invalidateQueries({ queryKey: ["finance-summary"] });
+            }
           }}
         />
       </div>
@@ -203,6 +239,7 @@ function GenerateInvoicesDialog({
           ` for ${result.term} (${result.totalStudents} student${result.totalStudents === 1 ? "" : "s"}).`,
       );
       void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: ["finance-summary"] });
       onOpenChange(false);
     },
     onError: (error) => {

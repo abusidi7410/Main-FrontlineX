@@ -20,6 +20,7 @@ import { Route as AppAcademicsRouteImport } from './routes/_app.academics'
 import { Route as AppAccountsRouteImport } from './routes/_app.accounts'
 import { Route as AppAiRouteImport } from './routes/_app.ai'
 import { Route as AppAttendanceRouteImport } from './routes/_app.attendance'
+import { Route as AppAttendanceOverviewRouteImport } from './routes/_app.attendance-overview'
 import { Route as AppAuditLogsRouteImport } from './routes/_app.audit-logs'
 import { Route as AppChildrenRouteImport } from './routes/_app.children'
 import { Route as AppCommunicationRouteImport } from './routes/_app.communication'
@@ -109,6 +110,11 @@ const AppAiRoute = AppAiRouteImport.update({
 const AppAttendanceRoute = AppAttendanceRouteImport.update({
   id: '/attendance',
   path: '/attendance',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAttendanceOverviewRoute = AppAttendanceOverviewRouteImport.update({
+  id: '/attendance-overview',
+  path: '/attendance-overview',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAuditLogsRoute = AppAuditLogsRouteImport.update({
@@ -306,6 +312,7 @@ export interface FileRoutesByFullPath {
   '/accounts': typeof AppAccountsRoute
   '/ai': typeof AppAiRoute
   '/attendance': typeof AppAttendanceRoute
+  '/attendance-overview': typeof AppAttendanceOverviewRoute
   '/audit-logs': typeof AppAuditLogsRoute
   '/children': typeof AppChildrenRoute
   '/communication': typeof AppCommunicationRoute
@@ -354,6 +361,7 @@ export interface FileRoutesByTo {
   '/accounts': typeof AppAccountsRoute
   '/ai': typeof AppAiRoute
   '/attendance': typeof AppAttendanceRoute
+  '/attendance-overview': typeof AppAttendanceOverviewRoute
   '/audit-logs': typeof AppAuditLogsRoute
   '/children': typeof AppChildrenRoute
   '/communication': typeof AppCommunicationRoute
@@ -401,6 +409,7 @@ export interface FileRoutesById {
   '/_app/accounts': typeof AppAccountsRoute
   '/_app/ai': typeof AppAiRoute
   '/_app/attendance': typeof AppAttendanceRoute
+  '/_app/attendance-overview': typeof AppAttendanceOverviewRoute
   '/_app/audit-logs': typeof AppAuditLogsRoute
   '/_app/children': typeof AppChildrenRoute
   '/_app/communication': typeof AppCommunicationRoute
@@ -451,6 +460,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/ai'
     | '/attendance'
+    | '/attendance-overview'
     | '/audit-logs'
     | '/children'
     | '/communication'
@@ -499,6 +509,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/ai'
     | '/attendance'
+    | '/attendance-overview'
     | '/audit-logs'
     | '/children'
     | '/communication'
@@ -545,6 +556,7 @@ export interface FileRouteTypes {
     | '/_app/accounts'
     | '/_app/ai'
     | '/_app/attendance'
+    | '/_app/attendance-overview'
     | '/_app/audit-logs'
     | '/_app/children'
     | '/_app/communication'
@@ -670,6 +682,13 @@ declare module '@tanstack/react-router' {
       path: '/attendance'
       fullPath: '/attendance'
       preLoaderRoute: typeof AppAttendanceRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/attendance-overview': {
+      id: '/_app/attendance-overview'
+      path: '/attendance-overview'
+      fullPath: '/attendance-overview'
+      preLoaderRoute: typeof AppAttendanceOverviewRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/audit-logs': {
@@ -975,6 +994,7 @@ interface AppRouteChildren {
   AppAccountsRoute: typeof AppAccountsRoute
   AppAiRoute: typeof AppAiRoute
   AppAttendanceRoute: typeof AppAttendanceRoute
+  AppAttendanceOverviewRoute: typeof AppAttendanceOverviewRoute
   AppAuditLogsRoute: typeof AppAuditLogsRoute
   AppChildrenRoute: typeof AppChildrenRoute
   AppCommunicationRoute: typeof AppCommunicationRoute
@@ -1011,6 +1031,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAccountsRoute: AppAccountsRoute,
   AppAiRoute: AppAiRoute,
   AppAttendanceRoute: AppAttendanceRoute,
+  AppAttendanceOverviewRoute: AppAttendanceOverviewRoute,
   AppAuditLogsRoute: AppAuditLogsRoute,
   AppChildrenRoute: AppChildrenRoute,
   AppCommunicationRoute: AppCommunicationRoute,

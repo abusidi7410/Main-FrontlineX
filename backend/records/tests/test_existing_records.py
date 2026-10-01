@@ -7,12 +7,14 @@ from accounts.models import User
 from records.models import (
     AcademicSession,
     AttendanceRecord,
+    ClassTeacherAssignment,
     Enrollment,
     Invoice,
     Level,
     Payment,
     SchoolClass,
     Section,
+    StaffMember,
     Student,
 )
 from schools.models import School, SchoolSubscription, SubscriptionPlan
@@ -95,6 +97,36 @@ class AttendanceFinanceTests(TestCase):
             academic_session=self.session, class_obj=self.jss1,
             section=self.section_b, status=Enrollment.Status.ACTIVE,
         )
+
+        # Attendance submission is a responsibility, not merely a permission:
+        # `self.teacher` is JSS 1's designated class teacher, so the existing
+        # submit tests keep working under the strict rule. `self.other_teacher`
+        # is deliberately left unassigned to cover the read-only case.
+        self.teacher_staff = StaffMember.objects.create(
+            school=self.school, full_name='Teacher Ali',
+            email='teacher@sunrise.example', role='teacher',
+            status=StaffMember.Status.ACTIVE,
+        )
+        self.teacher.staff_profile = self.teacher_staff
+        self.teacher.save(update_fields=['staff_profile'])
+        ClassTeacherAssignment.objects.create(
+            school=self.school, staff=self.teacher_staff,
+            class_obj=self.jss1, academic_session=self.session,
+        )
+
+        self.other_teacher_staff = StaffMember.objects.create(
+            school=self.school, full_name='Bola Subject Teacher',
+            email='subject@sunrise.example', role='teacher',
+            subjects=['Mathematics'], classes=['JSS 1'],
+            status=StaffMember.Status.ACTIVE,
+        )
+        self.other_teacher = User.objects.create_user(
+            email='subject@sunrise.example', password='Strong-Pass-1!',
+            first_name='Bola', last_name='Subject',
+            role=User.Role.TEACHER, school=self.school, is_active=True,
+        )
+        self.other_teacher.staff_profile = self.other_teacher_staff
+        self.other_teacher.save(update_fields=['staff_profile'])
 
     def _auth(self, user):
         self.client.force_authenticate(user)

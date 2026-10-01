@@ -15,6 +15,12 @@ const SCHOOL_ADMIN: NavItem[] = [
   { label: "Accounts", to: "/accounts", icon: "userKey", group: "People", mobile: true },
   { label: "Academics", to: "/academics", icon: "graduation", group: "Academics" },
   { label: "Attendance", to: "/attendance", icon: "clipboard", group: "Academics", mobile: true },
+  {
+    label: "Attendance overview",
+    to: "/attendance-overview",
+    icon: "clipboardList",
+    group: "Academics",
+  },
   { label: "Results", to: "/results", icon: "award", group: "Academics" },
   { label: "Timetable", to: "/timetable", icon: "calendar", group: "Academics" },
   { label: "Lesson Plans", to: "/lesson-plans", icon: "notebook", group: "Academics" },
@@ -36,6 +42,15 @@ const PRINCIPAL: NavItem[] = [
   { label: "Staff", to: "/staff", icon: "userCog", group: "People" },
   { label: "Accounts", to: "/accounts", icon: "userKey", group: "People" },
   { label: "Attendance", to: "/attendance", icon: "clipboard", group: "Academics", mobile: true },
+  // A principal is read-only on attendance, so the overview (who has taken their
+  // register) is the more useful screen for them than the register itself.
+  {
+    label: "Attendance overview",
+    to: "/attendance-overview",
+    icon: "clipboardList",
+    group: "Academics",
+    mobile: true,
+  },
   { label: "Results", to: "/results", icon: "award", group: "Academics", mobile: true },
   { label: "Timetable", to: "/timetable", icon: "calendar", group: "Academics" },
   { label: "Promotion Centre", to: "/promotion", icon: "promotion", group: "Academics" },
@@ -52,6 +67,14 @@ const TEACHER: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Today", mobile: true },
   { label: "My Classes", to: "/my-classes", icon: "users", group: "Today", mobile: true },
   { label: "Attendance", to: "/attendance", icon: "clipboard", group: "Teaching", mobile: true },
+  // Scoped to the teacher's own classes by the API, so this is their own
+  // "did everyone take the register" board rather than the school's.
+  {
+    label: "Attendance overview",
+    to: "/attendance-overview",
+    icon: "clipboardList",
+    group: "Teaching",
+  },
   { label: "Results", to: "/results", icon: "award", group: "Teaching", mobile: true },
   { label: "Lesson Plans", to: "/lesson-plans", icon: "notebook", group: "Teaching" },
   { label: "Timetable", to: "/timetable", icon: "calendar", group: "Teaching" },

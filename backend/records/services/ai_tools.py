@@ -39,6 +39,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from accounts.permissions import has_permission
 
+from . import attendance as attendance_service
 from . import billing, clearance
 from . import enrollment as enrollment_service
 from ..models import (
@@ -205,7 +206,7 @@ def get_class_attendance(user, *, class_name: str, day: str) -> dict:
     class_obj = _class_or_throw(user, class_name)
     on = _parse_date(day)
     counts = AttendanceRecord.objects.filter(
-        school_id=user.school_id, class_name=class_obj.name, date=on,
+        school_id=user.school_id, class_obj=class_obj, date=on,
     ).aggregate(
         present=Count('pk', filter=Q(
             status__in=[AttendanceRecord.Status.PRESENT, AttendanceRecord.Status.LATE],
@@ -217,6 +218,118 @@ def get_class_attendance(user, *, class_name: str, day: str) -> dict:
         'date': on.isoformat(),
         'marked': counts['total'],
         'present': counts['present'],
+    }
+
+
+# --- daily attendance ------------------------------------------------------
+# Attendance is taken once per school day for a whole class. These three tools
+# answer the questions a class teacher or an administrator actually asks at the
+# end of a day or the start of one.
+
+
+def _daily_classes(user, class_name: str | None = None):
+    """The `SchoolClass` rows this user may see attendance for.
+
+    A teacher is narrowed to the classes they are responsible for. Without this,
+    a tool whose `class_name` argument is optional (`get_absent_students`) would
+    silently return school-wide data to a teacher, because `_check_scope` only
+    confines a call when it can see a `class_name` or `student_id` argument.
+
+    Reuses the REST scope helper rather than re-deriving the rule, so the
+    assistant and the attendance screens cannot drift apart. That helper also
+    unions the designated-class-teacher assignment with the staff record's class
+    list, which matters here: a teacher promoted to class teacher has a register
+    to run even if nothing was ever added to their class list.
+    """
+    allowed = attendance_service.teacher_visible_class_ids(
+        user.school, user, _current_session(user),
+    )
+    classes = SchoolClass.objects.filter(school_id=user.school_id, is_active=True)
+    if class_name:
+        return classes.filter(name=str(class_name))
+    if allowed is not None:
+        classes = classes.filter(pk__in=allowed)
+    return classes
+
+
+def get_absent_students(user, *, day: str, class_name: str | None = None) -> dict:
+    """Who was absent (or late) on a given day."""
+    on = _parse_date(day)
+    classes = _daily_classes(user, class_name)
+    rows = AttendanceRecord.objects.filter(
+        school_id=user.school_id,
+        class_obj__in=classes,
+        date=on,
+        status__in=[AttendanceRecord.Status.ABSENT, AttendanceRecord.Status.LATE],
+    ).select_related('student', 'class_obj').order_by('class_obj__name', 'student__first_name')
+
+    absent = [
+        {
+            'studentId': str(record.student_id),
+            'student': f'{record.student.last_name}, {record.student.first_name}',
+            'admissionNumber': record.student.admission_number,
+            'className': record.class_name,
+            'status': record.status,
+        }
+        for record in rows
+    ]
+    return {
+        'date': on.isoformat(),
+        'className': str(class_name) if class_name else None,
+        'count': len(absent),
+        'absent': absent,
+    }
+
+
+def get_attendance_submission_status(user, *, day: str) -> dict:
+    """Which classes have taken their register for a day, and which have not."""
+    on = _parse_date(day)
+    school = user.school
+    rows = attendance_service.overview_for(school, on, class_objs=_daily_classes(user))
+    not_taken = [row['className'] for row in rows if row['submitted'] == 0]
+    return {
+        'date': on.isoformat(),
+        'isSchoolDay': attendance_service.is_school_day(school, on),
+        'classes': rows,
+        'submittedCount': sum(1 for row in rows if row['submitted'] > 0),
+        'totalClasses': len(rows),
+        'notSubmitted': not_taken,
+    }
+
+
+def get_chronic_absence(user, *, minimum_absences: int = 5, days: int = 30) -> dict:
+    """Students absent on at least N days within the last N days."""
+    since = _parse_date(str(_today() - timedelta(days=int(days))))
+    floor = max(1, int(minimum_absences))
+    classes = _daily_classes(user)
+    rows = (
+        AttendanceRecord.objects.filter(
+            school_id=user.school_id,
+            class_obj__in=classes,
+            date__gte=since,
+            status=AttendanceRecord.Status.ABSENT,
+        )
+        .values('student_id', 'student__first_name', 'student__last_name',
+                'student__admission_number')
+        .annotate(absences=Count('pk'))
+        .filter(absences__gte=floor)
+        .order_by('-absences')
+    )
+    students = [
+        {
+            'studentId': str(row['student_id']),
+            'student': f'{row["student__last_name"]}, {row["student__first_name"]}',
+            'admissionNumber': row['student__admission_number'],
+            'absences': row['absences'],
+        }
+        for row in rows
+    ]
+    return {
+        'since': since.isoformat(),
+        'days': days,
+        'minimumAbsences': floor,
+        'count': len(students),
+        'students': students,
     }
 
 
@@ -467,6 +580,21 @@ READ_TOOLS: dict[str, Tool] = {
             'get_class_attendance', get_class_attendance,
             "How many of a class were present on a given day.",
             ('ai.academic', 'ai.teaching'), 'attendance.read', SCOPE_SCHOOL, ('class_name',),
+        ),
+        Tool(
+            'get_absent_students', get_absent_students,
+            'Who was absent or late on a given day, optionally for one class.',
+            ('ai.academic', 'ai.teaching'), 'attendance.read', SCOPE_SCHOOL, ('class_name',),
+        ),
+        Tool(
+            'get_attendance_submission_status', get_attendance_submission_status,
+            'Which classes have taken their register for a day, and which have not.',
+            ('ai.academic', 'ai.teaching'), 'attendance.read', SCOPE_SCHOOL,
+        ),
+        Tool(
+            'get_chronic_absence', get_chronic_absence,
+            'Students absent on at least N days in the last N days.',
+            ('ai.academic', 'ai.teaching'), 'attendance.read', SCOPE_SCHOOL,
         ),
         Tool(
             'get_student_results', get_student_results,

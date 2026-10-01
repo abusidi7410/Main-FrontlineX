@@ -1,6 +1,9 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import { CardsSkeleton, ErrorState } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ARMS, CLASSES } from "@/constants/reference";
+import { ARMS } from "@/constants/reference";
+import { getAcademicStructure } from "@/services/academics.service";
 import { ngPhone, requiredText } from "@/lib/validation";
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -59,6 +63,28 @@ export function StudentForm({
     resolver: zodResolver(studentSchema),
     defaultValues,
   });
+  const academics = useQuery({
+    queryKey: ["academics"],
+    queryFn: getAcademicStructure,
+  });
+  const classes = useMemo(() => academics.data?.classes ?? [], [academics.data?.classes]);
+  const availableClasses = [...new Set([...classes, defaultValues.className].filter(Boolean))];
+
+  useEffect(() => {
+    if (!defaultValues.className && classes[0]) {
+      form.setValue("className", classes[0], { shouldValidate: true });
+    }
+  }, [classes, defaultValues.className, form]);
+
+  if (academics.isError) {
+    return (
+      <ErrorState
+        message="School classes could not be loaded, so we can't safely assign this student."
+        onRetry={() => void academics.refetch()}
+      />
+    );
+  }
+  if (academics.isPending) return <CardsSkeleton count={2} />;
 
   return (
     <form noValidate className="fn-panel space-y-4 p-5" onSubmit={form.handleSubmit(onSubmit)}>
@@ -113,19 +139,28 @@ export function StudentForm({
           <Field label="Class" id="className" error={form.formState.errors.className?.message}>
             <Select
               value={form.watch("className")}
-              onValueChange={(value) => form.setValue("className", value)}
+              onValueChange={(value) => form.setValue("className", value, { shouldValidate: true })}
             >
-              <SelectTrigger id="className" className="h-12">
+              <SelectTrigger
+                id="className"
+                className="h-12"
+                disabled={availableClasses.length === 0}
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {CLASSES.map((option) => (
+                {availableClasses.map((option) => (
                   <SelectItem key={option} value={option}>
                     {option}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {classes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Set up a class before registering students.
+              </p>
+            ) : null}
           </Field>
           <Field label="Arm" id="arm" error={form.formState.errors.arm?.message}>
             <Select

@@ -5,28 +5,20 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { QuickActions } from "@/features/dashboard/quick-actions";
 import { useAuthenticatedSession } from "@/auth/session";
 import { compactNaira, dateTimeFmt, greeting, naira, titleCase } from "@/lib/format";
-import { listInvoices, listPayments } from "@/services/finance.service";
+import { getFinanceSummary } from "@/services/finance.service";
 
 export function AccountantDashboard() {
   const { user, school } = useAuthenticatedSession();
-  const invoices = useQuery({ queryKey: ["invoices", ""], queryFn: () => listInvoices() });
-  const payments = useQuery({ queryKey: ["payments"], queryFn: listPayments });
+  const finance = useQuery({ queryKey: ["finance-summary"], queryFn: getFinanceSummary });
 
-  if (invoices.isError || payments.isError) {
-    return (
-      <ErrorState onRetry={() => void Promise.all([invoices.refetch(), payments.refetch()])} />
-    );
+  if (finance.isError) {
+    return <ErrorState onRetry={() => void finance.refetch()} />;
   }
 
-  const outstanding = invoices.data?.reduce((sum, i) => sum + (i.total - i.paid), 0) ?? 0;
-  const verified = payments.data?.filter((p) => p.status === "verified") ?? [];
-  const todayTotal = verified
-    .filter((p) => new Date(p.createdAt).toDateString() === new Date().toDateString())
-    .reduce((sum, p) => sum + p.amount, 0);
-  const pending = payments.data?.filter((p) => p.status === "pending") ?? [];
-  const cashBalance = verified
-    .filter((p) => p.method === "cash")
-    .reduce((sum, p) => sum + p.amount, 0);
+  const outstanding = finance.data?.outstanding ?? 0;
+  const todayTotal = finance.data?.collectedToday ?? 0;
+  const pending = finance.data?.pendingPaymentCount ?? 0;
+  const cashBalance = finance.data?.cashToday ?? 0;
 
   return (
     <div className="space-y-6">
@@ -39,7 +31,7 @@ export function AccountantDashboard() {
         </p>
       </div>
 
-      {invoices.isPending || payments.isPending ? (
+      {finance.isPending ? (
         <CardsSkeleton />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -57,7 +49,7 @@ export function AccountantDashboard() {
           />
           <StatCard
             label="Awaiting verification"
-            value={pending.length}
+            value={pending}
             hint="Bank transfers and online payments"
           />
           <StatCard
@@ -85,9 +77,9 @@ export function AccountantDashboard() {
             Recent transactions
           </h2>
         </div>
-        {payments.data && payments.data.length > 0 ? (
+        {finance.data && finance.data.recentPayments.length > 0 ? (
           <ul className="divide-y">
-            {payments.data.slice(0, 6).map((payment) => (
+            {finance.data.recentPayments.map((payment) => (
               <li
                 key={payment.id}
                 className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-4"

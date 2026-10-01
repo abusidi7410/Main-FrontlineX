@@ -32,9 +32,32 @@ async function withStore<T>(
   return new Promise<T>((resolve, reject) => {
     const tx = db.transaction(STORE, mode);
     const request = fn(tx.objectStore(STORE));
-    request.onsuccess = () => resolve(request.result as T);
-    request.onerror = () => reject(request.error ?? new Error("Local storage error"));
-    tx.oncomplete = () => db.close();
+    let result: T;
+    let requestSucceeded = false;
+    let settled = false;
+    const fail = (error: DOMException | null) => {
+      if (settled) return;
+      settled = true;
+      db.close();
+      reject(error ?? new Error("Local storage transaction failed"));
+    };
+    request.onsuccess = () => {
+      result = request.result as T;
+      requestSucceeded = true;
+    };
+    request.onerror = () => fail(request.error);
+    tx.oncomplete = () => {
+      if (settled) return;
+      if (!requestSucceeded) {
+        fail(tx.error);
+        return;
+      }
+      settled = true;
+      db.close();
+      resolve(result);
+    };
+    tx.onerror = () => fail(tx.error);
+    tx.onabort = () => fail(tx.error);
   });
 }
 
@@ -43,12 +66,8 @@ export async function queueAttendance(submission: AttendanceSubmission) {
 }
 
 export async function listQueuedAttendance(): Promise<AttendanceSubmission[]> {
-  try {
-    const all = await withStore<AttendanceSubmission[]>("readonly", (store) => store.getAll());
-    return all.sort((a, b) => b.updatedAt - a.updatedAt);
-  } catch {
-    return [];
-  }
+  const all = await withStore<AttendanceSubmission[]>("readonly", (store) => store.getAll());
+  return all.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function removeQueuedAttendance(id: string) {

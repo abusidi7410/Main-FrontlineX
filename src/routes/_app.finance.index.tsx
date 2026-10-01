@@ -22,8 +22,8 @@ import { useSession } from "@/auth/session";
 import { dateTimeFmt, naira, titleCase } from "@/lib/format";
 import {
   cancelPayment,
-  listInvoices,
-  listPayments,
+  listInvoicePage,
+  listPaymentPage,
   recordPayment,
   reversePayment,
   verifyPayment,
@@ -55,15 +55,22 @@ const METHODS: Payment["method"][] = ["cash", "bank_transfer", "card", "pos", "u
 function PaymentsPage() {
   const { can } = useSession();
   const queryClient = useQueryClient();
-  const invoices = useQuery({ queryKey: ["invoices", ""], queryFn: () => listInvoices() });
-  const payments = useQuery({ queryKey: ["payments"], queryFn: listPayments });
+  const [paymentPage, setPaymentPage] = useState(1);
+  const invoices = useQuery({
+    queryKey: ["invoices", "", 1, 100],
+    queryFn: () => listInvoicePage("", 1, 100),
+  });
+  const payments = useQuery({
+    queryKey: ["payments", paymentPage],
+    queryFn: () => listPaymentPage(paymentPage),
+  });
 
   const [invoiceId, setInvoiceId] = useState("");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<Payment["method"]>("cash");
   const [reference, setReference] = useState("");
 
-  const selectedInvoice = (invoices.data ?? []).find((invoice) => invoice.id === invoiceId);
+  const selectedInvoice = (invoices.data?.results ?? []).find((invoice) => invoice.id === invoiceId);
   const balance = selectedInvoice ? Math.max(0, selectedInvoice.total - selectedInvoice.paid) : 0;
   const amountNumber = Number(amount);
   const withinBalance = Number.isFinite(amountNumber) && amountNumber <= balance;
@@ -71,6 +78,7 @@ function PaymentsPage() {
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["payments"] });
     await queryClient.invalidateQueries({ queryKey: ["invoices"] });
+    await queryClient.invalidateQueries({ queryKey: ["finance-summary"] });
   };
 
   const record = useMutation({
@@ -167,7 +175,7 @@ function PaymentsPage() {
                   <SelectValue placeholder="Select a student invoice" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(invoices.data ?? []).slice(0, 40).map((invoice) => (
+                  {(invoices.data?.results ?? []).slice(0, 40).map((invoice) => (
                     <SelectItem key={invoice.id} value={invoice.id}>
                       {invoice.studentName} · {invoice.className} · owes{" "}
                       {naira(invoice.total - invoice.paid)}
@@ -234,7 +242,7 @@ function PaymentsPage() {
           <ListSkeleton />
         ) : (
           <ul className="fn-panel divide-y">
-            {payments.data.map((payment) => (
+            {payments.data.results.map((payment) => (
               <li key={payment.id} className="flex flex-wrap items-center gap-3 p-4">
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">{payment.studentName}</p>
@@ -295,6 +303,31 @@ function PaymentsPage() {
             ))}
           </ul>
         )}
+        {payments.data && payments.data.totalPages > 1 ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Page {payments.data.page} of {payments.data.totalPages}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="h-10"
+                disabled={paymentPage <= 1 || payments.isFetching}
+                onClick={() => setPaymentPage((current) => current - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                className="h-10"
+                disabled={paymentPage >= payments.data.totalPages || payments.isFetching}
+                onClick={() => setPaymentPage((current) => current + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </PermissionGate>
   );

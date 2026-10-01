@@ -2,6 +2,11 @@ from django.db import models
 from django.utils.text import slugify
 
 
+def _default_attendance_weekend_days():
+    """Saturday and Sunday are non-school days unless a school says otherwise."""
+    return [5, 6]
+
+
 class School(models.Model):
     class SchoolType(models.TextChoices):
         NURSERY = 'nursery', 'Nursery'
@@ -37,6 +42,13 @@ class School(models.Model):
     current_term = models.CharField(max_length=50, default='First Term')
     classes = models.JSONField(default=list, blank=True)
     subjects = models.JSONField(default=list, blank=True)
+    # ── Attendance calendar (spec §attendance) ──
+    # ISO dates ('2026-12-25') the school is closed, e.g. public holidays.
+    non_school_days = models.JSONField(default=list, blank=True, db_default=[])
+    # Python weekday numbers that are non-school days. 5 = Saturday, 6 = Sunday.
+    attendance_weekend_days = models.JSONField(
+        default=_default_attendance_weekend_days, blank=True, db_default=[5, 6],
+    )
     fee_structure = models.JSONField(default=list, blank=True)
     # Financial clearance policy (spec 21, 44).
     #
@@ -187,15 +199,18 @@ class AuditLog(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        # A single `indexes` declaration. This was previously declared twice:
+        # Python kept only the last one, so the `(school, action)` and
+        # `(school, entity, entity_id)` indexes the audit screen depends on were
+        # never actually created. Attendance corrections add a lot of audit
+        # volume, which is exactly when those filters start to hurt.
         indexes = [
+            models.Index(fields=['school']),
+            models.Index(fields=['-created_at']),
             # The audit screen filters a school's entries by action, and a
             # per-entity trail filters by school + entity + id.
             models.Index(fields=['school', 'action']),
             models.Index(fields=['school', 'entity', 'entity_id']),
-        ]
-        indexes = [
-            models.Index(fields=['school']),
-            models.Index(fields=['-created_at']),
         ]
 
     def __str__(self):

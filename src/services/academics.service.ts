@@ -3,8 +3,15 @@ import { apiFetch } from "@/api/client";
 export interface AcademicStructure {
   session: string;
   term: string;
+  /** Class names the school actually configured, from `SchoolClass`. */
   classes: string[];
+  /** Same classes keyed by name, so callers can address a class by its id. */
+  classIds: Record<string, number>;
   subjects: string[];
+  /** Python weekday numbers that are non-school days: 0 = Monday … 6 = Sunday. */
+  attendanceWeekendDays: number[];
+  /** ISO dates the school is closed, e.g. public holidays. */
+  nonSchoolDays: string[];
 }
 
 export const TERM_OPTIONS = ["First Term", "Second Term", "Third Term"];
@@ -22,6 +29,16 @@ export async function updateSessionTerm(input: {
   return apiFetch("/academics", { method: "PATCH", body: input });
 }
 
+export async function updateSchoolCalendar(input: {
+  attendanceWeekendDays?: number[];
+  nonSchoolDays?: string[];
+}): Promise<AcademicStructure> {
+  // SECURITY: Backend must verify permission academics.write and schoolId match.
+  // Only the keys present in `input` are sent, so saving one part of the
+  // calendar never clears the other.
+  return apiFetch("/academics", { method: "PATCH", body: input });
+}
+
 export async function addSubject(name: string): Promise<AcademicStructure> {
   // SECURITY: Backend must verify permission academics.write and schoolId match.
   return apiFetch("/academics/subjects", { method: "POST", body: { name } });
@@ -32,9 +49,12 @@ export async function removeSubject(name: string): Promise<AcademicStructure> {
   return apiFetch(`/academics/subjects/${encodeURIComponent(name)}`, { method: "DELETE" });
 }
 
-export async function addClass(name: string): Promise<AcademicStructure> {
+export async function addClass(name: string, level?: string): Promise<AcademicStructure> {
   // SECURITY: Backend must verify permission academics.write and schoolId match.
-  return apiFetch("/academics/classes", { method: "POST", body: { name } });
+  return apiFetch("/academics/classes", {
+    method: "POST",
+    body: { name, ...(level ? { level } : {}) },
+  });
 }
 
 export async function removeClass(name: string): Promise<AcademicStructure> {

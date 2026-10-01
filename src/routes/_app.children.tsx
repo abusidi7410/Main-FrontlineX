@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
 import { naira, percent } from "@/lib/format";
+import { getMyPublishedResults } from "@/services/school.service";
 import { listStudents } from "@/services/students.service";
 
 export const Route = createFileRoute("/_app/children")({
@@ -28,6 +29,10 @@ export const Route = createFileRoute("/_app/children")({
 
 function ChildrenPage() {
   const query = useQuery({ queryKey: ["children"], queryFn: () => listStudents({ pageSize: 3 }) });
+  const resultsQuery = useQuery({
+    queryKey: ["results", "my-published"],
+    queryFn: getMyPublishedResults,
+  });
   const children = query.data?.results ?? [];
 
   return (
@@ -37,9 +42,14 @@ function ChildrenPage() {
         description="How each child is doing this term, and what you still owe the school."
       />
 
-      {query.isError ? (
-        <ErrorState onRetry={() => void query.refetch()} />
-      ) : query.isPending ? (
+      {query.isError || resultsQuery.isError ? (
+        <ErrorState
+          onRetry={() => {
+            void query.refetch();
+            void resultsQuery.refetch();
+          }}
+        />
+      ) : query.isPending || resultsQuery.isPending ? (
         <ListSkeleton />
       ) : children.length === 0 ? (
         <EmptyState
@@ -86,10 +96,35 @@ function ChildrenPage() {
                 </div>
               </dl>
 
+              <section className="space-y-2 border-t pt-4">
+                <h3 className="font-medium">Published results</h3>
+                {(resultsQuery.data ?? []).filter((result) => result.studentId === child.id)
+                  .length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No published results are available yet.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {(resultsQuery.data ?? [])
+                      .filter((result) => result.studentId === child.id)
+                      .map((result) => (
+                        <li
+                          key={`${result.session}-${result.term}-${result.subject}`}
+                          className="flex items-center justify-between gap-3 text-sm"
+                        >
+                          <span className="min-w-0">
+                            {result.subject} · {result.term} {result.session}
+                          </span>
+                          <span className="shrink-0 font-medium tabular-nums">
+                            {result.score ?? "—"} {result.grade ? `· ${result.grade}` : ""}
+                          </span>
+                        </li>
+                      ))}
+                  </ul>
+                )}
+              </section>
+
               <div className="mt-auto flex flex-wrap gap-2">
-                <Button asChild size="sm" variant="outline">
-                  <Link to="/results">View results</Link>
-                </Button>
                 <Button asChild size="sm" variant="outline">
                   <Link to="/fees">Pay fees</Link>
                 </Button>

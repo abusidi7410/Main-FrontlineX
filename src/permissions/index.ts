@@ -79,6 +79,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "academics.read",
     "academics.write",
     "attendance.read",
+    "attendance.correct",
     "results.read",
     "results.approve",
     "timetable.read",

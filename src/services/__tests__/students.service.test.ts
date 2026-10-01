@@ -34,17 +34,17 @@ const input: StudentInput = {
 describe("createStudent", () => {
   beforeEach(() => vi.mocked(apiFetch).mockReset());
 
-  it("returns the invoice raised at registration", async () => {
+  it("returns the one-time registration invoice raised at registration", async () => {
     vi.mocked(apiFetch).mockResolvedValue({
       ...student,
       invoiceId: "44",
-      invoiceTotal: "55000.00",
-      feesConfigured: true,
+      invoiceTotal: "5000.00",
+      registrationFeeConfigured: true,
     });
     const result = await createStudent(input);
     expect(result.invoiceId).toBe("44");
-    expect(result.invoiceTotal).toBe("55000.00");
-    expect(result.feesConfigured).toBe(true);
+    expect(result.invoiceTotal).toBe("5000.00");
+    expect(result.registrationFeeConfigured).toBe(true);
     expect(result.student.status).toBe("pending_payment");
   });
 
@@ -52,19 +52,19 @@ describe("createStudent", () => {
     vi.mocked(apiFetch).mockResolvedValue({
       ...student,
       invoiceId: "44",
-      invoiceTotal: "55000.00",
-      feesConfigured: true,
+      invoiceTotal: "5000.00",
+      registrationFeeConfigured: true,
     });
     const result = await createStudent(input);
     expect(result.student).not.toHaveProperty("invoiceId");
-    expect(result.student).not.toHaveProperty("feesConfigured");
+    expect(result.student).not.toHaveProperty("registrationFeeConfigured");
   });
 
   it("reports an unconfigured fee structure instead of throwing", async () => {
-    // No fee structure yet: a brand new school registering its first student.
-    vi.mocked(apiFetch).mockResolvedValue({ ...student, feesConfigured: false });
+    // No registration fee applies; regular school fees are billed separately.
+    vi.mocked(apiFetch).mockResolvedValue({ ...student, registrationFeeConfigured: false });
     const result = await createStudent(input);
-    expect(result.feesConfigured).toBe(false);
+    expect(result.registrationFeeConfigured).toBe(false);
     expect(result.invoiceId).toBe("");
     expect(result.invoiceTotal).toBe("");
     expect(result.student.id).toBe("9");
@@ -73,12 +73,12 @@ describe("createStudent", () => {
   it("tolerates a response with no billing fields at all", async () => {
     vi.mocked(apiFetch).mockResolvedValue(student);
     const result = await createStudent(input);
-    expect(result.feesConfigured).toBe(false);
+    expect(result.registrationFeeConfigured).toBe(false);
     expect(result.student.firstName).toBe("Ada");
   });
 
   it("posts the form to the versioned students endpoint", async () => {
-    vi.mocked(apiFetch).mockResolvedValue({ ...student, feesConfigured: true });
+    vi.mocked(apiFetch).mockResolvedValue({ ...student, registrationFeeConfigured: true });
     await createStudent(input);
     expect(apiFetch).toHaveBeenCalledWith("/students", {
       method: "POST",

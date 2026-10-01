@@ -285,7 +285,7 @@ class PendingStudentInvoicingScopeTests(SecurityTestBase):
     def url_path(self):
         return self.url('/fees/structure/')
 
-    def test_saving_one_level_invoices_only_that_level(self):
+    def test_saving_regular_fees_activates_only_unbilled_students_in_that_level(self):
         pri = self.make_student(
             class_name='Primary 1', admission_number='SUA/PRI/2026/000001',
             status=Student.Status.PENDING_PAYMENT,
@@ -301,13 +301,16 @@ class PendingStudentInvoicingScopeTests(SecurityTestBase):
             format='json',
         )
         self.assertEqual(r.status_code, 200, r.content)
-        self.assertEqual(r.json()['invoicedPendingStudents'], 1)
-        self.assertEqual(r.json()['invoicedPendingStudentsByLevel'], {'JSS': 1})
+        self.assertEqual(r.json()['invoicedPendingStudents'], 0)
+        self.assertEqual(r.json()['invoicedPendingStudentsByLevel'], {'JSS': 0})
+        self.assertEqual(r.json()['activatedPendingStudents'], 1)
 
-        self.assertTrue(Invoice.objects.filter(student=jss, is_cancelled=False).exists())
+        jss.refresh_from_db()
+        self.assertEqual(jss.status, Student.Status.ACTIVE)
+        self.assertFalse(Invoice.objects.filter(student=jss, is_cancelled=False).exists())
         self.assertFalse(Invoice.objects.filter(student=pri).exists())
 
-    def test_invoiced_invoice_uses_that_levels_price(self):
+    def test_registration_invoice_uses_that_levels_registration_price(self):
         jss = self.make_student(
             class_name='JSS 1', admission_number='SUA/JSS/2026/000003',
             status=Student.Status.PENDING_PAYMENT,
@@ -320,10 +323,8 @@ class PendingStudentInvoicingScopeTests(SecurityTestBase):
             format='json',
         )
         invoice = Invoice.objects.get(student=jss)
-        self.assertEqual(Decimal(invoice.total), Decimal('95000'))
-        self.assertEqual(
-            {item['feeType'] for item in invoice.items}, {'registration', 'tuition'},
-        )
+        self.assertEqual(Decimal(invoice.total), Decimal('5000'))
+        self.assertEqual({item['feeType'] for item in invoice.items}, {'registration'})
 
     def test_legacy_school_wide_save_still_works(self):
         """A school on the old flat list keeps billing, and stays un-migrated."""
@@ -390,7 +391,7 @@ class PendingStudentInvoicingScopeTests(SecurityTestBase):
 
 
 class AdmissionUsesLevelPriceTests(SecurityTestBase):
-    """Registration must bill the level the student is entering, not one price."""
+    """Registration fees must bill the level the student is entering."""
 
     def setUp(self):
         super().setUp()
@@ -418,13 +419,13 @@ class AdmissionUsesLevelPriceTests(SecurityTestBase):
             )
         self.client.force_authenticate(user=self.secretary)
 
-    def test_admission_invoice_uses_the_entered_levels_price(self):
+    def test_admission_invoice_uses_the_entered_levels_registration_price(self):
         self.price_all_levels()
         r = self.register()
         self.assertEqual(r.status_code, 201, r.content)
         student = Student.objects.get(first_name='Ada')
         invoice = Invoice.objects.get(student=student)
-        self.assertEqual(Decimal(invoice.total), Decimal('155000'))
+        self.assertEqual(Decimal(invoice.total), Decimal('5000'))
 
     def test_two_levels_produce_two_different_totals(self):
         SchoolClass.objects.create(
@@ -438,8 +439,24 @@ class AdmissionUsesLevelPriceTests(SecurityTestBase):
         )
         ada = Invoice.objects.get(student__first_name='Ada')
         bola = Invoice.objects.get(student__first_name='Bola')
-        self.assertEqual(Decimal(ada.total), Decimal('45000'))
-        self.assertEqual(Decimal(bola.total), Decimal('95000'))
+        self.assertEqual(Decimal(ada.total), Decimal('5000'))
+        self.assertEqual(Decimal(bola.total), Decimal('5000'))
+
+    def test_regular_term_invoice_excludes_the_one_time_registration_fee(self):
+        self.price_all_levels()
+        self.client.force_authenticate(user=self.accountant)
+        response = self.client.post(
+            self.url('/invoices/generate/'),
+            {'className': 'JSS 1', 'term': 'First Term'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        invoice = Invoice.objects.get(student=self.student, term='First Term')
+        self.assertEqual(Decimal(invoice.total), Decimal('90000'))
+        self.assertEqual(
+            {item['feeType'] for item in invoice.items},
+            {FeeStructure.FeeType.TUITION},
+        )
 
 
 class LegacyBackfillMigrationTests(SecurityTestBase):

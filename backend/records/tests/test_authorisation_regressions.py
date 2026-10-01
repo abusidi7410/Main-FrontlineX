@@ -226,6 +226,16 @@ class ValidRoleConstantsAreUsed(TestCase):
         owner = User.objects.get(email='owner@new.com')
         self.assertEqual(owner.role, User.Role.SCHOOL_ADMIN)
         self.assertIsNotNone(owner.school)
+        self.assertFalse(owner.is_active)
+        self.assertFalse(owner.school.is_active)
+        self.assertEqual(owner.school.subscription.status, 'pending')
+        self.assertNotIn('access', response.data)
+        self.assertNotIn('refresh_token', response.cookies)
+        login_response = self.client.post('/api/v1/auth/login/', {
+            'identifier': owner.email,
+            'password': 'Str0ng!Passw0rd',
+        }, format='json')
+        self.assertEqual(login_response.status_code, 401)
 
 
 class SuperuserBootstrapWorks(TestCase):

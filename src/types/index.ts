@@ -23,6 +23,8 @@ export type Permission =
   | "academics.write"
   | "attendance.read"
   | "attendance.write"
+  /** Amending an already-taken register; distinct from taking it. */
+  | "attendance.correct"
   | "results.read"
   | "results.write"
   | "results.approve"
@@ -197,7 +199,7 @@ export interface AttendanceSubmission {
   id: string;
   className: string;
   date: string;
-  subject?: string;
+  arm?: string;
   records: AttendanceRecord[];
   syncState: "pending" | "synced" | "failed";
   updatedAt: number;
@@ -209,6 +211,7 @@ export interface Invoice {
   studentName: string;
   className: string;
   term: string;
+  source?: "admission" | "bulk" | "migration";
   total: number;
   paid: number;
   items: { label: string; amount: number }[];
@@ -234,15 +237,49 @@ export interface ResultSheetRow {
   ca2: number | null;
   assignment: number | null;
   exam: number | null;
+  score: number | null;
+  grade: string;
+  remark: string;
 }
 
-export interface ResultSheet {
+export type ResultSheetStatus =
+  "draft" | "submitted" | "under_review" | "approved" | "published" | "locked";
+
+export interface ResultSheetSummary {
   id: string;
+  session: string;
+  className: string;
+  subject: string;
+  assessment: string;
+  assessmentMax: string;
+  term: string;
+  status: ResultSheetStatus;
+  isLocked: boolean;
+  studentCount: number;
+  correctionRequested: boolean;
+}
+
+export interface ResultSheet extends ResultSheetSummary {
+  correctionReason: string;
+  rows: ResultSheetRow[];
+}
+
+export interface ResultReportEntry {
+  studentName: string;
   className: string;
   subject: string;
   term: string;
-  status: "draft" | "submitted" | "under_review" | "approved" | "published";
-  rows: ResultSheetRow[];
+  ca1: number | null;
+  ca2: number | null;
+  assignment: number | null;
+  exam: number | null;
+  score: number | null;
+  grade: string;
+}
+
+export interface MyPublishedResult extends ResultReportEntry {
+  studentId: string;
+  session: string;
 }
 
 export interface Announcement {

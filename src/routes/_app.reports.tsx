@@ -19,10 +19,10 @@ import { naira, numberFmt, percent } from "@/lib/format";
 import { printHtml } from "@/lib/print";
 import { useSession } from "@/auth/session";
 import { listInvoices } from "@/services/finance.service";
-import { getResultSheets, getStaff } from "@/services/school.service";
+import { getPublishedResultReport, getStaff } from "@/services/school.service";
 import { listStudents } from "@/services/students.service";
 import { getReportCard, type ReportCard } from "@/services/reports.service";
-import type { Invoice, ResultSheet, StaffMember, Student } from "@/types";
+import type { Invoice, ResultReportEntry, StaffMember, Student } from "@/types";
 
 export const Route = createFileRoute("/_app/reports")({
   head: () => ({
@@ -82,7 +82,7 @@ function rowsFor(
   roster: Student[],
   invoices: Invoice[],
   staff: StaffMember[],
-  sheets: ResultSheet[],
+  resultEntries: ResultReportEntry[],
 ): { headers: string[]; rows: (string | number)[][] } {
   switch (id) {
     case "enrolment":
@@ -109,18 +109,16 @@ function rowsFor(
     case "academic":
       return {
         headers: ["Student", "Class", "Subject", "CA 1", "CA 2", "Assignment", "Exam", "Total"],
-        rows: sheets.flatMap((sheet) =>
-          sheet.rows.map((row) => [
-            row.studentName,
-            sheet.className,
-            sheet.subject,
-            row.ca1 ?? "",
-            row.ca2 ?? "",
-            row.assignment ?? "",
-            row.exam ?? "",
-            (row.ca1 ?? 0) + (row.ca2 ?? 0) + (row.assignment ?? 0) + (row.exam ?? 0),
-          ]),
-        ),
+        rows: resultEntries.map((row) => [
+          row.studentName,
+          row.className,
+          row.subject,
+          row.ca1 ?? "",
+          row.ca2 ?? "",
+          row.assignment ?? "",
+          row.exam ?? "",
+          row.score ?? "",
+        ]),
       };
     case "finance":
       return {
@@ -248,13 +246,17 @@ function ReportsPage() {
   });
   const invoices = useQuery({ queryKey: ["invoices", "reports"], queryFn: () => listInvoices() });
   const staff = useQuery({ queryKey: ["staff"], queryFn: getStaff });
-  const sheets = useQuery({ queryKey: ["results", "reports"], queryFn: getResultSheets });
+  const resultEntries = useQuery({
+    queryKey: ["results", "published-report"],
+    queryFn: getPublishedResultReport,
+  });
 
   const [className, setClassName] = useState("");
   const [studentId, setStudentId] = useState("");
 
-  const isPending = students.isPending || invoices.isPending || staff.isPending || sheets.isPending;
-  const isError = students.isError || invoices.isError || staff.isError || sheets.isError;
+  const isPending =
+    students.isPending || invoices.isPending || staff.isPending || resultEntries.isPending;
+  const isError = students.isError || invoices.isError || staff.isError || resultEntries.isError;
 
   const roster = students.data?.results ?? [];
   const billed = (invoices.data ?? []).reduce((sum, i) => sum + i.total, 0);
@@ -292,7 +294,7 @@ function ReportsPage() {
               void students.refetch();
               void invoices.refetch();
               void staff.refetch();
-              void sheets.refetch();
+              void resultEntries.refetch();
             }}
           />
         ) : isPending ? (
@@ -471,7 +473,7 @@ function ReportsPage() {
                   roster,
                   invoices.data ?? [],
                   staff.data ?? [],
-                  sheets.data ?? [],
+                  resultEntries.data ?? [],
                 );
                 const schoolLabel = [session?.school?.name, session?.school?.address]
                   .filter(Boolean)

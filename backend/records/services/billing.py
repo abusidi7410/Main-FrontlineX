@@ -22,7 +22,7 @@ from __future__ import annotations
 import datetime
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -219,9 +219,8 @@ def default_due_date(session: AcademicSession, *, days: int = 30):
 #
 # Invoicing therefore has to read both, in that order: relational rows first,
 # and the JSON only when a school has no relational rows for the scope being
-# billed. Both the bulk generator and the admission path go through
-# `resolve_invoice_items` so the two screens cannot disagree about what a
-# student owes.
+# billed. Term invoices exclude the one-time registration fee; admission
+# invoices select only that fee from the same resolver.
 
 
 def school_fee_items(school, class_name: str = '') -> list[dict]:
@@ -268,6 +267,8 @@ def resolve_invoice_items(
     session: AcademicSession | None = None,
     school_class: SchoolClass | None = None,
     term: str = '',
+    fee_types: set[str] | None = None,
+    exclude_fee_types: set[str] | None = None,
 ) -> list[dict]:
     """The fee lines a class is billed, preferring per-level relational rows.
 
@@ -290,9 +291,25 @@ def resolve_invoice_items(
         rows = resolve_fee_structure(school, session, school_class, (term or '').strip())
         if rows:
             items, _total = build_invoice_snapshot(rows)
-            return items
+        else:
+            items = school_fee_items(school, class_name)
+    else:
+        items = school_fee_items(school, class_name)
 
-    return school_fee_items(school, class_name)
+    def fee_type(item):
+        explicit_type = item.get('feeType')
+        if explicit_type:
+            return explicit_type
+        label = str(item.get('label') or '').lower()
+        if 'registration' in label or 'admission' in label:
+            return FeeStructure.FeeType.REGISTRATION
+        return FeeStructure.FeeType.OTHER
+
+    if fee_types is not None:
+        items = [item for item in items if fee_type(item) in fee_types]
+    if exclude_fee_types:
+        items = [item for item in items if fee_type(item) not in exclude_fee_types]
+    return items
 
 
 def create_invoice_from_school_fees(
@@ -300,20 +317,29 @@ def create_invoice_from_school_fees(
     school,
     student,
     term: str = '',
+    selection_term: str | None = None,
     due_date=None,
     source: str = Invoice.Source.ADMISSION,
     session: AcademicSession | None = None,
 ) -> Invoice | None:
-    """Issue a student's admission invoice from the school's configured fees.
+    """Issue a student's one-time registration invoice from configured fees.
 
-    Returns None when the school has not configured any applicable fee, which is
-    the normal state of a brand new school. Registration must still succeed in
-    that case: the student simply stays PENDING_PAYMENT until fees are set
-    and an invoice is raised, so nobody is locked out of enrolling a first
-    student.
+    The selection term allows a term-specific registration fee to be chosen
+    while the invoice itself keeps a blank term, making it distinct from all
+    recurring term invoices.
     """
+    if session is None:
+        from . import academic as academic_service
+
+        session = academic_service.current_session(school)
+    if selection_term is None:
+        selection_term = term or school.current_term
     items = resolve_invoice_items(
-        school=school, class_name=student.class_name, session=session, term=term,
+        school=school,
+        class_name=student.class_name,
+        session=session,
+        term=selection_term,
+        fee_types={FeeStructure.FeeType.REGISTRATION},
     )
     if not items:
         return None
@@ -323,6 +349,7 @@ def create_invoice_from_school_fees(
     invoice, _created = Invoice.objects.get_or_create(
         school=school,
         student=student,
+        academic_session=session,
         term=(term or '').strip(),
         defaults={
             'source': source,
@@ -347,21 +374,31 @@ def student_has_outstanding_balance(student) -> Decimal:
     Verified payments count against the total, so a pending payment does not
     make a student look paid (spec §10).
     """
+    invoices = Invoice.objects.filter(
+        school_id=student.school_id,
+        student=student,
+        is_cancelled=False,
+    )
     outstanding = Decimal('0')
-    for invoice in live_invoices(student):
-        outstanding += _decimal(invoice.total) - verified_paid_total(invoice.id)
+    for invoice in invoices.annotate(
+        verified_paid_total=Coalesce(
+            Sum(
+                'payments__amount',
+                filter=Q(payments__status=Payment.Status.VERIFIED),
+            ),
+            Decimal('0'),
+        ),
+    ):
+        outstanding += _decimal(invoice.total) - _decimal(invoice.verified_paid_total)
     return max(outstanding, Decimal('0'))
 
 
 def activate_student_if_fully_paid(student) -> bool:
-    """Clear a PENDING_PAYMENT student once their invoice is settled.
+    """Clear a PENDING_PAYMENT student once every live invoice is settled.
 
-    Requires at least one live invoice. "Nothing outstanding" is ambiguous when
-    a student was never billed at all - a school with no fee structure yet
-    registers students who legitimately have zero invoices - and treating that
-    as settled would activate every one of them for free. Only ever promotes a
-    student forward, so a school that later suspends somebody for unrelated
-    reasons cannot have them silently reactivated by a stray payment.
+    Only ever promotes a student forward, so a school that later suspends
+    somebody for unrelated reasons cannot have them silently reactivated by a
+    stray payment.
     """
     if student.status != Student.Status.PENDING_PAYMENT:
         return False
@@ -375,14 +412,13 @@ def activate_student_if_fully_paid(student) -> bool:
     return True
 
 
-def invoice_pending_students(school, *, level: Level | None = None) -> int:
-    """Raise the missing admission invoice for students registered before fees.
+def invoice_pending_students(school, *, level: Level | None = None) -> tuple[int, int]:
+    """Raise missing registration invoices for pending students.
 
-    A school can register its first students before anyone has set up the
-    Payment Structure, and those students are then PENDING_PAYMENT with no
-    invoice. The bulk generator only bills active students, so nothing else
-    would ever invoice them and they could never be activated. Called when the
-    fee structure is saved to close that gap. Returns how many were invoiced.
+    Pending students from older workflows need a registration invoice if one is
+    configured. If none applies, clear the old billing hold and let regular
+    school fees be billed through the term workflow. Returns the counts of
+    invoices created and students activated.
 
     `level` narrows the run to one level. Saving fees for Junior Secondary must
     not silently invoice every pending Nursery and Senior student, because those
@@ -391,6 +427,7 @@ def invoice_pending_students(school, *, level: Level | None = None) -> int:
     school-wide editor.
     """
     created = 0
+    activated = 0
     pending = Student.objects.filter(
         school=school, status=Student.Status.PENDING_PAYMENT,
     ).order_by('id')
@@ -408,4 +445,8 @@ def invoice_pending_students(school, *, level: Level | None = None) -> int:
             continue
         if create_invoice_from_school_fees(school=school, student=student) is not None:
             created += 1
-    return created
+        else:
+            student.status = Student.Status.ACTIVE
+            student.save(update_fields=['status'])
+            activated += 1
+    return created, activated

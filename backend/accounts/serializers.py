@@ -69,7 +69,7 @@ class SchoolRegistrationSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         from django.db import transaction
-        from schools.models import School
+        from schools.models import School, SchoolSubscription, SubscriptionPlan
 
         with transaction.atomic():
             school = School.objects.create(
@@ -81,7 +81,7 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 phone=validated_data['school_phone'],
                 email=validated_data['school_email'],
                 website=validated_data.get('school_website', ''),
-                is_active=True,
+                is_active=False,
             )
 
             user = User.objects.create_user(
@@ -92,7 +92,14 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 last_name=validated_data['admin_last_name'],
                 role=User.Role.SCHOOL_ADMIN,
                 school=school,
-                is_verified=True,
+                is_active=False,
+                is_verified=False,
+            )
+            plan = SubscriptionPlan.objects.filter(is_active=True).first()
+            SchoolSubscription.objects.create(
+                school=school,
+                plan=plan,
+                status=SchoolSubscription.Status.PENDING,
             )
 
         return user, school
@@ -103,6 +110,9 @@ class SchoolRegistrationSerializer(serializers.Serializer):
 class LoginSerializer(serializers.Serializer):
     identifier = serializers.CharField(help_text='Email or phone number')
     password = serializers.CharField(write_only=True)
+
+    def validate_identifier(self, value):
+        return value.strip()
 
     def validate(self, data):
         # Accept legacy `login` key alongside `identifier`.

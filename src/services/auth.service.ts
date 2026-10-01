@@ -10,25 +10,50 @@ export interface Session {
 
 const STORAGE_KEY = "fn.session.v1";
 
-export function readStoredSession(): Session | null {
+function getStorage(): Storage | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const session = JSON.parse(raw) as Session;
-    if (session?.user?.role) {
-      session.user.permissions = ROLE_PERMISSIONS[session.user.role as Role];
-    }
-    return session;
+    return window.sessionStorage;
   } catch {
     return null;
   }
 }
 
+export function readStoredSession(): Session | null {
+  const storage = getStorage();
+  if (!storage) return null;
+
+  try {
+    const raw = storage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+
+    const session = JSON.parse(raw) as Partial<Session>;
+    if (!session?.user || !session?.token || typeof session.token !== "string") {
+      storage.removeItem(STORAGE_KEY);
+      return null;
+    }
+
+    if (session.user.role) {
+      session.user.permissions = ROLE_PERMISSIONS[session.user.role as Role];
+    }
+
+    return session as Session;
+  } catch {
+    storage.removeItem(STORAGE_KEY);
+    return null;
+  }
+}
+
 export function persistSession(session: Session | null) {
-  if (typeof window === "undefined") return;
-  if (session) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-  else window.localStorage.removeItem(STORAGE_KEY);
+  const storage = getStorage();
+  if (!storage) return;
+
+  if (session && session.token) {
+    storage.setItem(STORAGE_KEY, JSON.stringify(session));
+    return;
+  }
+
+  storage.removeItem(STORAGE_KEY);
 }
 
 export async function login(identifier: string, password: string): Promise<Session> {

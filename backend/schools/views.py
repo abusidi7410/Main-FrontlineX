@@ -61,14 +61,10 @@ class SchoolRegisterView(APIView):
 class PaymentVerifyView(APIView):
     """GET /payments/{reference}/verify/  → {status}
 
-    A real gateway integration will confirm bank transfers. For now any
-    reference that matches a registered school is considered verified.
+    Until a trusted payment gateway is integrated, payment status remains
+    pending. A client-supplied reference is not proof of payment.
     """
     permission_classes = [AllowAny]
 
     def get(self, request, reference):
-        slug = reference.lower().lstrip('fn-') if reference else ''
-        school = School.objects.filter(slug=slug).first()
-        if school is None:
-            return Response({'status': 'pending'})
-        return Response({'status': 'verified'})
+        return Response({'status': 'pending'})

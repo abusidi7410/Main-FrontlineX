@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { Button } from "@/components/ui/button";
-import { ARMS, CLASSES } from "@/constants/reference";
+import { ARMS } from "@/constants/reference";
 import { ApiRequestError } from "@/api/client";
 import { createStudent } from "@/services/students.service";
 import { StudentForm } from "@/features/students/student-form";
@@ -55,21 +55,19 @@ function NewStudentPage() {
 
   const mutation = useMutation({
     mutationFn: createStudent,
-    onSuccess: async ({ student, invoiceTotal, feesConfigured }) => {
-      // Registration raises the admission invoice, so say what is owed and
-      // that the student is not yet cleared for classes. A registrar who only
-      // sees "added to JSS 1" would reasonably assume the student can attend.
+    onSuccess: async ({ student, invoiceTotal, registrationFeeConfigured }) => {
       toast.success(
         `${student.firstName} ${student.lastName} registered in ${student.className}${student.arm}.`,
         {
-          description: feesConfigured
-            ? `Admission invoice of ${naira(Number(invoiceTotal) || 0)} raised. The student becomes active once it is paid in full.`
-            : "No fee structure is set up yet, so no invoice was raised. Set one up under Finance to bill this student.",
-          duration: feesConfigured ? 8000 : 12000,
+          description: registrationFeeConfigured
+            ? `One-time registration invoice of ${naira(Number(invoiceTotal) || 0)} raised. Regular school fees are billed separately.`
+            : "No registration fee applies, so the student is active. Regular school fees can be billed separately.",
+          duration: 8000,
         },
       );
       await queryClient.invalidateQueries({ queryKey: ["students"] });
       await queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      await queryClient.invalidateQueries({ queryKey: ["finance-summary"] });
       void navigate({ to: "/students" });
     },
     onError: (error) =>
@@ -98,7 +96,7 @@ function NewStudentPage() {
             admissionNumber: "",
             gender: "male",
             dateOfBirth: "",
-            className: CLASSES[0] ?? "",
+            className: "",
             arm: ARMS[0] ?? "",
             guardianName: "",
             guardianPhone: "",

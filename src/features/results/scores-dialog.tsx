@@ -54,6 +54,7 @@ export function ScoresDialog({
       toast.success(`Scores saved for ${updated.className} ${updated.subject}.`);
       onOpenChange(false);
       await queryClient.invalidateQueries({ queryKey: ["results"] });
+      await queryClient.invalidateQueries({ queryKey: ["result-sheet", updated.id] });
     },
     onError: () => toast.error("We couldn't save those scores. Please try again."),
   });
@@ -61,7 +62,9 @@ export function ScoresDialog({
   if (!sheet) return null;
 
   const setScore = (studentId: string, key: "ca1" | "ca2" | "assignment" | "exam", raw: string) => {
-    const value = raw.trim() === "" ? null : Math.max(0, Math.min(LIMITS[key], Number(raw)));
+    const parsed = raw.trim() === "" ? null : Number(raw);
+    if (parsed !== null && !Number.isFinite(parsed)) return;
+    const value = parsed === null ? null : Math.max(0, Math.min(LIMITS[key], parsed));
     setRows((prev) =>
       prev.map((row) => (row.studentId === studentId ? { ...row, [key]: value } : row)),
     );
@@ -75,8 +78,8 @@ export function ScoresDialog({
             Enter scores · {sheet.className} {sheet.subject}
           </DialogTitle>
           <DialogDescription>
-            Type each student&apos;s marks. CA 1 and CA 2 are out of 10, the assignment out of 20,
-            and the exam out of 60.
+            Enter all four marks for every enrolled student before submitting. CA 1 and CA 2 are out
+            of 10, the assignment out of 20, and the exam out of 60.
           </DialogDescription>
         </DialogHeader>
 
@@ -123,6 +126,7 @@ export function ScoresDialog({
                           inputMode="numeric"
                           min={0}
                           max={LIMITS[component.key]}
+                          step="0.01"
                           className="h-9 text-center tabular-nums"
                           aria-label={`${row.studentName} ${component.label}`}
                           value={row[component.key] ?? ""}

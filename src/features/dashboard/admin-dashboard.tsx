@@ -8,8 +8,9 @@ import { QuickActions } from "@/features/dashboard/quick-actions";
 import { SetupChecklist } from "@/features/dashboard/setup-checklist";
 import { useAuthenticatedSession } from "@/auth/session";
 import { tierById } from "@/constants/plans";
-import { compactNaira, dateFmt, greeting, numberFmt, percent } from "@/lib/format";
-import { listInvoices } from "@/services/finance.service";
+import { compactNaira, dateFmt, greeting, numberFmt } from "@/lib/format";
+import { getAttendanceOverview } from "@/services/attendance.service";
+import { getFinanceSummary } from "@/services/finance.service";
 import { getStaff, getResultSheets, getSubscription } from "@/services/school.service";
 import { listStudents } from "@/services/students.service";
 
@@ -21,35 +22,51 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
     queryKey: ["students", { pageSize: 1 }],
     queryFn: () => listStudents({ pageSize: 1 }),
   });
-  const lowAttendance = useQuery({
-    queryKey: ["students", "low-attendance"],
-    queryFn: () => listStudents({ pageSize: 500 }),
-    select: (page) => page.results.filter((s) => s.attendanceRate < 70).length,
-  });
   const staff = useQuery({ queryKey: ["staff"], queryFn: getStaff });
-  const invoices = useQuery({ queryKey: ["invoices", ""], queryFn: () => listInvoices() });
+  const finance = useQuery({ queryKey: ["finance-summary"], queryFn: getFinanceSummary });
   const results = useQuery({ queryKey: ["results"], queryFn: getResultSheets });
+  const attendance = useQuery({
+    queryKey: ["attendance-overview"],
+    queryFn: () => getAttendanceOverview(),
+  });
 
-  if (subscription.isError || students.isError) {
+  if (subscription.isError || students.isError || finance.isError) {
     return (
-      <ErrorState onRetry={() => void Promise.all([subscription.refetch(), students.refetch()])} />
+      <ErrorState
+        onRetry={() =>
+          void Promise.all([subscription.refetch(), students.refetch(), finance.refetch()])
+        }
+      />
     );
   }
 
-  const loading = subscription.isPending || students.isPending || invoices.isPending;
-  const outstanding = invoices.data?.reduce((sum, i) => sum + (i.total - i.paid), 0) ?? 0;
+  const loading =
+    subscription.isPending || students.isPending || finance.isPending || attendance.isPending;
+  const outstanding = finance.data?.outstanding ?? 0;
   const awaitingApproval =
     results.data?.filter((r) => r.status === "submitted" || r.status === "under_review").length ??
     0;
   const tier = subscription.data ? tierById(subscription.data.tierId) : null;
-  const attendanceAverage = 92;
+  const attendanceSummary = attendance.data
+    ? !attendance.data.isSchoolDay
+      ? { value: "—", hint: "No register expected today" }
+      : attendance.data.total === 0
+        ? { value: "—", hint: "No classes are configured for attendance" }
+        : {
+            value: `${attendance.data.submitted} / ${attendance.data.total}`,
+            hint: "Classes have submitted today's register",
+          }
+    : {
+        value: "—",
+        hint: attendance.isError ? "Today's attendance could not be loaded" : "Today's registers",
+      };
 
   const attention = [
-    lowAttendance.data
+    attendance.data?.isSchoolDay && attendance.data.total > attendance.data.submitted
       ? {
-          id: "att",
-          label: `${lowAttendance.data} students have attendance below 70%`,
-          to: "/attendance",
+          id: "registers",
+          label: `${attendance.data.total - attendance.data.submitted} class registers are still missing today`,
+          to: "/attendance-overview",
         }
       : null,
     awaitingApproval > 0
@@ -115,10 +132,16 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
             hint="Teachers and administrative staff"
           />
           <StatCard
-            label="Attendance this term"
-            value={percent(attendanceAverage)}
-            tone="success"
-            hint="School-wide average"
+            label="Registers submitted today"
+            value={attendanceSummary.value}
+            tone={
+              attendance.data?.isSchoolDay && attendance.data.total > 0
+                ? attendance.data.submitted === attendance.data.total
+                  ? "success"
+                  : "warning"
+                : "default"
+            }
+            hint={attendanceSummary.hint}
           />
           <StatCard
             label="Outstanding fees"

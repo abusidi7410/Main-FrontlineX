@@ -28,7 +28,7 @@ ROLE_PERMISSIONS = {
         'students.import', 'enrollment.manage',
         'staff.read', 'staff.write',
         'academics.read', 'academics.write',
-        'attendance.read', 'attendance.write',
+        'attendance.read', 'attendance.write', 'attendance.correct',
         'results.read', 'results.write', 'results.approve', 'results.publish',
         'finance.read', 'finance.write', 'finance.verify',
         'finance.structure', 'finance.invoice', 'finance.payment',
@@ -43,7 +43,8 @@ ROLE_PERMISSIONS = {
         'students.read', 'students.write', 'students.register', 'students.approve',
         'staff.read', 'staff.write',
         'academics.read', 'academics.write',
-        'attendance.read', 'results.read', 'results.approve',
+        'attendance.read', 'attendance.correct',
+        'results.read', 'results.approve',
         'timetable.read', 'lessonplans.read',
         'communication.read', 'communication.write',
         # Read-only view of the money: a principal signs off on fees but does

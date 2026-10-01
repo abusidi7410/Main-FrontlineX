@@ -37,6 +37,36 @@ class AccountManagementAPITests(TestCase):
         params = '&'.join(f'{k}={v}' for k, v in query.items())
         return f'/api/v1/accounts/users/?{params}' if params else '/api/v1/accounts/users/'
 
+    def test_login_accepts_email_case_insensitively(self):
+        response = APIClient().post(
+            '/api/v1/auth/login/',
+            {'identifier': '  ADMIN@ALPHA.EXAMPLE ', 'password': 'Strong-Pass-1!'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['user']['id'], str(self.admin.id))
+
+    def test_login_accepts_phone_in_local_and_international_formats(self):
+        user = User.objects.create_user(
+            email='teacher@alpha.example',
+            phone='+2348012345678',
+            password='Strong-Pass-1!',
+            first_name='Phone',
+            last_name='Login',
+            role=User.Role.TEACHER,
+            school=self.school_a,
+            is_active=True,
+        )
+        for phone in ('08012345678', '2348012345678', '+2348012345678'):
+            with self.subTest(phone=phone):
+                response = APIClient().post(
+                    '/api/v1/auth/login/',
+                    {'identifier': phone, 'password': 'Strong-Pass-1!'},
+                    format='json',
+                )
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(response.json()['user']['id'], str(user.id))
+
     # ── create ────────────────────────────────────────────────────────────
 
     def test_admin_can_create_teacher_with_auto_password(self):

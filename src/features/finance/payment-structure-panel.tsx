@@ -30,8 +30,8 @@ import {
 
 /**
  * One card per level, each priced independently. The registration fee gets a
- * dedicated field rather than sitting in the generic list, because every school
- * charges one and because a Nursery family and a Senior Secondary family
+ * dedicated field rather than sitting in the generic list, because schools
+ * configure it independently and a Nursery family and a Senior Secondary family
  * legitimately pay different amounts.
  *
  * Read access is `finance.read` (a principal can see prices); writes require
@@ -94,6 +94,7 @@ export function PaymentStructurePanel({ canWrite }: { canWrite: boolean }) {
           onSaved={() => {
             void queryClient.invalidateQueries({ queryKey: ["fee-structure"] });
             void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+            void queryClient.invalidateQueries({ queryKey: ["finance-summary"] });
             void queryClient.invalidateQueries({ queryKey: ["students"] });
           }}
         />
@@ -140,6 +141,12 @@ function LevelCard({
         toast.success(
           `${level.name} fees saved. ${count} student${count === 1 ? "" : "s"} who registered before fees were set up ${count === 1 ? "has" : "have"} now been invoiced.`,
           { description: "They become active once the invoice is paid in full.", duration: 10000 },
+        );
+      } else if (result.activatedPendingStudents > 0) {
+        const activated = result.activatedPendingStudents;
+        toast.success(
+          `${level.name} fees saved. ${activated} student${activated === 1 ? "" : "s"} without a registration fee ${activated === 1 ? "is" : "are"} now active.`,
+          { description: "Regular school fees can be billed separately by term.", duration: 10000 },
         );
       } else {
         toast.success(`${level.name} fees saved.`);
@@ -233,8 +240,8 @@ function LevelCard({
         </div>
         {registration ? (
           <p className="text-xs text-muted-foreground sm:col-span-2">
-            Charged once when a new {level.name.toLowerCase()} student is admitted, on top of the
-            fees below.
+            Charged once in a separate invoice when a new {level.name.toLowerCase()} student is
+            admitted. Regular school fees below are invoiced separately by term.
           </p>
         ) : null}
       </div>

@@ -148,6 +148,9 @@ def ensure_class(
 
     levels = ensure_levels(school)
     resolved = level
+    # Level codes are stored uppercase (NUR/PRI/JSS/SSS); a client sending "jss"
+    # meant the same level, so casing is normalised rather than rejected.
+    level_code = level_code.strip().upper() if level_code else ''
     if resolved is None and level_code:
         if level_code not in levels:
             raise ValidationError({'level': f'"{level_code}" is not a supported level.'})
@@ -213,6 +216,26 @@ def current_session(school: School) -> AcademicSession | None:
     return school.sessions.filter(name=school.current_session, is_active=True).first()
 
 
+def sync_school_class_names(school: School) -> list[str]:
+    """Rebuild `School.classes` from the `SchoolClass` rows.
+
+    `School.classes` is the value every class dropdown renders, while
+    `SchoolClass` is what rosters and enrollments resolve against. When the two
+    drift, a dropdown offers a class the roster then 404s on. `SchoolClass` is
+    authoritative: this copies its active names back onto the school so the
+    dropdown can only ever offer classes that actually exist.
+    """
+    names = list(
+        school.school_classes.filter(is_active=True)
+        .order_by('sort_order', 'name')
+        .values_list('name', flat=True)
+    )
+    if school.classes != names:
+        school.classes = names
+        school.save(update_fields=['classes'])
+    return names
+
+
 def provision_school_structure(school: School) -> dict:
     """One-time academic setup for a school: code, levels, classes, session.
 
@@ -227,6 +250,7 @@ def provision_school_structure(school: School) -> dict:
             ensure_class(school, name, level_code=level_code)
             for name, level_code in DEFAULT_CLASSES
         ]
+        sync_school_class_names(school)
     return {
         'schoolCode': school.code,
         'session': session,

@@ -26,9 +26,7 @@ export function StatCard({
   return (
     <div className="group rounded-2xl border border-border/70 bg-card/90 p-5 text-card-foreground shadow-sm backdrop-blur-md transition-[box-shadow,transform,background-color] duration-300 hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] font-semibold uppercase tracking-widest text-muted-foreground">
-          {label}
-        </p>
+        <p className="text-[13px] font-medium text-muted-foreground">{label}</p>
         <div className="flex items-center gap-2">
           {trend}
           {icon ? (

@@ -53,24 +53,28 @@ export interface StudentInput {
 
 export interface RegistrationOutcome {
   student: Student;
-  /** The admission invoice raised at registration, absent when the school has no fee structure yet. */
+  /** The one-time registration invoice, absent when no registration fee applies. */
   invoiceId: string;
   invoiceTotal: string;
-  feesConfigured: boolean;
+  registrationFeeConfigured: boolean;
 }
 
 export async function createStudent(input: StudentInput): Promise<RegistrationOutcome> {
   // SECURITY: Backend must verify permission students.write and schoolId match.
-  // Registration also raises the admission invoice, so the response carries
-  // enough for the registrar to tell the family what is owed.
-  const { invoiceId, invoiceTotal, feesConfigured, ...student } = await apiFetch<
-    Student & { invoiceId?: string; invoiceTotal?: string; feesConfigured?: boolean }
+  // Registration may raise a one-time registration invoice; regular school
+  // fees are billed separately by term.
+  const { invoiceId, invoiceTotal, registrationFeeConfigured, ...student } = await apiFetch<
+    Student & {
+      invoiceId?: string;
+      invoiceTotal?: string;
+      registrationFeeConfigured?: boolean;
+    }
   >("/students", { method: "POST", body: input });
   return {
     student: student as Student,
     invoiceId: invoiceId ?? "",
     invoiceTotal: invoiceTotal ?? "",
-    feesConfigured: Boolean(feesConfigured),
+    registrationFeeConfigured: Boolean(registrationFeeConfigured),
   };
 }
 

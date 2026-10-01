@@ -324,8 +324,23 @@ class AttendanceRecord(models.Model):
         LATE = 'late', 'Late'
         EXCUSED = 'excused', 'Excused'
 
+    """One register line: a student's attendance status for one school day.
+
+    Attendance is taken **once per school day, per student** — not per subject.
+    `subject` is retained as a vestigial, always-empty column so older rows keep
+    their shape; nothing in the register writes or reads it any more.
+
+    `class_obj` is the queryable class; `class_name` stays as a denormalised
+    mirror of it so the existing reports keep working. The roster a student may
+    be marked in always comes from an active `Enrollment` (spec §35).
+    """
+
     school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='attendance_records')
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='attendance')
+    class_obj = models.ForeignKey(
+        SchoolClass, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='attendance_records',
+    )
     class_name = models.CharField(max_length=50)
     subject = models.CharField(max_length=100, blank=True, default='')
     date = models.DateField()
@@ -334,12 +349,16 @@ class AttendanceRecord(models.Model):
         'accounts.User', on_delete=models.SET_NULL, null=True, blank=True
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-date']
         constraints = [
+            # The core rule: a student can only ever have ONE attendance record
+            # for a given school day. This is what makes a duplicate submission
+            # impossible at the database level rather than by convention.
             models.UniqueConstraint(
-                fields=['student', 'date', 'subject'], name='unique_attendance_per_student_day'
+                fields=['student', 'date'], name='unique_attendance_per_student_day'
             )
         ]
         indexes = [
@@ -347,10 +366,52 @@ class AttendanceRecord(models.Model):
             # it scans every attendance row the school has ever taken.
             models.Index(fields=['school', 'date', 'class_name']),
             models.Index(fields=['school', 'student', 'date']),
+            models.Index(fields=['school', 'class_obj', 'date']),
         ]
 
     def __str__(self):
         return f'{self.student_id} {self.date} {self.status}'
+
+
+class ClassTeacherAssignment(models.Model):
+    """The teacher responsible for taking a class's daily register.
+
+    Attendance submission is a *responsibility*, not just a permission: only the
+    assigned class teacher (or a school admin) may submit that class's register.
+    A subject teacher who teaches the class but is not its class teacher stays
+    read-only for attendance.
+
+    Scoped to an `AcademicSession` so a mid-session teacher change does not
+    rewrite who was responsible for earlier registers.
+    """
+
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='class_teacher_assignments')
+    staff = models.ForeignKey(
+        StaffMember, on_delete=models.CASCADE, related_name='class_teacher_assignments',
+    )
+    class_obj = models.ForeignKey(
+        SchoolClass, on_delete=models.CASCADE, related_name='class_teacher_assignments',
+    )
+    academic_session = models.ForeignKey(
+        AcademicSession, on_delete=models.CASCADE, related_name='class_teacher_assignments',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['class_obj__sort_order', 'class_obj__name']
+        constraints = [
+            # Exactly one responsible class teacher per class per session.
+            models.UniqueConstraint(
+                fields=['class_obj', 'academic_session'], name='unique_class_teacher_per_session'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['school', 'class_obj']),
+            models.Index(fields=['school', 'staff']),
+        ]
+
+    def __str__(self):
+        return f'{self.class_obj.name} - {self.staff.full_name}'
 
 
 class FeeStructure(models.Model):
@@ -534,6 +595,7 @@ class Invoice(models.Model):
         indexes = [
             models.Index(fields=['school', 'student']),
             models.Index(fields=['school', 'academic_session']),
+            models.Index(fields=['school', '-created_at']),
         ]
 
     def __str__(self):
@@ -633,6 +695,7 @@ class Payment(models.Model):
         indexes = [
             models.Index(fields=['school', 'status']),
             models.Index(fields=['invoice', 'status']),
+            models.Index(fields=['school', '-created_at']),
         ]
 
     def __str__(self):
@@ -922,6 +985,10 @@ class ResultEntry(models.Model):
     enrollment = models.ForeignKey(
         Enrollment, on_delete=models.PROTECT, related_name='result_entries',
     )
+    ca1 = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    ca2 = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    assignment = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    exam = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     score = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     grade = models.CharField(max_length=2, choices=Grade.choices, blank=True, default='')
     remark = models.CharField(max_length=255, blank=True, default='')
@@ -932,6 +999,22 @@ class ResultEntry(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=['sheet', 'student'], name='unique_result_per_student_sheet',
+            ),
+            models.CheckConstraint(
+                condition=Q(ca1__isnull=True) | Q(ca1__gte=0, ca1__lte=10),
+                name='result_ca1_within_max',
+            ),
+            models.CheckConstraint(
+                condition=Q(ca2__isnull=True) | Q(ca2__gte=0, ca2__lte=10),
+                name='result_ca2_within_max',
+            ),
+            models.CheckConstraint(
+                condition=Q(assignment__isnull=True) | Q(assignment__gte=0, assignment__lte=20),
+                name='result_assignment_within_max',
+            ),
+            models.CheckConstraint(
+                condition=Q(exam__isnull=True) | Q(exam__gte=0, exam__lte=60),
+                name='result_exam_within_max',
             ),
         ]
         indexes = [

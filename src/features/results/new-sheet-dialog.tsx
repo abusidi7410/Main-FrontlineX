@@ -34,6 +34,7 @@ export function NewSheetDialog({
     queryFn: getAcademicStructure,
   });
   const classes = structureQuery.data?.classes ?? [];
+  const classIds = structureQuery.data?.classIds ?? {};
   const subjects = structureQuery.data?.subjects ?? [];
 
   const [className, setClassName] = useState("");
@@ -56,7 +57,8 @@ export function NewSheetDialog({
       ),
   });
 
-  const ready = className && subject && term;
+  const classId = classIds[className];
+  const ready = classId !== undefined && subject && term;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -122,7 +124,7 @@ export function NewSheetDialog({
           </Button>
           <Button
             disabled={!ready || create.isPending}
-            onClick={() => ready && create.mutate({ className, subject, term })}
+            onClick={() => ready && create.mutate({ classId: String(classId), subject, term })}
           >
             {create.isPending ? "Creating…" : "Create sheet"}
           </Button>

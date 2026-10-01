@@ -4,6 +4,8 @@ from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Prefetch, Q, Sum
+from django.db.models.functions import Coalesce
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -26,10 +28,12 @@ from .models import (
     EPOCH,
     AcademicSession,
     AttendanceRecord,
+    ClassTeacherAssignment,
     Enrollment,
     FeeStructure,
     Invoice,
     Payment,
+    ResultEntry,
     ResultSheet,
     SchoolClass,
     Section,
@@ -40,6 +44,7 @@ from .models import (
 from .services import academic as academic_service
 from .services import admission as admission_service
 from .services import ai_tools
+from .services import attendance as attendance_service
 from .services import billing as billing_service
 from .services import enrollment as enrollment_service
 from .services import results as result_service
@@ -49,6 +54,7 @@ from .student_import import (
     parse_import_file,
 )
 from .serializers import (
+    AttendanceCorrectionSerializer,
     AttendanceSubmitSerializer,
     InvoiceSerializer,
     PaymentSerializer,
@@ -59,7 +65,6 @@ from .serializers import (
 # Role guards for endpoints that predate the granular permission matrix.
 CanWriteRecords = require_roles('school_admin', 'principal', 'secretary')
 CanImportStudents = require_roles('school_admin')
-CanWriteAttendance = require_roles('school_admin', 'principal', 'secretary', 'teacher')
 CanReadFinance = require_roles('school_admin', 'principal', 'accountant', 'student')
 CanWriteFinance = require_roles('school_admin', 'accountant')
 FINANCE_WRITE_ROLES = ('school_admin', 'accountant')
@@ -71,6 +76,13 @@ SELF_SERVICE_METHODS = ('card', 'bank_transfer', 'online', 'ussd')
 CanCreateStudent = require_permissions('students.register')
 CanWriteStudent = require_permissions('students.write')
 CanReadAttendance = require_permissions('attendance.read')
+# Submitting a register is a responsibility, not just a capability: `attendance.write`
+# holds only for school admins and teachers, so a principal or secretary is read-only
+# on attendance. Which *classes* a teacher may submit is enforced separately by the
+# class-teacher assignment (see services.attendance.require_can_submit).
+CanWriteAttendance = require_permissions('attendance.write')
+# Amending an already-taken register is a supervisory act, distinct from taking it.
+CanCorrectAttendance = require_permissions('attendance.correct')
 
 # Staff records and the school's class/subject configuration are writable
 # capabilities, not a consequence of merely being logged in. `HasSchool` alone
@@ -93,16 +105,7 @@ def _paginate(queryset, request, serializer_class, context=None):
     able to ask for the whole school in one response, because every list screen
     is paged and an unbounded page silently becomes a full-table scan.
     """
-    try:
-        page = max(int(request.query_params.get('page', 1)), 1)
-        raw_size = request.query_params.get('page_size') or request.query_params.get('pageSize')
-        page_size = int(raw_size) if raw_size not in (None, '') else 25
-    except ValueError:
-        page, page_size = 1, 25
-    page_size = min(max(page_size, 1), 100)
-    count = queryset.count()
-    start = (page - 1) * page_size
-    items = queryset[start:start + page_size]
+    items, count, page, page_size = _pagination_window(queryset, request)
     serializer = serializer_class(items, many=True, context=context or {})
     return {
         'results': serializer.data,
@@ -111,6 +114,23 @@ def _paginate(queryset, request, serializer_class, context=None):
         'pageSize': page_size,
         'totalPages': max((count + page_size - 1) // page_size, 1),
     }
+
+
+def _pagination_window(queryset, request):
+    try:
+        raw_page = request.query_params.get('page', 1)
+        page = max(int(raw_page), 1)
+    except (TypeError, ValueError):
+        raise ValidationError({'page': 'Enter a valid page number.'})
+    try:
+        raw_size = request.query_params.get('page_size') or request.query_params.get('pageSize')
+        page_size = int(raw_size) if raw_size not in (None, '') else 25
+    except (TypeError, ValueError):
+        raise ValidationError({'pageSize': 'Enter a valid page size.'})
+    page_size = min(max(page_size, 1), 100)
+    count = queryset.count()
+    start = (page - 1) * page_size
+    return queryset[start:start + page_size], count, page, page_size
 
 
 def _student_queryset(school_id):
@@ -354,19 +374,18 @@ class StudentListCreateView(APIView):
                     'admissionNumber': 'That admission number has just been taken. Please try again.',
                 })
 
-            # Registration and billing are one operation: the student is not
-            # usable until the fees are settled, so the invoice is raised here
-            # rather than waiting for someone to remember a separate billing
-            # run. A school with no fees configured still registers fine.
+            # Registration is billed separately from recurring school fees.
             invoice = billing_service.create_invoice_from_school_fees(
                 school=school, student=student,
                 due_date=billing_service.default_due_date(None, days=ADMISSION_INVOICE_DUE_DAYS),
             )
+            if invoice is None:
+                student.status = Student.Status.ACTIVE
+                student.save(update_fields=['status'])
         data = dict(serializer.data)
         data['invoiceId'] = str(invoice.id) if invoice else ''
         data['invoiceTotal'] = str(invoice.total) if invoice else ''
-        # False means registered, but unbillable until fees are set up.
-        data['feesConfigured'] = invoice is not None
+        data['registrationFeeConfigured'] = invoice is not None
         return Response(data, status=status.HTTP_201_CREATED)
 
 
@@ -695,6 +714,81 @@ class StaffDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class ClassTeacherAssignmentView(APIView):
+    """Designate the teacher responsible for each class's register.
+
+    The attendance rule is "only the designated class teacher submits", so this is
+    what makes that rule usable: without it, no teacher can ever submit. Reads are
+    open to anyone who can read attendance (the register screen needs to name the
+    class teacher); writes need `staff.write`, because designating who is
+    responsible for a class is staff administration.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request):
+        school = request.user.school
+        session = academic_service.current_session(school)
+        rows = ClassTeacherAssignment.objects.filter(school=school)
+        if session is not None:
+            rows = rows.filter(academic_session=session)
+        return Response({
+            'session': session.name if session else '',
+            'assignments': [
+                {
+                    'className': row.class_obj.name,
+                    'classId': row.class_obj_id,
+                    'staffId': row.staff_id,
+                    'staffName': row.staff.full_name,
+                    'session': row.academic_session.name,
+                }
+                for row in rows.select_related('class_obj', 'staff', 'academic_session')
+                .order_by('class_obj__sort_order', 'class_obj__name')
+            ],
+        })
+
+    def post(self, request):
+        if not CanWriteStaff().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to manage staff.')
+
+        school = request.user.school
+        class_obj = attendance_service.resolve_class(
+            school, (request.data.get('className') or '').strip(),
+        )
+        if class_obj is None:
+            raise ValidationError({
+                'className': 'That class does not exist in this school.',
+            })
+
+        assign = bool(request.data.get('assign', True))
+        if not assign:
+            attendance_service.assign_class_teacher(
+                school, class_obj=class_obj, assign=False,
+            )
+            return Response({'className': class_obj.name, 'classTeacher': ''})
+
+        staff_id = (request.data.get('staffId') or '').strip()
+        staff = get_object_or_404(
+            StaffMember, id=staff_id, school_id=school.id,
+        ) if staff_id else None
+        if staff is None:
+            raise ValidationError({'staffId': 'Choose the teacher responsible for this class.'})
+        if staff.role != 'teacher':
+            raise ValidationError({
+                'staffId': f'{staff.full_name} is not a teacher.',
+            })
+
+        assignment = attendance_service.assign_class_teacher(
+            school, class_obj=class_obj, staff=staff,
+        )
+        return Response({
+            'className': class_obj.name,
+            'classId': class_obj.id,
+            'staffId': assignment.staff_id,
+            'staffName': assignment.staff.full_name,
+        })
+
+
 class StaffInviteView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, CanWriteRecords]
 
@@ -713,7 +807,9 @@ class InvoiceListView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, CanReadFinance]
 
     def get(self, request):
-        qs = Invoice.objects.filter(school_id=request.user.school_id)
+        qs = Invoice.objects.filter(
+            school_id=request.user.school_id,
+        ).select_related('student').order_by('-created_at', '-id')
         if request.user.role != 'student':
             search = request.query_params.get('search', '').strip()
             if search:
@@ -728,7 +824,16 @@ class InvoiceListView(APIView):
         else:
             # Self-service: a student sees only their own invoices.
             qs = qs.filter(student_id=request.user.student_profile_id)
-        return Response(InvoiceSerializer(qs, many=True).data)
+        qs = qs.annotate(
+            verified_paid_total=Coalesce(
+                Sum(
+                    'payments__amount',
+                    filter=Q(payments__status=Payment.Status.VERIFIED),
+                ),
+                Decimal('0'),
+            ),
+        )
+        return Response(_paginate(qs, request, InvoiceSerializer, context={'request': request}))
 
 
 class InvoiceGenerateView(APIView):
@@ -747,10 +852,12 @@ class InvoiceGenerateView(APIView):
             raise ValidationError(errors)
 
         school = get_object_or_404(School, id=request.user.school_id)
-        # Same resolution the admission path uses, so a class cannot be billed
-        # two different ways depending on which screen started it.
+        # Regular term invoices exclude the one-time registration fee.
         items = billing_service.resolve_invoice_items(
-            school=school, class_name=class_name, term=term,
+            school=school,
+            class_name=class_name,
+            term=term,
+            exclude_fee_types={FeeStructure.FeeType.REGISTRATION},
         )
         if not items:
             raise ValidationError({
@@ -987,23 +1094,29 @@ class FeeStructureView(APIView):
                     )
                     touched.append(level)
 
-            # Students registered before any fees existed are sitting in
-            # PENDING_PAYMENT with no invoice, and the bulk generator only bills
-            # active students, so they would never be invoiced and never become
-            # active. Only the levels just priced are invoiced: saving Junior
-            # Secondary fees must not bill a Nursery family that has none.
+            # Resolve pending registrations only against the levels just priced.
+            # A configured registration charge is invoiced once; without one,
+            # pending legacy registrations are activated for later term billing.
             invoiced = 0
             per_level = {}
+            activated = 0
+            activated_per_level = {}
             for level in touched:
-                created = billing_service.invoice_pending_students(school, level=level)
+                created, cleared = billing_service.invoice_pending_students(
+                    school, level=level,
+                )
                 per_level[str(level.code)] = created
+                activated_per_level[str(level.code)] = cleared
                 invoiced += created
+                activated += cleared
 
             return Response({
                 'levels': self._levels_payload(school),
                 'items': school.fee_structure or [],
                 'invoicedPendingStudents': invoiced,
                 'invoicedPendingStudentsByLevel': per_level,
+                'activatedPendingStudents': activated,
+                'activatedPendingStudentsByLevel': activated_per_level,
             })
 
         # ── legacy school-wide list ──
@@ -1025,11 +1138,12 @@ class FeeStructureView(APIView):
             normalized.append({'label': label, 'amount': float(amount), 'className': class_name})
         school.fee_structure = normalized
         school.save(update_fields=['fee_structure'])
-        invoiced = billing_service.invoice_pending_students(school)
+        invoiced, activated = billing_service.invoice_pending_students(school)
         return Response({
             'items': school.fee_structure,
             'levels': self._levels_payload(school),
             'invoicedPendingStudents': invoiced,
+            'activatedPendingStudents': activated,
         })
 
 
@@ -1037,7 +1151,9 @@ class PaymentListView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, CanReadFinance]
 
     def get(self, request):
-        qs = Payment.objects.filter(school_id=request.user.school_id)
+        qs = Payment.objects.filter(
+            school_id=request.user.school_id,
+        ).select_related('invoice__student', 'recorded_by').order_by('-created_at', '-id')
         if request.user.role == 'student':
             qs = qs.filter(invoice__student_id=request.user.student_profile_id)
         else:
@@ -1047,7 +1163,7 @@ class PaymentListView(APIView):
                 qs = qs.filter(invoice_id=invoice_id)
             if student_id:
                 qs = qs.filter(invoice__student_id=student_id)
-        return Response(PaymentSerializer(qs, many=True).data)
+        return Response(_paginate(qs, request, PaymentSerializer, context={'request': request}))
 
     def post(self, request):
         is_finance = request.user.role in FINANCE_WRITE_ROLES
@@ -1108,6 +1224,62 @@ class PaymentListView(APIView):
             {**PaymentSerializer(payment).data, 'studentActivated': activated},
             status=status.HTTP_201_CREATED,
         )
+
+
+class FinanceSummaryView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanReadFinance]
+
+    def get(self, request):
+        school = request.user.school
+        invoices = Invoice.objects.filter(
+            school_id=request.user.school_id,
+        ).filter(
+            Q(term=school.current_term)
+            | Q(source=Invoice.Source.ADMISSION, term=''),
+        ).select_related('student')
+        payments = Payment.objects.filter(school_id=request.user.school_id)
+        if request.user.role == 'student':
+            student_id = request.user.student_profile_id
+            invoices = invoices.filter(student_id=student_id)
+            payments = payments.filter(invoice__student_id=student_id)
+
+        invoice_totals = invoices.aggregate(total=Sum('total'), paid=Sum('paid'))
+        today = timezone.localdate()
+        payment_totals = payments.aggregate(
+            collected_today=Sum(
+                'amount',
+                filter=Q(status=Payment.Status.VERIFIED, created_at__date=today),
+            ),
+            pending_count=Count('id', filter=Q(status=Payment.Status.PENDING)),
+            cash_today=Sum(
+                'amount',
+                filter=Q(
+                    status=Payment.Status.VERIFIED,
+                    method=Payment.Method.CASH,
+                    created_at__date=today,
+                ),
+            ),
+        )
+        recent_payments = payments.select_related(
+            'invoice__student', 'recorded_by',
+        ).order_by('-created_at', '-id')[:6]
+
+        return Response({
+            'term': school.current_term,
+            'billed': float(invoice_totals['total'] or 0),
+            'paid': float(invoice_totals['paid'] or 0),
+            'outstanding': float(
+                (invoice_totals['total'] or Decimal('0'))
+                - (invoice_totals['paid'] or Decimal('0'))
+            ),
+            'collectedToday': float(payment_totals['collected_today'] or 0),
+            'pendingPaymentCount': payment_totals['pending_count'],
+            'cashToday': float(payment_totals['cash_today'] or 0),
+            'recentInvoices': InvoiceSerializer(invoices.order_by('-id')[:3], many=True).data,
+            'recentPayments': PaymentSerializer(
+                recent_payments, many=True, context={'request': request},
+            ).data,
+        })
 
 
 class PaymentVerifyView(APIView):
@@ -1216,14 +1388,14 @@ class SubscriptionView(APIView):
         })
 
 
-# ── Results (contract stub; full module later) ────────────────────────────
+# ── Results ───────────────────────────────────────────────────────────────
 
 class _ResultSheetListSerializer(serializers.Serializer):
     """Flat summary of a sheet for the paged results list."""
 
     def to_representation(self, instance):
         return {
-            'id': instance.id,
+            'id': str(instance.id),
             'session': instance.academic_session.name,
             'className': instance.class_obj.name,
             'subject': instance.subject,
@@ -1232,7 +1404,95 @@ class _ResultSheetListSerializer(serializers.Serializer):
             'term': instance.term,
             'status': instance.status,
             'isLocked': instance.is_locked,
+            'studentCount': instance.student_count,
+            'correctionRequested': bool(instance.correction_requested_at),
         }
+
+
+class _ResultEntryReportSerializer(serializers.Serializer):
+    def to_representation(self, entry):
+        return {
+            'studentName': f'{entry.student.last_name}, {entry.student.first_name}',
+            'className': entry.sheet.class_obj.name,
+            'subject': entry.sheet.subject,
+            'term': entry.sheet.term,
+            'ca1': float(entry.ca1) if entry.ca1 is not None else None,
+            'ca2': float(entry.ca2) if entry.ca2 is not None else None,
+            'assignment': float(entry.assignment) if entry.assignment is not None else None,
+            'exam': float(entry.exam) if entry.exam is not None else None,
+            'score': float(entry.score) if entry.score is not None else None,
+            'grade': entry.grade,
+        }
+
+
+class ResultEntryReportView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, require_permissions('reports.read')]
+
+    def get(self, request):
+        school = request.user.school
+        queryset = ResultEntry.objects.filter(
+            sheet__school=school,
+            sheet__status__in=[
+                ResultSheet.Status.PUBLISHED,
+                ResultSheet.Status.LOCKED,
+            ],
+        ).select_related(
+            'student', 'sheet__class_obj',
+        ).order_by(
+            'sheet__class_obj__name',
+            'sheet__subject',
+            'student__last_name',
+            'student__first_name',
+        )
+        session_id = request.query_params.get('sessionId')
+        if session_id:
+            session = get_object_or_404(
+                AcademicSession.objects.filter(school=school), id=session_id,
+            )
+            queryset = queryset.filter(sheet__academic_session=session)
+        return Response(_paginate(queryset, request, _ResultEntryReportSerializer))
+
+
+class _MyPublishedResultSerializer(_ResultEntryReportSerializer):
+    def to_representation(self, entry):
+        return {
+            **super().to_representation(entry),
+            'studentId': str(entry.student_id),
+            'session': entry.sheet.academic_session.name,
+        }
+
+
+class MyPublishedResultsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role == 'parent':
+            queryset = ResultEntry.objects.filter(
+                student__guardian_accounts=request.user,
+            )
+        elif request.user.role == 'student' and request.user.student_profile_id:
+            queryset = ResultEntry.objects.filter(
+                student_id=request.user.student_profile_id,
+            )
+        else:
+            raise PermissionDenied('Published self-service results are for students and linked parents.')
+
+        queryset = queryset.filter(
+            sheet__school_id=request.user.school_id,
+            sheet__status__in=[
+                ResultSheet.Status.PUBLISHED,
+                ResultSheet.Status.LOCKED,
+            ],
+        ).select_related(
+            'student', 'sheet__class_obj', 'sheet__academic_session',
+        ).order_by(
+            'student__last_name',
+            'student__first_name',
+            '-sheet__academic_session__start_year',
+            'sheet__term',
+            'sheet__subject',
+        )
+        return Response(_paginate(queryset, request, _MyPublishedResultSerializer))
 
 
 class ResultSheetListView(APIView):
@@ -1251,6 +1511,8 @@ class ResultSheetListView(APIView):
             ResultSheet.objects
             .filter(school=school)
             .select_related('academic_session', 'class_obj')
+            .annotate(student_count=Count('entries'))
+            .order_by('-created_at', '-id')
         )
         session_id = request.query_params.get('sessionId')
         if session_id:
@@ -1273,27 +1535,7 @@ class ResultSheetListView(APIView):
         if status_filter:
             queryset = queryset.filter(status=status_filter)
 
-        data = _paginate(
-            queryset,
-            request,
-            _ResultSheetListSerializer,
-        )
-        if request.query_params.get('page') or request.query_params.get('pageSize'):
-            return Response(data)
-
-        return Response([
-            {
-                'id': sheet.id,
-                'session': sheet.academic_session.name,
-                'className': sheet.class_obj.name,
-                'subject': sheet.subject,
-                'assessment': sheet.assessment,
-                'term': sheet.term,
-                'status': sheet.status,
-                'isLocked': sheet.is_locked,
-            }
-            for sheet in queryset
-        ])
+        return Response(_paginate(queryset, request, _ResultSheetListSerializer))
 
 
 class ResultSheetDetailView(APIView):
@@ -1351,7 +1593,11 @@ class ResultSheetActionView(APIView):
         )
 
         if action == 'scores':
-            updated = result_service.record_scores(sheet, request.data.get('scores') or {})
+            term_scores = request.data.get('termScores')
+            if term_scores is not None:
+                updated = result_service.record_term_scores(sheet, term_scores)
+            else:
+                updated = result_service.record_scores(sheet, request.data.get('scores') or {})
             return Response({'updated': updated, **result_service.sheet_detail(sheet)})
         if action == 'request-correction':
             result_service.request_correction(
@@ -1445,175 +1691,319 @@ class ResultSheetCreateView(APIView):
         session = academic_service.current_session(school)
         if session is None:
             raise ValidationError({'session': 'This school has no current academic session.'})
-        class_obj = get_object_or_404(
-            SchoolClass.objects.filter(school=school), id=request.data.get('classId'),
-        )
+        class_queryset = SchoolClass.objects.filter(school=school)
+        class_id = request.data.get('classId')
+        if class_id:
+            class_obj = get_object_or_404(class_queryset, id=class_id)
+        else:
+            class_name = str(request.data.get('className') or '').strip()
+            class_obj = get_object_or_404(class_queryset, name=class_name)
         subject = str(request.data.get('subject') or '').strip()
-        assessment = str(request.data.get('assessment') or '').strip()
-        if not subject or not assessment:
+        term = str(request.data.get('term') or '').strip()
+        if not subject or not term:
             raise ValidationError({
-                'fields': 'A result sheet needs both a subject and an assessment name.',
+                'fields': 'A term result sheet needs a subject and term.',
             })
         sheet = result_service.create_sheet(
             school=school,
             academic_session=session,
             class_obj=class_obj,
             subject=subject,
-            assessment=assessment,
-            assessment_max=request.data.get('assessmentMax') or '100',
-            term=str(request.data.get('term') or ''),
+            assessment=result_service.TERM_RESULTS_ASSESSMENT,
+            assessment_max='100',
+            term=term,
         )
         return Response(result_service.sheet_detail(sheet), status=status.HTTP_201_CREATED)
 
 
 # ── Attendance ─────────────────────────────────────────────────────────────
 
-def _resolve_roster(request, *, class_name, arm, subject, date):
-    """Build a class roster from ACTIVE enrollments, scoped to the caller's school.
-
-    Shared by the roster GET and the attendance POST so both agree on exactly
-    who may be marked. Returns `(rows, taken, existing_marks)`.
-
-    The `className` query parameter names a `SchoolClass` **within the caller's
-    school**; a class belonging to another school is a 404. `Enrollment` supplies
-    the membership and supplies the displayed class/section names, so a stale
-    `Student.class_name` cannot leak a student into the wrong roster.
-    """
-    school_id = request.user.school_id
-    session = academic_service.current_session(request.user.school)
-
-    queryset = enrollment_service.active_enrollments(request.user.school)
-
-    school_class = None
-    if class_name:
-        school_class = get_object_or_404(
-            SchoolClass.objects.filter(school_id=school_id), name=class_name,
-        )
-        queryset = queryset.filter(class_obj=school_class)
-
-    section = None
-    if arm and school_class is not None:
-        section = get_object_or_404(
-            Section.objects.filter(school_id=school_id, class_obj=school_class),
-            name=arm,
-        )
-        queryset = queryset.filter(section=section)
-
-    if session is not None and class_name:
-        queryset = queryset.filter(academic_session=session)
-
-    # Only students still active in the school appear, even if their enrollment
-    # row is still active (e.g. a withdrawn student mid-session).
-    queryset = queryset.filter(student__status=Student.Status.ACTIVE)
-
-    rows = [
-        {
-            'id': str(item.student_id),
-            'firstName': item.student.first_name,
-            'lastName': item.student.last_name,
-            'admissionNumber': item.student.admission_number,
-            'className': item.class_obj.name,
-            'arm': item.section.name if item.section_id else '',
-            'gender': item.student.gender,
-            'status': item.student.status,
-            'attendanceRate': 100,
-            'average': 0,
-            'outstandingFees': 0,
-        }
-        for item in queryset
-    ]
-
-    taken = False
-    existing = {}
-    if class_name and date:
-        attendance_qs = AttendanceRecord.objects.filter(
-            school_id=school_id, class_name=class_name, date=date,
-        )
-        if subject:
-            attendance_qs = attendance_qs.filter(subject=subject)
-        taken = attendance_qs.exists()
-        existing = {str(record.student_id): record.status for record in attendance_qs}
-    return rows, taken, existing
-
-
 class AttendanceRosterView(APIView):
-    """The students a teacher may mark present, resolved from Enrollment.
+    """The class register for one school day, resolved from Enrollment.
 
     `Student.class_name` is a denormalised mirror and is NOT authoritative for
     class membership: a stale or wrong value must not place a student in the
-    wrong roster. Membership comes from an ACTIVE `Enrollment` row, scoped to
+    wrong register. Membership comes from an ACTIVE `Enrollment` row, scoped to
     the caller's school (spec §35, §97).
+
+    There is no subject dimension: attendance is taken once per school day.
     """
 
     permission_classes = [IsAuthenticated, HasSchool, CanReadAttendance]
 
     def get(self, request):
+        school = request.user.school
         class_name = request.query_params.get('className', '').strip()
         arm = request.query_params.get('arm', '').strip()
-        subject = request.query_params.get('subject', '').strip()
         raw_date = request.query_params.get('date', '').strip()
-        date = parse_date(raw_date) if raw_date else None
+        day = parse_date(raw_date) if raw_date else timezone.localdate()
 
-        rows, taken, existing = _resolve_roster(
-            request,
-            class_name=class_name,
-            arm=arm,
-            subject=subject,
-            date=date,
+        session = academic_service.current_session(school)
+
+        # A class this school has configured but never provisioned as a
+        # `SchoolClass` row is NOT a 404: it belongs to this school, so the
+        # register is simply empty. Cross-school and unknown names still 404,
+        # because the lookup is scoped to the caller's own school.
+        school_class = attendance_service.resolve_class(school, class_name)
+        if school_class is None:
+            if not class_name or not attendance_service.is_configured_class(school, class_name):
+                raise Http404
+
+        section = None
+        if arm and school_class is not None:
+            section = attendance_service.resolve_section(school, school_class, arm)
+            if section is None:
+                raise Http404
+
+        rows = attendance_service.roster_for(school, school_class, section, session)
+        existing = attendance_service.existing_marks(school, school_class, day)
+
+        # One lookup serves both the teacher's name and whether THIS caller may
+        # submit, so the register costs no extra query to become read-only-aware.
+        assignment = (
+            attendance_service.class_teacher_for(school, school_class, session)
+            if school_class is not None else None
         )
-        return Response({'students': rows, 'taken': taken, 'existing': existing})
+        can_submit = (
+            request.user.role == 'school_admin'
+            or (
+                assignment is not None
+                and getattr(request.user, 'staff_profile_id', None) == assignment.staff_id
+            )
+        )
+
+        return Response({
+            'students': rows,
+            'date': day.isoformat(),
+            'taken': bool(existing),
+            'existing': existing,
+            'classId': school_class.id if school_class else None,
+            'className': school_class.name if school_class else class_name,
+            'classConfigured': school_class is not None,
+            'sections': list(
+                school.sections.filter(class_obj=school_class).order_by('sort_order', 'name')
+                .values_list('name', flat=True)
+            ) if school_class is not None else [],
+            'classTeacher': assignment.staff.full_name if assignment else '',
+            'isSchoolDay': attendance_service.is_school_day(school, day),
+            # Whether THIS caller may submit, so the client shows the register as
+            # read-only instead of offering a Save that the server will reject.
+            'canSubmit': school_class is not None and can_submit,
+        })
 
 
 class AttendanceSubmitView(APIView):
+    """Save a whole-class register for one school day, in one transaction."""
+
     permission_classes = [IsAuthenticated, HasSchool, CanWriteAttendance]
 
     def post(self, request):
         serializer = AttendanceSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        created_ids = []
-        with transaction.atomic():
-            School.objects.select_for_update().get(id=request.user.school_id)
-            already_taken = AttendanceRecord.objects.filter(
-                school_id=request.user.school_id,
-                class_name=data['className'],
-                date=data['date'],
-            ).exists()
-            if already_taken:
-                return Response(
-                    {'detail': f'Attendance has already been recorded for {data["className"]} on {data["date"]}.'},
-                    status=status.HTTP_409_CONFLICT,
-                )
-            # The set of students that may be marked comes from the SAME
-            # enrollment-resolved roster the GET endpoint returns, so a crafted
-            # studentId cannot record attendance for someone who is not in the
-            # class — including a student from another school.
-            rows, _taken, _existing = _resolve_roster(
-                request,
-                class_name=data['className'],
-                arm='',
-                subject=data.get('subject', ''),
-                date=data['date'],
+
+        school = request.user.school
+        school_class = attendance_service.resolve_class(school, data['className'])
+        if school_class is None:
+            raise ValidationError({
+                'className': f'"{data["className"]}" is not a class in this school.',
+            })
+        # An unrecognised arm must be rejected, not quietly widened to the whole
+        # class: `resolve_section` returns None for both "no arm" and "bad arm",
+        # so an ignored bad arm would record every student in the class under a
+        # section the caller never asked for.
+        raw_arm = (data.get('arm') or '').strip()
+        section = attendance_service.resolve_section(school, school_class, raw_arm)
+        if raw_arm and section is None:
+            raise ValidationError({
+                'arm': f'"{raw_arm}" is not a section of {school_class.name}.',
+            })
+
+        try:
+            result = attendance_service.submit_register(
+                user=request.user,
+                school=school,
+                class_obj=school_class,
+                day=data['date'],
+                records=data['records'],
+                section=section,
             )
-            roster = {int(row['id']): row for row in rows}
-            for item in data['records']:
-                student_id = item.get('studentId')
-                student = roster.get(int(student_id)) if student_id else None
-                if student is None:
-                    continue
-                record, _ = AttendanceRecord.objects.update_or_create(
-                    school_id=request.user.school_id,
-                    student_id=student['id'],
-                    date=data['date'],
-                    subject=data.get('subject', ''),
-                    defaults={
-                        'class_name': data['className'],
-                        'status': item.get('status', AttendanceRecord.Status.PRESENT),
-                        'submitted_by': request.user if request.user.school_id else None,
-                    },
-                )
-                created_ids.append(record.id)
-        return Response({'id': request.data.get('id', ''), 'saved': len(created_ids)}, status=status.HTTP_201_CREATED)
+        except attendance_service.DuplicateRegister as duplicate:
+            # Do not create a second register: hand back what was already taken so
+            # the client can display it.
+            return Response(
+                {
+                    'detail': (
+                        f'Attendance has already been recorded for '
+                        f'{school_class.name} on {data["date"].isoformat()}.'
+                    ),
+                    'taken': True,
+                    'existing': duplicate.existing,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response({
+            'id': request.data.get('id', ''),
+            'saved': result.saved,
+            'skipped': result.skipped,
+            'byStatus': result.by_status,
+            'date': data['date'].isoformat(),
+        }, status=status.HTTP_201_CREATED)
+
+
+class AttendanceOverviewView(APIView):
+    """Which classes have submitted their register today, and which have not.
+
+    The admin board. Teachers only ever see their own assigned classes.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanReadAttendance]
+
+    def get(self, request):
+        school = request.user.school
+        raw_date = request.query_params.get('date', '').strip()
+        day = parse_date(raw_date) if raw_date else timezone.localdate()
+
+        classes = school.school_classes.filter(is_active=True)
+        if request.user.role == 'teacher':
+            staff = getattr(request.user, 'staff_profile', None)
+            if staff is None:
+                classes = classes.none()
+            else:
+                classes = classes.filter(
+                    class_teacher_assignments__staff=staff,
+                    class_teacher_assignments__academic_session=academic_service.current_session(school),
+                ).distinct()
+
+        rows = attendance_service.overview_for(school, day, class_objs=classes)
+        return Response({
+            'date': day.isoformat(),
+            'isSchoolDay': attendance_service.is_school_day(school, day),
+            'classes': rows,
+            'submitted': sum(1 for row in rows if row['submitted'] > 0),
+            'total': len(rows),
+        })
+
+
+class AttendanceHistoryView(APIView):
+    """Attendance history for a class or a single student over a date range."""
+
+    permission_classes = [IsAuthenticated, HasSchool, CanReadAttendance]
+
+    def get(self, request):
+        school = request.user.school
+        params = request.query_params
+
+        class_obj = None
+        class_name = params.get('className', '').strip()
+        if class_name:
+            class_obj = attendance_service.resolve_class(school, class_name)
+            if class_obj is None:
+                raise Http404
+
+        student = None
+        student_id = params.get('studentId', '').strip()
+        if student_id:
+            # School-scoped, so a student from another school is a 404 here.
+            student = get_object_or_404(
+                Student.objects.filter(school_id=school.id), pk=student_id,
+            )
+
+        raw_date_from = params.get('dateFrom', '').strip()
+        raw_date_to = params.get('dateTo', '').strip()
+        date_from = parse_date(raw_date_from) if raw_date_from else None
+        date_to = parse_date(raw_date_to) if raw_date_to else None
+        if raw_date_from and date_from is None:
+            raise ValidationError({'dateFrom': 'Enter a valid date in YYYY-MM-DD format.'})
+        if raw_date_to and date_to is None:
+            raise ValidationError({'dateTo': 'Enter a valid date in YYYY-MM-DD format.'})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({'dateFrom': 'The start date cannot be after the end date.'})
+
+        # A teacher holds `attendance.read` for the school, so without narrowing
+        # here a free-text search would read any student's history. They are
+        # confined to the classes they teach; other roles keep the full school.
+        allowed = attendance_service.teacher_visible_class_ids(
+            school, request.user, academic_service.current_session(school),
+        )
+        if class_obj is not None and allowed is not None and class_obj.id not in allowed:
+            raise Http404
+        if student is not None and allowed is not None:
+            student_classes = attendance_service.history_class_ids_for_student(
+                school, student, allowed,
+            )
+            if not student_classes:
+                # 404, not 403: this user may not know the student exists.
+                raise Http404
+            allowed = student_classes
+
+        records = attendance_service.history_for(
+            school, student=student, class_obj=class_obj,
+            date_from=date_from, date_to=date_to,
+            allowed_class_ids=allowed,
+        )
+        page_records, count, page, page_size = _pagination_window(records, request)
+        return Response({
+            'records': [
+                {
+                    'id': record.id,
+                    'studentId': str(record.student_id),
+                    'studentName': f'{record.student.first_name} {record.student.last_name}'.strip(),
+                    'admissionNumber': record.student.admission_number,
+                    'className': record.class_name,
+                    'date': record.date.isoformat(),
+                    'status': record.status,
+                    'submittedBy': record.submitted_by.get_full_name() if record.submitted_by else '',
+                    'updatedAt': record.updated_at.isoformat(),
+                }
+                for record in page_records
+            ],
+            'count': count,
+            'page': page,
+            'pageSize': page_size,
+            'totalPages': max((count + page_size - 1) // page_size, 1),
+        })
+
+
+class AttendanceCorrectView(APIView):
+    """Amend one line of an already-taken register.
+
+    Always audited: the before/after status and the reason are written to the
+    audit log, so a corrected register stays explainable.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanCorrectAttendance]
+
+    def post(self, request):
+        serializer = AttendanceCorrectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        school = request.user.school
+        change = attendance_service.correct_record(
+            user=request.user,
+            school=school,
+            record_id=int(data['recordId']),
+            new_status=data['status'],
+            reason=data['reason'],
+        )
+        if not change['changed']:
+            return Response({'changed': False, 'status': change['status']})
+
+        # `before`/`after` are stored separately so a reviewer reads the change
+        # without diffing tables; the reason is kept in the detail line.
+        log_audit(
+            request,
+            action='attendance.correct',
+            target=f'AttendanceRecord {data["recordId"]}',
+            detail=change['reason'],
+            entity='AttendanceRecord',
+            entity_id=str(data['recordId']),
+            before={'status': change['previousStatus']},
+            after={'status': change['status']},
+        )
+        return Response({'changed': True, **change})
 
 
 # ── Academics ──────────────────────────────────────────────────────────────
@@ -1654,11 +2044,27 @@ class AcademicsView(APIView):
         return get_object_or_404(School, id=request.user.school_id)
 
     def _payload(self, school):
+        # Classes come from `SchoolClass`, which is what rosters resolve against.
+        # Falling back to the 14-name default list here is what let a dropdown
+        # offer a class the roster then 404'd on. Reading the JSON mirror
+        # instead is what left an already-provisioned school showing an EMPTY
+        # dropdown, because the mirror was never written. So `SchoolClass` is
+        # authoritative and is synced back onto the mirror on read.
         return {
             'session': school.current_session,
             'term': school.current_term,
-            'classes': school.classes or DEFAULT_CLASSES,
+            'classes': academic_service.sync_school_class_names(school),
+            'classIds': {
+                row['name']: row['id']
+                for row in school.school_classes.filter(is_active=True)
+                .order_by('sort_order', 'name').values('id', 'name')
+            },
             'subjects': school.subjects or DEFAULT_SUBJECTS,
+            # The school calendar: which weekdays are non-teaching, and any
+            # declared closures. Both feed `is_school_day`, so an unattended
+            # register on a Sunday is a closure rather than a missing teacher.
+            'attendanceWeekendDays': list(school.attendance_weekend_days or []),
+            'nonSchoolDays': list(school.non_school_days or []),
         }
 
     def get(self, request):
@@ -1668,17 +2074,75 @@ class AcademicsView(APIView):
         if not CanWriteAcademics().has_permission(request, self):
             raise PermissionDenied('You do not have permission to change academic settings.')
         school = self._school(request)
+        update = []
+
         session = (request.data.get('session') or '').strip()
         term = (request.data.get('term') or '').strip()
-        update = []
         if session:
             school.current_session = session
             update.append('current_session')
         if term:
             school.current_term = term
             update.append('current_term')
+
+        # The calendar is sent only when the key is present, so a caller updating
+        # the term alone does not silently wipe the school's weekends.
+        if 'attendanceWeekendDays' in request.data:
+            weekend = request.data.get('attendanceWeekendDays')
+            if not isinstance(weekend, list):
+                raise ValidationError({
+                    'attendanceWeekendDays': 'Send the weekend days as a list of weekday '
+                                             'numbers (Monday is 0).',
+                })
+            cleaned: list[int] = []
+            for raw in weekend:
+                try:
+                    day = int(raw)
+                except (TypeError, ValueError):
+                    raise ValidationError({
+                        'attendanceWeekendDays': f'"{raw}" is not a weekday number.',
+                    })
+                if day < 0 or day > 6:
+                    raise ValidationError({
+                        'attendanceWeekendDays': 'Weekday numbers run from 0 (Monday) '
+                                                 'to 6 (Sunday).',
+                    })
+                if day not in cleaned:
+                    cleaned.append(day)
+            # Every day as a non-teaching day would silently switch the whole
+            # register off, so it is refused rather than accepted.
+            if len(cleaned) >= 7:
+                raise ValidationError({
+                    'attendanceWeekendDays': 'At least one weekday has to be a '
+                                             'teaching day.',
+                })
+            school.attendance_weekend_days = sorted(cleaned)
+            update.append('attendance_weekend_days')
+
+        if 'nonSchoolDays' in request.data:
+            closures = request.data.get('nonSchoolDays')
+            if not isinstance(closures, list):
+                raise ValidationError({
+                    'nonSchoolDays': 'Send the closure dates as a list of YYYY-MM-DD strings.',
+                })
+            parsed: list[str] = []
+            for raw in closures:
+                day = parse_date(str(raw).strip())
+                if day is None:
+                    raise ValidationError({
+                        'nonSchoolDays': f'"{raw}" is not a date. Use YYYY-MM-DD.',
+                    })
+                iso = day.isoformat()
+                if iso not in parsed:
+                    parsed.append(iso)
+            # Stored sorted so the list reads chronologically wherever it is shown.
+            school.non_school_days = sorted(parsed)
+            update.append('non_school_days')
+
         if not update:
-            raise ValidationError({'session': 'Provide a session or term to update.'})
+            raise ValidationError({
+                'session': 'Provide a session, term or calendar setting to update.',
+            })
         school.save(update_fields=update)
         return Response(self._payload(school))
 
@@ -1720,11 +2184,12 @@ class AcademicClassesView(APIView):
         name = (request.data.get('name') or '').strip()
         if not name:
             raise ValidationError({'name': 'A class name is required.'})
-        classes = list(school.classes or DEFAULT_CLASSES)
-        if name not in classes:
-            classes.append(name)
-            school.classes = classes
-            school.save(update_fields=['classes'])
+        level_code = (request.data.get('level') or '').strip()
+        # Create the real `SchoolClass` row, not just the dropdown string: a class
+        # that exists only in `School.classes` has no roster, which is precisely
+        # the split this endpoint used to create.
+        academic_service.ensure_class(school, name, level_code=level_code or None)
+        academic_service.sync_school_class_names(school)
         return Response(AcademicsView()._payload(school))
 
 
@@ -1733,11 +2198,14 @@ class AcademicClassDetailView(APIView):
 
     def delete(self, request, name):
         school = get_object_or_404(School, id=request.user.school_id)
-        classes = list(school.classes or DEFAULT_CLASSES)
-        if name in classes:
-            classes.remove(name)
-            school.classes = classes
-            school.save(update_fields=['classes'])
+        class_obj = get_object_or_404(
+            school.school_classes.all(), name=name,
+        )
+        # Retired rather than deleted: enrollments reference it, and the
+        # attendance history for a past day must stay readable.
+        class_obj.is_active = False
+        class_obj.save(update_fields=['is_active'])
+        academic_service.sync_school_class_names(school)
         return Response(AcademicsView()._payload(school))
 
 

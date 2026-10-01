@@ -1,8 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CalendarRange, Check, School, X } from "lucide-react";
+import {
+  CalendarOff,
+  CalendarPlus,
+  CalendarRange,
+  Check,
+  School,
+  UserCheck,
+  X,
+} from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { IfAllowed, PermissionGate } from "@/components/common/permission-gate";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
@@ -33,8 +41,26 @@ import {
   removeClass,
   removeSubject,
   TERM_OPTIONS,
+  updateSchoolCalendar,
   updateSessionTerm,
 } from "@/services/academics.service";
+import {
+  assignClassTeacher,
+  getClassTeachers,
+  type ClassTeacherAssignment,
+} from "@/services/attendance.service";
+import { listStaff } from "@/services/staff.service";
+
+/** Python weekday numbering, matching `School.attendance_weekend_days`. */
+const WEEKDAYS = [
+  { value: 0, label: "Monday" },
+  { value: 1, label: "Tuesday" },
+  { value: 2, label: "Wednesday" },
+  { value: 3, label: "Thursday" },
+  { value: 4, label: "Friday" },
+  { value: 5, label: "Saturday" },
+  { value: 6, label: "Sunday" },
+];
 
 export const Route = createFileRoute("/_app/academics")({
   head: () => ({
@@ -58,6 +84,8 @@ export const Route = createFileRoute("/_app/academics")({
 
 function AcademicsPage() {
   const queryClient = useQueryClient();
+  const [calendarWeekend, setCalendarWeekend] = useState<number[]>([]);
+  const [closureDate, setClosureDate] = useState("");
 
   const query = useQuery({
     queryKey: ["academics"],
@@ -65,6 +93,32 @@ function AcademicsPage() {
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["academics"] });
+
+  // Who is responsible for each register. Readable by anyone with academics.read
+  // (the register screen names the class teacher), but only `staff.write` can
+  // change it - which the API enforces regardless of what this renders.
+  const teachersQuery = useQuery({
+    queryKey: ["class-teachers"],
+    queryFn: getClassTeachers,
+  });
+  const staffQuery = useQuery({
+    queryKey: ["staff"],
+    queryFn: listStaff,
+  });
+
+  const designate = useMutation({
+    mutationFn: (input: { className: string; staffId?: string | undefined }) =>
+      assignClassTeacher(
+        input.staffId
+          ? { className: input.className, staffId: input.staffId }
+          : { className: input.className, assign: false },
+      ),
+    onSuccess: async (_data, input) => {
+      toast.success(input.staffId ? "Class teacher updated." : "Class teacher removed.");
+      await queryClient.invalidateQueries({ queryKey: ["class-teachers"] });
+    },
+    onError: () => toast.error("We couldn't update the class teacher. Please try again."),
+  });
 
   const sessionTerm = useMutation({
     mutationFn: updateSessionTerm,
@@ -96,7 +150,8 @@ function AcademicsPage() {
   });
 
   const addCls = useMutation({
-    mutationFn: addClass,
+    // Wrapped so the level stays out of the mutation's variable type.
+    mutationFn: (name: string) => addClass(name),
     onSuccess: async () => {
       toast.success("Class added.");
       setNewClass("");
@@ -119,6 +174,26 @@ function AcademicsPage() {
   const [term, setTerm] = useState("");
   const [newSubject, setNewSubject] = useState("");
   const [newClass, setNewClass] = useState("");
+  const [calendarSeeded, setCalendarSeeded] = useState(false);
+
+  const saveCalendar = useMutation({
+    mutationFn: updateSchoolCalendar,
+    onSuccess: async () => {
+      toast.success("School calendar updated.");
+      await invalidate();
+    },
+    onError: () => toast.error("We couldn't update the school calendar. Please try again."),
+  });
+
+  // Seed the non-teaching-day checkboxes from the server once the structure
+  // arrives. Seeded only on the first load: re-seeding on every refetch would
+  // silently discard unsaved edits.
+  useEffect(() => {
+    if (!calendarSeeded && query.data) {
+      setCalendarWeekend(query.data.attendanceWeekendDays ?? []);
+      setCalendarSeeded(true);
+    }
+  }, [query.data, calendarSeeded]);
 
   const openSessionTermDialog = () => {
     if (!structure) return;
@@ -133,6 +208,13 @@ function AcademicsPage() {
   if (query.isPending) return <CardsSkeleton count={2} />;
 
   const structure = query.data;
+  const assignments: ClassTeacherAssignment[] = teachersQuery.data?.assignments ?? [];
+  const teacherFor = (className: string) => assignments.find((row) => row.className === className);
+  // Only an active teacher can be given a register: a suspended staff member
+  // holding one would be unable to submit it, leaving the class unregistered.
+  const activeTeachers = (staffQuery.data ?? []).filter(
+    (member) => member.role === "teacher" && member.status === "active",
+  );
 
   return (
     <PermissionGate permission="academics.read">
@@ -233,7 +315,187 @@ function AcademicsPage() {
             </IfAllowed>
           </section>
 
+          <section className="fn-panel p-5" aria-labelledby="calendar-heading">
+            <div className="flex items-center gap-3">
+              <span aria-hidden="true" className="fn-icon-tile size-10 text-primary">
+                <CalendarOff className="size-5" />
+              </span>
+              <div>
+                <h2 id="calendar-heading" className="font-semibold">
+                  School calendar
+                </h2>
+                <p className="mt-0.5 text-muted-foreground">
+                  On a non-school day the register screen says so, instead of showing every class as
+                  untaken.
+                </p>
+              </div>
+            </div>
+
+            <IfAllowed permission="academics.write">
+              <fieldset className="mt-4">
+                <legend className="text-sm font-medium">Non-teaching days</legend>
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {WEEKDAYS.map((day) => (
+                    <label key={day.value} className="flex items-center gap-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        className="size-4"
+                        checked={calendarWeekend.includes(day.value)}
+                        onChange={(event) =>
+                          setCalendarWeekend((current) => {
+                            const next = event.target.checked
+                              ? [...current, day.value]
+                              : current.filter((value) => value !== day.value);
+                            return next.sort((a, b) => a - b);
+                          })
+                        }
+                      />
+                      {day.label}
+                    </label>
+                  ))}
+                </div>
+                <Button
+                  className="mt-3"
+                  size="sm"
+                  onClick={() => saveCalendar.mutate({ attendanceWeekendDays: calendarWeekend })}
+                  disabled={saveCalendar.isPending}
+                >
+                  Save non-teaching days
+                </Button>
+              </fieldset>
+
+              <div className="mt-5">
+                <Label htmlFor="closure-date" className="text-sm font-medium">
+                  School closure
+                </Label>
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    id="closure-date"
+                    type="date"
+                    className="h-10 w-44"
+                    value={closureDate}
+                    onChange={(event) => setClosureDate(event.target.value)}
+                  />
+                  <Button
+                    className="h-10"
+                    variant="outline"
+                    onClick={() =>
+                      closureDate &&
+                      saveCalendar.mutate({
+                        nonSchoolDays: [...structure.nonSchoolDays, closureDate],
+                      })
+                    }
+                    disabled={!closureDate || saveCalendar.isPending}
+                  >
+                    <CalendarPlus className="size-4" aria-hidden="true" /> Add closure
+                  </Button>
+                </div>
+              </div>
+            </IfAllowed>
+
+            {structure.nonSchoolDays.length > 0 && (
+              <ul className="mt-4 flex flex-wrap gap-2">
+                {structure.nonSchoolDays.map((day) => (
+                  <li
+                    key={day}
+                    className="flex items-center gap-1.5 rounded-full border bg-surface py-1.5 pl-3 text-sm"
+                  >
+                    {day}
+                    <IfAllowed permission="academics.write">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-6 text-muted-foreground hover:text-destructive"
+                        aria-label={`Remove closure ${day}`}
+                        onClick={() =>
+                          saveCalendar.mutate({
+                            nonSchoolDays: structure.nonSchoolDays.filter((value) => value !== day),
+                          })
+                        }
+                      >
+                        <X className="size-4" aria-hidden="true" />
+                      </Button>
+                    </IfAllowed>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="fn-panel p-5" aria-labelledby="class-teachers-heading">
+            <div className="flex items-center gap-3">
+              <span aria-hidden="true" className="fn-icon-tile size-10 text-primary">
+                <UserCheck className="size-5" />
+              </span>
+              <div>
+                <h2 id="class-teachers-heading" className="font-semibold">
+                  Class teachers
+                </h2>
+                <p className="mt-0.5 text-muted-foreground">
+                  Only the class teacher can take a register.
+                </p>
+              </div>
+            </div>
+
+            {teachersQuery.isPending ? (
+              <p className="mt-4 text-sm text-muted-foreground">Loading class teachers…</p>
+            ) : teachersQuery.isError ? (
+              <p className="mt-4 text-sm text-destructive">
+                We couldn&apos;t load the class teachers.
+              </p>
+            ) : structure.classes.length === 0 ? (
+              <p className="mt-4 text-sm text-muted-foreground">
+                Add a class first, then name its teacher.
+              </p>
+            ) : (
+              <ul className="mt-4 space-y-2">
+                {structure.classes.map((className) => {
+                  const assigned = teacherFor(className);
+                  return (
+                    <li
+                      key={className}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2"
+                    >
+                      <span className="text-sm font-medium">{className}</span>
+                      <IfAllowed
+                        permission="staff.write"
+                        fallback={
+                          <span className="text-sm text-muted-foreground">
+                            {assigned ? assigned.staffName : "No class teacher"}
+                          </span>
+                        }
+                      >
+                        <Select
+                          aria-label={`Class teacher for ${className}`}
+                          value={assigned?.staffId ?? ""}
+                          onValueChange={(value) =>
+                            designate.mutate(
+                              value === "none" ? { className } : { className, staffId: value },
+                            )
+                          }
+                        >
+                          <SelectTrigger className="h-9 w-56" disabled={designate.isPending}>
+                            <SelectValue placeholder="No class teacher" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No class teacher</SelectItem>
+                            {activeTeachers.map((member) => (
+                              <SelectItem key={member.id} value={member.id}>
+                                {member.fullName}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </IfAllowed>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
           <section className="fn-panel p-5" aria-labelledby="subjects-heading">
+            {" "}
             <div className="flex items-center gap-3">
               <span aria-hidden="true" className="fn-icon-tile size-10 text-primary">
                 <School className="size-5" />
@@ -242,7 +504,6 @@ function AcademicsPage() {
                 Subjects
               </h2>
             </div>
-
             <ul className="mt-4 flex flex-wrap gap-2">
               {structure.subjects.map((subject) => (
                 <li
@@ -272,7 +533,6 @@ function AcademicsPage() {
                 </li>
               ))}
             </ul>
-
             <IfAllowed permission="academics.write">
               <div className="mt-4 flex items-center gap-2">
                 <Input

@@ -160,10 +160,14 @@ class InvoiceSerializer(serializers.ModelSerializer):
     studentId = serializers.CharField(source='student_id')
     studentName = serializers.SerializerMethodField()
     className = serializers.SerializerMethodField()
+    source = serializers.CharField(read_only=True)
 
     class Meta:
         model = Invoice
-        fields = ['id', 'studentId', 'studentName', 'className', 'term', 'total', 'paid', 'items', 'status']
+        fields = [
+            'id', 'studentId', 'studentName', 'className', 'term', 'source',
+            'total', 'paid', 'items', 'status',
+        ]
         read_only_fields = ['status']
 
     def get_id(self, obj):
@@ -198,14 +202,34 @@ class PaymentSerializer(serializers.ModelSerializer):
         return obj.recorded_by.get_full_name() if obj.recorded_by else ''
 
 
+class AttendanceCorrectionSerializer(serializers.Serializer):
+    """One attendance line amended after the register was submitted."""
+
+    recordId = serializers.CharField()
+    status = serializers.ChoiceField(choices=AttendanceRecord.Status.choices)
+    reason = serializers.CharField(max_length=255)
+
+
 class AttendanceSubmitSerializer(serializers.Serializer):
+    """One whole-class register for one school day.
+
+    There is deliberately no `subject` field: attendance is taken once per school
+    day, not once per subject, and a student may only have one record per day.
+    """
+
     className = serializers.CharField()
     date = serializers.DateField()
-    subject = serializers.CharField(required=False, allow_blank=True, default='')
+    arm = serializers.CharField(required=False, allow_blank=True, default='')
     records = serializers.ListField(child=serializers.DictField())
 
     def validate(self, data):
         student_ids = [r.get('studentId') for r in data.get('records', []) if r.get('studentId')]
         if not student_ids:
             raise serializers.ValidationError({'records': 'At least one attendance record is required.'})
+        # Reject an obviously duplicated student in one payload rather than
+        # letting it silently collapse into one row.
+        if len(student_ids) != len(set(student_ids)):
+            raise serializers.ValidationError({
+                'records': 'The same student appears more than once in this register.',
+            })
         return data

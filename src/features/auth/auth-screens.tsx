@@ -5,14 +5,11 @@ import { useController, useForm, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
 import {
   AlertCircle,
-  Apple,
   Check,
   CheckCircle2,
-  Chrome,
   CreditCard,
   Eye,
   EyeOff,
-  Facebook,
   Loader2,
   Lock,
   Mail,
@@ -81,12 +78,12 @@ const STEPS = [
   "School activated",
 ];
 
-const NAVY = "#1E2A38";
-const INK = "#2C2A29";
-const MUTED = "#6F6A63";
-const SOFT = "#7C766E";
-const TERRACOTTA = "#B25646";
-const ERROR_TEXT = "#8A3B2E";
+const NAVY = "hsl(var(--primary))";
+const INK = "hsl(var(--foreground))";
+const MUTED = "hsl(var(--muted-foreground))";
+const SOFT = "hsl(var(--muted-foreground))";
+const TERRACOTTA = "hsl(var(--destructive))";
+const ERROR_TEXT = "hsl(var(--destructive))";
 
 const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
@@ -161,7 +158,7 @@ function PasswordField({
           onClick={() => setShow((s) => !s)}
           aria-label={show ? "Hide password" : "Show password"}
           aria-pressed={show}
-          className="absolute right-2 top-1/2 grid size-11 -translate-y-1/2 place-items-center rounded-xl text-[#7C766E] transition-colors hover:text-[#1E2A38] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E2A38]/40"
+          className="absolute right-2 top-1/2 grid size-11 -translate-y-1/2 place-items-center rounded-xl text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
         >
           {show ? (
             <EyeOff className="size-[18px]" aria-hidden="true" />
@@ -180,40 +177,12 @@ function PasswordField({
   );
 }
 
-const SOCIAL_ICONS = [
-  { label: "Continue with Apple", Icon: Apple },
-  { label: "Continue with Google", Icon: Chrome },
-  { label: "Continue with Facebook", Icon: Facebook },
-];
-
-function SocialRow() {
-  return (
-    <div
-      className="flex items-center justify-center gap-3"
-      role="group"
-      aria-label="Social sign in"
-    >
-      {SOCIAL_ICONS.map(({ label, Icon }) => (
-        <button
-          key={label}
-          type="button"
-          title={`${label} (not available yet)`}
-          aria-label={label}
-          className="auth-icon-btn"
-        >
-          <Icon className="size-[18px]" aria-hidden="true" />
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function AuthMark({ className }: { className?: string }) {
   return (
     <span
       aria-hidden="true"
       className={cn(
-        "grid size-11 shrink-0 place-items-center rounded-2xl bg-[#1E2A38] font-display text-sm font-bold text-white shadow-[0_8px_18px_rgba(30,42,56,0.22)]",
+        "grid size-11 shrink-0 place-items-center rounded-2xl bg-primary font-display text-sm font-bold text-primary-foreground shadow-sm",
         className,
       )}
     >
@@ -281,25 +250,19 @@ function LoginContent({
   });
 
   return (
-    <div className="space-y-7">
+    <div className="space-y-6">
       <div className="space-y-2">
-        <Headline>Sign in to Frontline Nexus</Headline>
-        <Subtext>Welcome back — pick up right where you left off.</Subtext>
+        <Headline>Sign in to your school account</Headline>
+        <Subtext>
+          Welcome back. Use the email address or phone number linked to your account.
+        </Subtext>
       </div>
-
-      <SocialRow />
-      <p className="auth-divider">Or use your email account</p>
 
       <form onSubmit={onSubmit} noValidate className="space-y-4">
         {serverError ? (
           <div
             role="alert"
-            className="flex items-start gap-2.5 rounded-xl border px-4 py-3 text-[13px] leading-relaxed"
-            style={{
-              borderColor: "rgba(178,86,70,0.35)",
-              backgroundColor: "#F6EDE9",
-              color: "#8A4538",
-            }}
+            className="flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-[13px] leading-relaxed text-destructive"
           >
             <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             <span>{serverError}</span>
@@ -312,7 +275,7 @@ function LoginContent({
             className="text-[12px] font-medium tracking-[0.02em]"
             style={{ color: MUTED }}
           >
-            Email <span style={{ color: TERRACOTTA }}>*</span>
+            Email or phone number <span style={{ color: TERRACOTTA }}>*</span>
           </label>
           <div className="relative">
             <Mail
@@ -323,7 +286,7 @@ function LoginContent({
             <input
               id="identifier"
               autoComplete="username"
-              placeholder="you@school.edu.ng"
+              placeholder="you@school.edu.ng or 080..."
               className={cn(
                 "auth-input pl-11",
                 form.formState.errors.identifier && "auth-input-err",
@@ -375,18 +338,17 @@ function LoginContent({
         </div>
       </form>
 
-      <p
-        className="border-t text-[11.5px] leading-relaxed"
-        style={{ borderColor: "rgba(30,42,56,0.08)", color: MUTED }}
-      >
-        Don't have a school account?{" "}
+      <p className="border-t border-border pt-4 text-[12px] leading-relaxed text-muted-foreground">
+        Staff, parents and students should use the account provided by their school.
+        <br />
+        Setting up a new school?{" "}
         <button
           type="button"
           onClick={onShowRegister}
           className="auth-link font-semibold"
           style={{ color: NAVY }}
         >
-          Sign up
+          Create a school account
         </button>
       </p>
     </div>
@@ -462,7 +424,7 @@ function RegisterContent({
       </div>
       <Progress
         value={((step + 1) / STEPS.length) * 100}
-        className="h-1.5 rounded-full bg-[#E5E0D5] [&>div]:bg-[#1E2A38]"
+        className="h-1.5 rounded-full bg-muted [&>div]:bg-primary"
       />
 
       {step === 0 ? (
@@ -507,7 +469,7 @@ function RegisterContent({
             >
               <SelectTrigger
                 id="type"
-                className="auth-input cursor-pointer px-4 text-[13px] text-[#2C2A29]"
+                className="auth-input cursor-pointer px-4 text-[13px] text-foreground"
               >
                 <SelectValue placeholder="Select school type" />
               </SelectTrigger>
@@ -559,7 +521,7 @@ function RegisterContent({
             >
               <SelectTrigger
                 id="state"
-                className="auth-input cursor-pointer px-4 text-[13px] text-[#2C2A29]"
+                className="auth-input cursor-pointer px-4 text-[13px] text-foreground"
               >
                 <SelectValue placeholder="Select state" />
               </SelectTrigger>
@@ -861,10 +823,7 @@ function RegisterContent({
                   {tier.label}
                 </dd>
               </div>
-              <div
-                className="flex justify-between gap-3 border-t pt-2"
-                style={{ borderColor: "rgba(30,42,56,0.09)" }}
-              >
+              <div className="flex justify-between gap-3 border-t border-border pt-2">
                 <dt className="font-medium" style={{ color: INK }}>
                   Due today
                 </dt>
@@ -874,10 +833,7 @@ function RegisterContent({
               </div>
             </dl>
           </div>
-          <div
-            className="auth-inset border border-[#E2DCCE] flex gap-3 p-4 text-[12.5px] leading-relaxed"
-            style={{ color: MUTED }}
-          >
+          <div className="auth-inset flex gap-3 border border-border p-4 text-[12.5px] leading-relaxed text-muted-foreground">
             <ShieldCheck
               className="mt-0.5 size-4 shrink-0"
               style={{ color: NAVY }}
@@ -925,8 +881,9 @@ function RegisterContent({
             {verifying ? "Verifying your payment…" : "Payment pending"}
           </h3>
           <p className="max-w-[300px] text-[13px] leading-relaxed" style={{ color: MUTED }}>
-            We're confirming your payment with the provider. This usually takes a few seconds — you
-            can keep this page open.
+            {verifying
+              ? "We're confirming your payment with the provider. This usually takes a few seconds — you can keep this page open."
+              : "Payment verification is not available yet. Your school will stay inactive until payment is confirmed. Save this reference and contact support for next steps."}
           </p>
           {paymentRef ? (
             <p className="text-[12px]" style={{ color: MUTED }}>
@@ -960,10 +917,7 @@ function RegisterContent({
         </div>
       ) : null}
 
-      <p
-        className="border-t pt-4 text-[11.5px] leading-relaxed"
-        style={{ borderColor: "rgba(30,42,56,0.08)", color: MUTED }}
-      >
+      <p className="border-t border-border pt-4 text-[12px] leading-relaxed text-muted-foreground">
         Already have an account?{" "}
         <button
           type="button"
@@ -1098,45 +1052,7 @@ export function AuthScreens({
             the content and the page scrolls naturally. */}
         <div className="relative w-full max-w-[500px] lg:hidden" data-auth-compact>
           <div className="auth-card relative overflow-hidden px-6 py-8 sm:px-8 sm:py-9">
-            <div
-              aria-hidden="true"
-              className="auth-circle-soft pointer-events-none absolute -right-24 -top-24 size-56"
-            />
-            <div
-              aria-hidden="true"
-              className="auth-circle-soft pointer-events-none absolute -bottom-28 -left-24 size-64 opacity-70"
-            />
-
             <div key={register ? "register" : "login"} className="fn-slide-up relative">
-              {/* Compact welcome header */}
-              <div className="text-center">
-                <h1
-                  className="mt-2 font-display font-semibold leading-tight text-[clamp(1.375rem,2vw,1.75rem)] text-balance"
-                  style={{ color: INK }}
-                >
-                  {register ? "Welcome Back!" : "Hello Friend!"}
-                </h1>
-                <p
-                  className="mx-auto mt-2 max-w-[300px] text-[13px] leading-relaxed"
-                  style={{ color: MUTED }}
-                >
-                  {register
-                    ? "To keep connected with us, please login with your personal info."
-                    : "Enter your personal details and start your journey with us."}
-                </p>
-                <div className="mt-5">
-                  <button type="button" onClick={toggle} className="auth-btn-ghost">
-                    {register ? "Sign In" : "Sign Up"}
-                  </button>
-                </div>
-              </div>
-
-              <div
-                className="my-6 h-px sm:my-7"
-                style={{ backgroundColor: "rgba(30,42,56,0.08)" }}
-                aria-hidden="true"
-              />
-
               {register ? (
                 <section
                   id="auth-register-pane-compact"
@@ -1196,19 +1112,6 @@ export function AuthScreens({
             aria-label="Authentication"
             className="auth-frame relative grid grid-cols-2 overflow-hidden"
           >
-            <div
-              aria-hidden="true"
-              className="auth-circle pointer-events-none absolute -left-24 -top-40 size-[430px]"
-            />
-            <div
-              aria-hidden="true"
-              className="auth-circle pointer-events-none absolute -bottom-44 -right-28 size-[470px]"
-            />
-            <div
-              aria-hidden="true"
-              className="auth-circle pointer-events-none absolute -right-16 -top-16 size-[150px]"
-            />
-
             {/* Login pane */}
             <section
               id="auth-login-pane"
@@ -1291,12 +1194,7 @@ export function AuthScreens({
               )}
               style={{ transitionTimingFunction: EASE }}
             >
-              <div
-                aria-hidden="true"
-                className="auth-circle-soft pointer-events-none absolute -bottom-28 -left-24 size-[320px]"
-              />
-
-              {/* Hello Friend (visible while panel rests over the right half) */}
+              {/* New school welcome panel */}
               <div
                 className={cn(
                   "absolute inset-0 flex flex-col items-center justify-center gap-7 px-10 text-center transition-[opacity,transform] duration-[900ms]",
@@ -1311,17 +1209,17 @@ export function AuthScreens({
                     className="font-display text-[clamp(1.5rem,1.8vw,1.75rem)] font-semibold leading-tight text-balance"
                     style={{ color: INK }}
                   >
-                    Hello Friend!
+                    Welcome to Frontline Nexus
                   </h2>
                   <p
                     className="mx-auto mt-3 max-w-[250px] text-[13px] leading-relaxed"
                     style={{ color: MUTED }}
                   >
-                    Enter your personal details and start your journey with us.
+                    Manage your school in one secure, easy-to-use place.
                   </p>
                 </div>
                 <button type="button" onClick={toggle} className="auth-btn-ghost">
-                  Sign Up
+                  Create a school account
                 </button>
               </div>
 
@@ -1340,17 +1238,17 @@ export function AuthScreens({
                     className="font-display text-[clamp(1.5rem,1.8vw,1.75rem)] font-semibold leading-tight text-balance"
                     style={{ color: INK }}
                   >
-                    Welcome Back!
+                    Already have an account?
                   </h2>
                   <p
                     className="mx-auto mt-3 max-w-[260px] text-[13px] leading-relaxed"
                     style={{ color: MUTED }}
                   >
-                    To keep connected with us, please login with your personal info.
+                    Sign in with the email or phone number linked to your school.
                   </p>
                 </div>
                 <button type="button" onClick={toggle} className="auth-btn-ghost">
-                  Sign In
+                  Sign in
                 </button>
               </div>
             </div>

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
 import { StatCard } from "@/components/common/stat-card";
 import { StatusBadge } from "@/components/common/status-badge";
-import { EmptyState, OfflineNotice } from "@/components/common/states";
+import { EmptyState, ErrorState, OfflineNotice } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
 import { useOfflineQueue } from "@/hooks/use-offline-queue";
 import { useOnlineStatus } from "@/hooks/use-online-status";
@@ -31,14 +31,19 @@ export const Route = createFileRoute("/_app/sync")({
 
 function SyncPage() {
   const online = useOnlineStatus();
-  const { queue, pendingCount, failedCount, syncing, sync } = useOfflineQueue();
+  const { queue, pendingCount, failedCount, syncing, sync, refresh, queueError } =
+    useOfflineQueue();
 
   const handleSync = async () => {
-    const result = await sync();
-    if (result.synced && !result.failed) toast.success(`${result.synced} record(s) synced`);
-    else if (result.failed)
-      toast.error(`${result.failed} record(s) could not sync. We'll retry automatically.`);
-    else toast.success("Everything is already up to date");
+    try {
+      const result = await sync();
+      if (result.synced && !result.failed) toast.success(`${result.synced} record(s) synced`);
+      else if (result.failed)
+        toast.error(`${result.failed} record(s) could not sync. We'll retry automatically.`);
+      else toast.success("Everything is already up to date");
+    } catch {
+      toast.error("Saved attendance could not be read from this device. No records were removed.");
+    }
   };
 
   return (
@@ -59,50 +64,61 @@ function SyncPage() {
 
       {!online ? <OfflineNotice /> : null}
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard
-          label="Saved on this device"
-          value={queue.length}
-          hint="Total records held locally"
+      {queueError ? (
+        <ErrorState
+          message="Saved attendance on this device could not be read. Do not clear this browser's site data; retry or use the same device after restoring storage access."
+          onRetry={() => void refresh().catch(() => undefined)}
         />
-        <StatCard
-          label="Waiting to sync"
-          value={pendingCount}
-          tone={pendingCount ? "warning" : "success"}
-          hint="Will upload automatically"
-        />
-        <StatCard
-          label="Needs attention"
-          value={failedCount}
-          tone={failedCount ? "danger" : "success"}
-          hint="Failed uploads to retry"
-        />
-      </div>
+      ) : null}
 
-      {queue.length === 0 ? (
-        <EmptyState
-          title="Nothing waiting to sync"
-          description="Every register and assessment you've taken has reached the school records."
-          icon={<CloudOff className="size-6" aria-hidden="true" />}
-        />
-      ) : (
-        <ul className="fn-panel divide-y">
-          {queue.map((item) => (
-            <li key={item.id} className="flex flex-wrap items-center gap-3 p-4">
-              <div className="min-w-0 flex-1">
-                <p className="font-medium">
-                  {item.className} attendance{item.subject ? ` · ${item.subject}` : ""}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {item.date} · {item.records.length} students · saved{" "}
-                  {dateTimeFmt(new Date(item.updatedAt).toISOString())}
-                </p>
-              </div>
-              <StatusBadge status={item.syncState} />
-            </li>
-          ))}
-        </ul>
-      )}
+      {!queueError ? (
+        <>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <StatCard
+              label="Saved on this device"
+              value={queue.length}
+              hint="Total records held locally"
+            />
+            <StatCard
+              label="Waiting to sync"
+              value={pendingCount}
+              tone={pendingCount ? "warning" : "success"}
+              hint="Will upload automatically"
+            />
+            <StatCard
+              label="Needs attention"
+              value={failedCount}
+              tone={failedCount ? "danger" : "success"}
+              hint="Failed uploads to retry"
+            />
+          </div>
+
+          {queue.length === 0 ? (
+            <EmptyState
+              title="Nothing waiting to sync"
+              description="Every register and assessment you've taken has reached the school records."
+              icon={<CloudOff className="size-6" aria-hidden="true" />}
+            />
+          ) : (
+            <ul className="fn-panel divide-y">
+              {queue.map((item) => (
+                <li key={item.id} className="flex flex-wrap items-center gap-3 p-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">
+                      {item.className} attendance{item.arm ? ` · ${item.arm}` : ""}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {item.date} · {item.records.length} students · saved{" "}
+                      {dateTimeFmt(new Date(item.updatedAt).toISOString())}
+                    </p>
+                  </div>
+                  <StatusBadge status={item.syncState} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : null}
     </div>
   );
 }
