@@ -95,19 +95,7 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
 
   return (
     <div className="space-y-6">
-      <section className="fn-panel fn-enter relative overflow-hidden p-6 sm:p-7">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -right-20 -top-24 size-64 rounded-full bg-[radial-gradient(circle,oklch(0.31_0.02_250/0.06),transparent_70%)]"
-        />
-        <span
-          aria-hidden="true"
-          className="auth-circle-soft pointer-events-none absolute -right-14 -bottom-[5.5rem] size-56"
-        />
-        <span
-          aria-hidden="true"
-          className="auth-circle-soft pointer-events-none absolute -left-10 top-0 size-28 opacity-70"
-        />
+      <section className="fn-enter border-l-2 border-primary py-1 pl-5">
         <p className="text-sm font-medium text-primary">{school?.name}</p>
         <h1 className="mt-1.5 font-display text-[1.625rem] font-semibold tracking-[-0.02em] sm:text-[2rem]">
           {greeting()}, {user.fullName.split(" ")[0]}.

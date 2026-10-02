@@ -15,10 +15,6 @@ export function AuthLayout({
 }) {
   return (
     <div className="relative flex min-h-screen flex-col bg-background">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-0 -z-0 h-[420px] bg-[radial-gradient(ellipse_at_top,oklch(0.31_0.02_250/0.05),transparent_65%)]"
-      />
       <header className="relative z-10">
         <div className="mx-auto flex h-16 max-w-6xl items-center px-4 sm:px-6">
           <Link to="/" aria-label="Frontline Nexus home">

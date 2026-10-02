@@ -24,7 +24,7 @@ export function StatCard({
   }[tone];
 
   return (
-    <div className="group rounded-2xl border border-border/70 bg-card/90 p-5 text-card-foreground shadow-sm backdrop-blur-md transition-[box-shadow,transform,background-color] duration-300 hover:-translate-y-0.5 hover:shadow-md">
+    <div className="group rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm transition-[box-shadow,border-color] duration-150 hover:border-border/80 hover:shadow-md">
       <div className="flex items-center justify-between gap-3">
         <p className="text-[13px] font-medium text-muted-foreground">{label}</p>
         <div className="flex items-center gap-2">

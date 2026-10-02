@@ -72,10 +72,10 @@ function NavLinks({
                     aria-label={item.label}
                     title={collapsed ? item.label : undefined}
                     className={cn(
-                      "group relative flex min-h-[2.5rem] items-center rounded-[14px] text-[13px] font-medium transition-all duration-200",
+                      "group relative flex min-h-[2.5rem] items-center rounded-lg text-[13px] font-medium transition-colors duration-150",
                       collapsed ? "justify-center px-0" : "gap-2.5 px-3",
                       active
-                        ? "bg-card text-foreground shadow-[6px_6px_14px_oklch(0.31_0.02_250/0.07),-6px_-6px_14px_oklch(1_0_0/0.8),inset_0_1px_0_oklch(1_0_0/0.7)] dark:bg-foreground/10 dark:shadow-none"
+                        ? "bg-accent text-foreground"
                         : "text-sidebar-foreground/75 hover:bg-accent/50 hover:text-foreground",
                     )}
                   >
@@ -130,7 +130,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <aside
         className={cn(
-          "fixed inset-y-3 left-3 z-30 hidden flex-col rounded-[24px] border border-border/70 bg-card/90 shadow-[var(--shadow-card),inset_0_1px_0_oklch(1_0_0/0.7)] backdrop-blur-md dark:bg-card/95 lg:flex",
+          "fixed inset-y-3 left-3 z-30 hidden flex-col rounded-xl border border-border bg-card shadow-sm lg:flex",
           sidebarW,
         )}
       >
@@ -150,7 +150,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <NavLinks items={items} pathname={pathname} collapsed={sidebarCollapsed} />
         </div>
         {school && !sidebarCollapsed ? (
-          <div className="mx-3 mb-3 rounded-2xl bg-surface px-3.5 py-3 shadow-[inset_2px_2px_5px_oklch(0.31_0.02_250/0.05),inset_-2px_-2px_5px_oklch(1_0_0/0.7)]">
+          <div className="mx-3 mb-3 rounded-lg border border-border bg-surface px-3.5 py-3">
             <span className="inline-flex rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-semibold text-primary">
               {school.currentSession}
             </span>
@@ -160,7 +160,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className={contentPl}>
-        <header className="sticky top-3 z-20 mx-0 flex h-16 items-center gap-2 rounded-[20px] bg-card/85 px-3 shadow-[var(--shadow-card),inset_0_1px_0_oklch(1_0_0/0.7)] backdrop-blur-md sm:px-4">
+        <header className="sticky top-3 z-20 mx-0 flex h-16 items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-sm sm:px-4">
           <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <SheetTrigger asChild>
               <Button
@@ -283,7 +283,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <nav
         aria-label="Primary"
-        className="fixed inset-x-3 bottom-3 z-30 grid grid-flow-col rounded-[22px] bg-card/90 shadow-[var(--shadow-raised),inset_0_1px_0_oklch(1_0_0/0.7)] backdrop-blur-md pb-[env(safe-area-inset-bottom)] lg:hidden"
+        className="fixed inset-x-3 bottom-3 z-30 grid grid-flow-col rounded-xl border border-border bg-card shadow-md pb-[env(safe-area-inset-bottom)] lg:hidden"
       >
         {bottomItems.map((item) => {
           const active = isActive(pathname, item.to);
@@ -293,7 +293,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               to={item.to}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "relative flex min-h-[3.5rem] flex-col items-center justify-center gap-0.5 rounded-[22px] px-1 text-[10px] font-medium transition-colors",
+                "relative flex min-h-[3.5rem] flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-[10px] font-medium transition-colors duration-150",
                 active ? "text-primary" : "text-muted-foreground hover:text-foreground",
               )}
             >

@@ -28,7 +28,7 @@ export const Route = createFileRoute("/pricing")({
 function PricingPage() {
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-20 border-b bg-surface/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-20 border-b bg-surface">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link to="/" aria-label="Frontline Nexus home">
             <BrandLockup />
@@ -40,29 +40,23 @@ function PricingPage() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
-        <div className="fn-grid-bg relative overflow-hidden rounded-3xl border border-border/60 p-8 sm:p-12">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute -right-24 -top-32 size-80 rounded-full bg-[radial-gradient(circle,oklch(0.31_0.02_250/0.07),transparent_70%)]"
-          />
-          <div className="relative max-w-2xl">
-            <h1 className="font-display text-4xl font-semibold tracking-[-0.03em] sm:text-5xl">
-              Pricing that follows your enrolment
-            </h1>
-            <p className="mt-4 leading-relaxed text-muted-foreground sm:text-lg">
-              You pay for the number of active students in your school. Every plan includes
-              unlimited staff accounts, the parent portal, the offline teacher app and AI credits.
-              Your school can grow within its tier during a billing period — we warn you before you
-              reach the limit instead of blocking you.
-            </p>
-          </div>
+        <div className="max-w-2xl border-l-2 border-primary py-1 pl-5">
+          <h1 className="font-display text-4xl font-semibold tracking-[-0.03em] sm:text-5xl">
+            Pricing that follows your enrolment
+          </h1>
+          <p className="mt-4 leading-relaxed text-muted-foreground sm:text-lg">
+            You pay for the number of active students in your school. Every plan includes
+            unlimited staff accounts, the parent portal, the offline teacher app and AI credits.
+            Your school can grow within its tier during a billing period — we warn you before you
+            reach the limit instead of blocking you.
+          </p>
         </div>
 
         <ul className="mt-12 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {SUBSCRIPTION_TIERS.map((tier) => (
             <li
               key={tier.id}
-              className="fn-panel flex flex-col p-7 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-raised"
+              className="fn-panel flex flex-col p-7 transition-[box-shadow,border-color] duration-150 hover:border-border/80 hover:shadow-raised"
             >
               <h2 className="font-display text-lg font-semibold">{tier.label}</h2>
               <p className="mt-4 font-display text-3xl font-semibold tracking-[-0.02em]">

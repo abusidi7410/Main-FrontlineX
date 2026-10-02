@@ -71,7 +71,7 @@ function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/75 backdrop-blur-xl">
+      <header className="sticky top-0 z-20 border-b border-border bg-background">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link to="/" aria-label="Frontline Nexus home">
             <BrandLockup />
@@ -92,18 +92,10 @@ function LandingPage() {
         </div>
       </header>
 
-      <section className="fn-grid-bg relative overflow-hidden border-b border-border/60">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -left-24 -top-32 size-96 rounded-full bg-[radial-gradient(circle,oklch(0.31_0.02_250/0.07),transparent_70%)]"
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -right-24 top-40 size-96 rounded-full bg-[radial-gradient(circle,oklch(0.31_0.02_250/0.05),transparent_70%)]"
-        />
-        <div className="relative mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-28">
-          <p className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary-soft/60 px-3 py-1.5 text-xs font-medium text-primary backdrop-blur-sm shadow-sm">
-            <Shield className="size-3.5" aria-hidden="true" /> We Develop. We Secure. We Connect.
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-28">
+          <p className="inline-flex items-center gap-2 text-sm font-medium text-primary">
+            <Shield className="size-4" aria-hidden="true" /> We Develop. We Secure. We Connect.
           </p>
           <h1 className="mt-6 max-w-3xl font-display text-4xl font-semibold leading-[1.08] tracking-[-0.03em] sm:text-5xl lg:text-6xl">
             The operating system for your school
@@ -142,17 +134,16 @@ function LandingPage() {
             or teachers.
           </p>
         </div>
-        <ul className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="mt-10 grid gap-x-12 lg:grid-cols-2">
           {FEATURES.map((feature) => (
-            <li
-              key={feature.title}
-              className="fn-panel group p-6 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-raised"
-            >
-              <span className="grid size-11 place-items-center rounded-2xl bg-primary-soft text-primary transition-all duration-200 group-hover:bg-primary group-hover:text-primary-foreground group-hover:shadow-glow">
-                <feature.icon className="size-5" aria-hidden="true" />
+            <li key={feature.title} className="flex gap-4 border-t border-border py-6">
+              <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary">
+                <feature.icon className="size-4" aria-hidden="true" />
               </span>
-              <h3 className="mt-5 font-display text-lg font-semibold">{feature.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{feature.body}</p>
+              <div>
+                <h3 className="font-display text-lg font-semibold">{feature.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{feature.body}</p>
+              </div>
             </li>
           ))}
         </ul>
