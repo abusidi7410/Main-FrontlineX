@@ -42,6 +42,7 @@ from accounts.permissions import has_permission
 from . import attendance as attendance_service
 from . import billing, clearance
 from . import enrollment as enrollment_service
+from . import timetable as timetable_service
 from ..models import (
     AttendanceRecord,
     Enrollment,
@@ -441,15 +442,37 @@ def get_outstanding_fees(user, *, limit: int = 25) -> dict:
 
 
 def get_teacher_schedule(user) -> dict:
+    """The teacher's real week (spec §22).
+
+    Resolved through the timetable module rather than the staff record's class
+    list, so what the assistant says the teacher is teaching is the same thing
+    the timetable screen shows them.
+    """
+    schedule = timetable_service.teacher_week(user)
     return {
-        'teacher': user.get_full_name() or user.email,
+        'teacher': schedule['teacher'],
         'assignedClasses': sorted(teacher_class_names(user)),
+        'days': schedule['days'],
+        'lessonCount': schedule['lessonCount'],
     }
 
 
 def get_class_timetable(user, *, class_name: str) -> dict:
     class_obj = _class_or_throw(user, class_name)
-    return {'className': class_obj.name, 'entries': []}
+    week = timetable_service.class_week(user.school_id, class_obj)
+    return {
+        'className': week['className'],
+        # Grouped by day so the model can answer "what happens on Wednesday?"
+        # without reshaping a flat list. `entries` stays as the flat view for
+        # any caller that wants one lesson per row.
+        'days': week['days'],
+        'entries': [
+            lesson
+            for day in week['days']
+            for lesson in day['lessons']
+        ],
+        'lessonCount': week['lessonCount'],
+    }
 
 
 def get_admission_summary(user) -> dict:
@@ -628,12 +651,12 @@ READ_TOOLS: dict[str, Tool] = {
         ),
         Tool(
             'get_teacher_schedule', get_teacher_schedule,
-            "A teacher's assigned classes, from their staff record.",
+            "A teacher's full teaching week, day by day, from the school timetable.",
             ('ai.teaching',), 'timetable.read', SCOPE_SCHOOL,
         ),
         Tool(
             'get_class_timetable', get_class_timetable,
-            'A class timetable.',
+            'A class timetable: every lesson by day, period, subject, teacher and room.',
             ('ai.teaching', 'ai.academic'), 'timetable.read', SCOPE_SCHOOL, ('class_name',),
         ),
         Tool(

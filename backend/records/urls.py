@@ -42,4 +42,8 @@ urlpatterns = [
     path('academics/classes/<str:name>/', views.AcademicClassDetailView.as_view()),
     path('academics/classes/', views.AcademicClassesView.as_view()),
     path('timetable/', views.TimetableView.as_view()),
+    path('timetable/entries/', views.TimetableEntryCreateView.as_view()),
+    path('timetable/entries/<int:pk>/', views.TimetableEntryDetailView.as_view()),
+    path('timetable/periods/', views.TimetablePeriodCreateView.as_view()),
+    path('timetable/periods/<int:pk>/', views.TimetablePeriodDetailView.as_view()),
 ]

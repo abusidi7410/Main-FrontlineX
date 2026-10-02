@@ -2,7 +2,7 @@ import datetime
 from decimal import Decimal
 
 from django.db import models
-from django.db.models import Q
+from django.db.models import F, Q
 
 from schools.models import School
 
@@ -1029,3 +1029,150 @@ class ResultEntry(models.Model):
         if self.score is None or not self.sheet.assessment_max:
             return Decimal('0')
         return (self.score * 100 / self.sheet.assessment_max).quantize(Decimal('0.01'))
+
+
+class TimetablePeriod(models.Model):
+    """One bell in the school's day (spec §22).
+
+    A school defines its own periods -- name, start/end time, order -- and every
+    lesson is placed against one of them rather than against free text. That is
+    what makes the spec's conflicts detectable at all: two lessons clash when
+    they share a *period*, and the period carries the times the timetable
+    header and the teacher's "what's next" view need.
+
+    `is_break` rows (break, lunch) are rendered in the grid as separators and
+    are refused as lesson slots, so a break can never be booked out as a lesson
+    by accident.
+    """
+
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='timetable_periods')
+    name = models.CharField(max_length=60)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    sort_order = models.PositiveIntegerField(default=0)
+    is_break = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['sort_order', 'start_time', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['school', 'name'], name='unique_period_name_per_school',
+            ),
+            # A period that ends before it starts would render as a negative
+            # duration everywhere the grid shows times, so it is rejected here.
+            models.CheckConstraint(
+                condition=Q(end_time__gt=F('start_time')), name='period_end_after_start',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['school', 'sort_order']),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class TimetableEntry(models.Model):
+    """One lesson: a class meets a subject, with a teacher, in a room, in a period.
+
+    This is the whole timetable domain (spec §22) in one row -- Classes,
+    Subjects, Teachers, Rooms and Periods are all represented, with Classes and
+    Periods normalised because they need integrity, and Subjects and Rooms left
+    as text to match the rest of the codebase (`School.subjects`,
+    `StaffMember.subjects`, `ResultSheet.subject` are all string lists).
+
+    The timetable is recurring weekly and school-scoped rather than
+    session-scoped: a school's bell schedule and its class allocations hold for
+    the year, and `School.current_session` already records which session is live.
+    `weekday` follows Python's convention (Monday is 0), matching the calendar
+    handling in `School.attendance_weekend_days`.
+
+    All three conflicts the spec asks for are enforced as database constraints,
+    not only in Python. The service layer turns them into friendly messages,
+    but a bulk import, a Django admin edit or two concurrent requests would
+    otherwise still be able to double-book a teacher:
+
+      * class conflict   -- a class is in at most one lesson per period
+      * teacher conflict -- a teacher teaches in at most one lesson per period
+      * room conflict    -- a room hosts at most one class per period
+    An empty-string room is "no room booked": the room conflict only applies to
+    real rooms, so a lesson can be scheduled before its room is known.
+    """
+
+    # Monday-first, matching `School.attendance_weekend_days` and the calendar.
+    WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    WEEKDAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='timetable_entries')
+    period = models.ForeignKey(
+        TimetablePeriod, on_delete=models.CASCADE, related_name='entries',
+    )
+    class_obj = models.ForeignKey(
+        SchoolClass, on_delete=models.CASCADE, related_name='timetable_entries',
+    )
+    subject = models.CharField(max_length=100)
+    teacher = models.ForeignKey(
+        StaffMember, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='timetable_entries',
+    )
+    room = models.CharField(max_length=60, blank=True, default='')
+    weekday = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['weekday', 'period__sort_order', 'class_obj__sort_order', 'class_obj__name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['school', 'weekday', 'period', 'class_obj'],
+                name='unique_timetable_class_slot',
+            ),
+            # Partial constraints: a lesson with no teacher and a lesson with no
+            # room must not collide with each other or with themselves, so the
+            # teacher and room uniqueness only applies to real values.
+            models.UniqueConstraint(
+                fields=['school', 'weekday', 'period', 'teacher'],
+                name='unique_timetable_teacher_slot',
+                condition=Q(teacher__isnull=False),
+            ),
+            models.UniqueConstraint(
+                fields=['school', 'weekday', 'period', 'room'],
+                name='unique_timetable_room_slot',
+                condition=~Q(room=''),
+            ),
+            models.CheckConstraint(
+                condition=Q(weekday__gte=0, weekday__lte=6), name='timetable_weekday_range',
+            ),
+        ]
+        indexes = [
+            # The two hot reads: one class's week and one teacher's week.
+            models.Index(fields=['class_obj', 'weekday', 'period'], name='tt_class_week_idx'),
+            models.Index(fields=['teacher', 'weekday', 'period'], name='tt_teacher_week_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.get_weekday_display()} {self.period_id} {self.class_obj_id} {self.subject}'
+
+    @property
+    def weekday_label(self) -> str:
+        return TimetableEntry.WEEKDAY_NAMES[self.weekday]
+
+    def clean(self):
+        # Cross-row integrity (a period/class/teacher from another school) cannot
+        # be expressed as a CheckConstraint, so it is asserted here and relied on
+        # by full_clean(); the service additionally re-checks on every write.
+        errors: dict[str, str] = {}
+        if self.period_id and self.period.school_id != self.school_id:
+            errors['period'] = 'That period belongs to a different school.'
+        if self.class_obj_id and self.class_obj.school_id != self.school_id:
+            errors['class_obj'] = 'That class belongs to a different school.'
+        if self.teacher_id and self.teacher.school_id != self.school_id:
+            errors['teacher'] = 'That teacher belongs to a different school.'
+        if self.period_id and self.period.is_break:
+            errors['period'] = 'That period is a break and cannot hold a lesson.'
+        if self.weekday < 0 or self.weekday > 6:
+            errors['weekday'] = 'Weekday numbers run from 0 (Monday) to 6 (Sunday).'
+        if errors:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(errors)

@@ -24,6 +24,7 @@ from accounts.permissions import (
 )
 from accounts.utils import audit as log_audit
 from schools.models import School, SchoolSubscription
+from .constants import DEFAULT_SUBJECTS
 from .models import (
     EPOCH,
     AcademicSession,
@@ -39,6 +40,8 @@ from .models import (
     Section,
     StaffMember,
     Student,
+    TimetableEntry,
+    TimetablePeriod,
     invoice_item_amount,
 )
 from .services import academic as academic_service
@@ -48,6 +51,7 @@ from .services import attendance as attendance_service
 from .services import billing as billing_service
 from .services import enrollment as enrollment_service
 from .services import results as result_service
+from .services import timetable as timetable_service
 from .student_import import (
     StudentImportError,
     analyse_import,
@@ -95,6 +99,10 @@ CanWriteAcademics = require_permissions('academics.write')
 # reprice the school would be blocked by a finance.write check, and a principal
 # who should see prices but not change them is correctly excluded.
 CanWriteFeeStructure = require_permissions('finance.structure')
+# Building the timetable is a single capability covering both the bell schedule
+# and the lessons on it, because they are meaningless apart: a lesson needs a
+# period, and changing the period changes what every lesson means.
+CanWriteTimetable = require_permissions('timetable.write')
 
 
 def _paginate(queryset, request, serializer_class, context=None):
@@ -2025,18 +2033,6 @@ DEFAULT_CLASSES = [
     'SS 3',
 ]
 
-DEFAULT_SUBJECTS = [
-    'Mathematics',
-    'English Language',
-    'Basic Science',
-    'Social Studies',
-    'Civic Education',
-    'Computer Studies',
-    'Agricultural Science',
-    'Business Studies',
-]
-
-
 class AcademicsView(APIView):
     permission_classes = [IsAuthenticated, HasSchool]
 
@@ -2209,10 +2205,180 @@ class AcademicClassDetailView(APIView):
         return Response(AcademicsView()._payload(school))
 
 
-# ── Timetable (contract stub; full module later) ───────────────────────────
+# ── Timetable (spec §22) ───────────────────────────────────────────────────────
+# One capability, two tables: the school's bell schedule (periods) and the
+# lessons placed on it (entries). Reads are open to anyone holding
+# `timetable.read`; writes are refused for everyone else. Role scoping of the
+# *rows* a read returns lives in services.timetable.resolve_scope, because a
+# teacher and a pupil must never see the whole school's grid.
+
+# Audit lines are written by hand because the audit trail is read by staff who
+# need to know *which* slot changed without opening the record.
+def _entry_detail(entry) -> str:
+    return (
+        f'{entry.class_obj.name} {entry.subject} '
+        f'{timetable_service.WEEKDAY_NAMES[entry.weekday]} {entry.period.name}'
+    )
+
+
+def _period_detail(period) -> str:
+    return f'{period.name} {period.start_time:%H:%M}-{period.end_time:%H:%M}'
+
 
 class TimetableView(APIView):
+    """GET the week's grid plus everything the editor needs to place a lesson."""
+
     permission_classes = [IsAuthenticated, HasSchool]
 
     def get(self, request):
-        return Response([])
+        school = get_object_or_404(School, id=request.user.school_id)
+        return Response(timetable_service.grid_payload(
+            request.user, school, request.query_params,
+        ))
+
+
+class TimetableEntryCreateView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def post(self, request):
+        if not CanWriteTimetable().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to build the timetable.')
+        school = get_object_or_404(School, id=request.user.school_id)
+        entry = timetable_service.create_entry(school, request.data)
+        log_audit(
+            request, 'timetable.entry_created', target=f'TimetableEntry {entry.pk}',
+            detail=_entry_detail(entry),
+            entity='timetable_entry', entity_id=str(entry.pk),
+            after={
+                'class': entry.class_obj.name,
+                'subject': entry.subject,
+                'weekday': entry.weekday,
+                'period': entry.period.name,
+                'teacher': entry.teacher.full_name if entry.teacher else '',
+                'room': entry.room,
+            },
+        )
+        return Response(
+            timetable_service.entry_payload(entry),
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class TimetableEntryDetailView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def _entry(self, request, pk):
+        school = get_object_or_404(School, id=request.user.school_id)
+        # Scoped by school inside the lookup: a pk belonging to another school
+        # must be a 404 here rather than a row this school can read.
+        entry = get_object_or_404(
+            TimetableEntry.objects.select_related('period', 'class_obj', 'teacher'),
+            pk=pk, school=school,
+        )
+        return school, entry
+
+    def get(self, request, pk):
+        _, entry = self._entry(request, pk)
+        return Response(timetable_service.entry_payload(entry))
+
+    def patch(self, request, pk):
+        if not CanWriteTimetable().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to build the timetable.')
+        school, entry = self._entry(request, pk)
+        updated = timetable_service.update_entry(school, entry, request.data)
+        log_audit(
+            request, 'timetable.entry_updated', target=f'TimetableEntry {updated.pk}',
+            detail=_entry_detail(updated),
+            entity='timetable_entry', entity_id=str(updated.pk),
+            after={
+                'class': updated.class_obj.name,
+                'subject': updated.subject,
+                'weekday': updated.weekday,
+                'period': updated.period.name,
+                'teacher': updated.teacher.full_name if updated.teacher else '',
+                'room': updated.room,
+            },
+        )
+        return Response(timetable_service.entry_payload(updated))
+
+    def delete(self, request, pk):
+        if not CanWriteTimetable().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to build the timetable.')
+        school, entry = self._entry(request, pk)
+        log_audit(
+            request, 'timetable.entry_deleted', target=f'TimetableEntry {entry.pk}',
+            detail=_entry_detail(entry),
+            entity='timetable_entry', entity_id=str(entry.pk),
+            before={
+                'class': entry.class_obj.name,
+                'subject': entry.subject,
+                'weekday': entry.weekday,
+                'period': entry.period.name,
+            },
+        )
+        timetable_service.delete_entry(school, entry)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TimetablePeriodCreateView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def post(self, request):
+        if not CanWriteTimetable().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to change the school day.')
+        school = get_object_or_404(School, id=request.user.school_id)
+        period = timetable_service.create_period(school, request.data)
+        log_audit(
+            request, 'timetable.period_created', target=f'TimetablePeriod {period.pk}',
+            detail=_period_detail(period),
+            entity='timetable_period', entity_id=str(period.pk),
+            after={'name': period.name, 'isBreak': period.is_break},
+        )
+        return Response(
+            timetable_service.period_payload(period),
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class TimetablePeriodDetailView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def _period(self, request, pk):
+        school = get_object_or_404(School, id=request.user.school_id)
+        return school, get_object_or_404(TimetablePeriod, pk=pk, school=school)
+
+    def patch(self, request, pk):
+        if not CanWriteTimetable().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to change the school day.')
+        school, period = self._period(request, pk)
+        updated = timetable_service.update_period(school, period, request.data)
+        log_audit(
+            request, 'timetable.period_updated', target=f'TimetablePeriod {updated.pk}',
+            detail=_period_detail(updated),
+            entity='timetable_period', entity_id=str(updated.pk),
+            after={'name': updated.name, 'isBreak': updated.is_break},
+        )
+        return Response(timetable_service.period_payload(updated))
+
+    def delete(self, request, pk):
+        if not CanWriteTimetable().has_permission(request, self):
+            raise PermissionDenied('You do not have permission to change the school day.')
+        school, period = self._period(request, pk)
+        # Deleting a period cascades to its lessons, which is almost never what an
+        # administrator means, so an in-use period is refused with the count that
+        # explains why rather than silently deleting a morning of teaching.
+        lessons = period.entries.count()
+        if lessons:
+            raise ValidationError({
+                'name': f'{period.name} still holds {lessons} '
+                        f'{"lesson" if lessons == 1 else "lessons"}. '
+                        f'Move or remove them first, then delete the period.',
+            })
+        log_audit(
+            request, 'timetable.period_deleted', target=f'TimetablePeriod {period.pk}',
+            detail=_period_detail(period),
+            entity='timetable_period', entity_id=str(period.pk),
+            before={'name': period.name},
+        )
+        period.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
