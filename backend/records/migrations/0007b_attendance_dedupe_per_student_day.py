@@ -11,8 +11,10 @@ This migration, which runs BEFORE the constraint swap:
 1. Keeps the OLDEST row per `(student, date)` — it is the earliest submission,
    which is what `submitted_by`/`created_at` already point at.
 2. Promotes a row's subject to empty, since daily attendance is subject-free.
-3. Backfills `class_obj` from the matching `SchoolClass` by name, so history and
-   the class overview can index on the FK instead of the free-text mirror.
+
+The `class_obj` backfill belongs to `records/0008`, which is where that column is
+actually created; it cannot run here because the field does not exist yet at this
+point in the graph.
 
 The dedupe is deliberately non-destructive about ordering and never touches rows
 that are already unique. On a school that never used per-subject attendance (the
@@ -74,26 +76,6 @@ def backwards(apps, schema_editor):
     and a no-op keeps that contract while preserving the migrated data.
     """
     return None
-
-
-def backfill_attendance_class_fk(apps, schema_editor):
-    """Point legacy rows at their real `SchoolClass`.
-
-    `class_name` is a free-text mirror, so this matches on name within each
-    school. A row whose class no longer exists keeps a NULL `class_obj` rather
-    than being attached to the wrong class.
-    """
-    AttendanceRecord = apps.get_model('records', 'AttendanceRecord')
-    SchoolClass = apps.get_model('records', 'SchoolClass')
-    db_alias = schema_editor.connection.alias
-
-    pairs = SchoolClass.objects.using(db_alias).values('id', 'name', 'school_id')
-    for row in pairs:
-        AttendanceRecord.objects.using(db_alias).filter(
-            class_obj__isnull=True,
-            class_name=row['name'],
-            school_id=row['school_id'],
-        ).update(class_obj_id=row['id'])
 
 
 class Migration(migrations.Migration):

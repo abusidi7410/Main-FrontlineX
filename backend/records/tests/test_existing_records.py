@@ -192,7 +192,10 @@ class AttendanceSubmitTests(AttendanceFinanceTests):
             self._url('/attendance/'),
             {
                 'className': 'JSS 1',
-                'date': '2026-09-19',
+                # A Friday: attendance is rejected outright on the school's
+                # weekend days, so this date must stay a school day or the
+                # register never reaches the enrollment check under test.
+                'date': '2026-09-18',
                 'records': [{'studentId': '99999', 'status': 'present'}],
             },
             format='json',

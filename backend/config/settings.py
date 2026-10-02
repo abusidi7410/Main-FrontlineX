@@ -30,6 +30,28 @@ RAILWAY_PUBLIC_DOMAIN = os.environ.get('RAILWAY_PUBLIC_DOMAIN')
 if RAILWAY_PUBLIC_DOMAIN and RAILWAY_PUBLIC_DOMAIN not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(RAILWAY_PUBLIC_DOMAIN)
 
+# ── HTTPS behind a TLS-terminating proxy ────────────────────────────────────
+# Render, Railway and the Nginx edge all terminate TLS and then speak plain HTTP
+# to this process, so the socket scheme is ALWAYS "http" here no matter what the
+# client used. Trust the forwarded scheme header so request.is_secure() reports
+# what actually happened: without it every HTTPS-only setting below silently
+# does nothing, and turning the SSL redirect on would instead redirect forever.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Gated on DEBUG so plain-HTTP local development keeps working. HSTS is
+# deliberately env-tunable and defaults OFF-able, because once a browser has
+# cached the policy it is hard to withdraw - set SECURE_HSTS_SECONDS=0 to fall
+# back to serving HTTP while testing a production-shaped deploy.
+if not DEBUG:
+    SECURE_SSL_REDIRECT = env.bool('DJANGO_SECURE_SSL_REDIRECT', default=True)
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=31536000)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = 'same-origin'
+
 # ── Applications ──────────────────────────────────────────────────────────────
 
 INSTALLED_APPS = [

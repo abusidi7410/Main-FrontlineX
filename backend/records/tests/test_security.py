@@ -335,7 +335,9 @@ class AttendanceRosterEnrollmentTests(SecurityTestBase):
     def test_attendance_submit_only_accepts_enrolled_students(self):
         self.auth(self.teacher)
         resp = self.submit_attendance(
-            date='2026-09-20',
+            # A Friday. Submitting on a weekend is rejected as a non-school day
+            # before enrollment is ever checked, so this has to stay a school day.
+            date='2026-09-18',
             records=[{'studentId': str(self.other_student.id), 'status': 'present'}],
         )
         self.assertEqual(resp.status_code, 201, resp.content)

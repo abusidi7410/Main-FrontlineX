@@ -37,7 +37,12 @@ services:
       - key: RENDER_EXTERNAL_HOSTNAME
         sync: false
       - key: CORS_ALLOWED_ORIGINS
-        value: https://frontlinex-school.netlify.app
+        # The frontend that actually calls this API. It is deployed to
+        # Cloudflare Workers (Nitro/wrangler), NOT Netlify — an origin that
+        # does not match the live site's host is rejected by django-cors-headers
+        # and every request fails, so keep this in step with the deployed
+        # frontend URL. Comma-separate to allow more than one origin.
+        value: https://abusidi7410-main-frontlinex.2027frontline.workers.dev,https://frontlinex-school.netlify.app
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_SSL_REQUIRE

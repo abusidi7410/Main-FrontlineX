@@ -15,13 +15,42 @@
 #   * Set the environment variable UPSTREAM_URL to the Django service,
 #     e.g. UPSTREAM_URL=frontlinex-backend:8000 (no protocol).
 #
-# Keys are per client IP ($binary_remote_addr). Nginx reads the client IP from
-# the socket; make sure X-Forwarded-For / real_ip come from a trusted proxy so
-# clients can't rotate through fake IPs to bypass the limit.
+# Keys are per client IP ($fn_client_ip, resolved below). Nginx reads the client
+# IP from the socket; make sure X-Forwarded-For / real_ip come from a trusted
+# proxy so clients can't rotate through fake IPs to bypass the limit.
 
-limit_req_zone $binary_remote_addr zone=fn_auth:32m rate=5r/m;
-limit_req_zone $binary_remote_addr zone=fn_expensive:32m rate=10r/m;
-limit_req_zone $binary_remote_addr zone=fn_standard:64m rate=60r/m;
+# The real client IP, for rate limiting and for what we report upstream.
+#
+# This proxy normally sits BEHIND another TLS-terminating hop (Render, Railway):
+# every socket it sees is that load balancer, never the end user. Keying limits
+# on $binary_remote_addr there would put the entire internet into ONE bucket, so
+# a single busy client would throttle everybody.
+#
+# We therefore prefer the peer address that the trusted hop in front of us
+# appended as the LAST entry of X-Forwarded-For. That is only safe because this
+# container is not directly reachable - every request arrives via that proxy, so
+# a client-supplied XFF always still has the proxy's own entry appended after
+# it. A single-value XFF with no comma means nobody appended anything, so it is
+# ignored rather than believed. Bare Nginx (docker-compose, no proxy) has no
+# XFF at all and falls back to the socket address, which cannot be spoofed.
+map $http_x_forwarded_for $fn_client_ip {
+    ~^[^,]+,\s*(?<fn_peer>[^,\s]+)\s*$   $fn_peer;
+    default                              $binary_remote_addr;
+}
+
+# The scheme the CLIENT used, which again differs from $scheme whenever a
+# TLS-terminating proxy is in front of us: Nginx listening on :80 always sees
+# $scheme == http. Overwriting X-Forwarded-Proto with that would tell Django the
+# request was plaintext, so secure cookies get dropped and any HTTPS redirect
+# turns into a redirect loop. Prefer the forwarded value, fall back to $scheme.
+map $http_x_forwarded_proto $fn_forwarded_proto {
+    ''      $scheme;
+    default $http_x_forwarded_proto;
+}
+
+limit_req_zone $fn_client_ip zone=fn_auth:32m rate=5r/m;
+limit_req_zone $fn_client_ip zone=fn_expensive:32m rate=10r/m;
+limit_req_zone $fn_client_ip zone=fn_standard:64m rate=60r/m;
 
 limit_req_status 429;
 limit_req_log_level warn;
@@ -41,7 +70,7 @@ server {
         error_page 429 @rate_limited_auth;
         proxy_pass http://backend;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $fn_forwarded_proto;
         proxy_set_header Host $host;
     }
 
@@ -50,7 +79,7 @@ server {
         error_page 429 @rate_limited_auth;
         proxy_pass http://backend;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $fn_forwarded_proto;
         proxy_set_header Host $host;
     }
 
@@ -60,7 +89,7 @@ server {
         error_page 429 @rate_limited_expensive;
         proxy_pass http://backend;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $fn_forwarded_proto;
         proxy_set_header Host $host;
     }
 
@@ -70,7 +99,7 @@ server {
         error_page 429 @rate_limited_standard;
         proxy_pass http://backend;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $fn_forwarded_proto;
         proxy_set_header Host $host;
     }
 
@@ -78,7 +107,7 @@ server {
     location / {
         proxy_pass http://backend;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $fn_forwarded_proto;
         proxy_set_header Host $host;
     }
 
