@@ -18,7 +18,9 @@ export function TeacherDashboard() {
   const results = useQuery({ queryKey: ["results"], queryFn: getResultSheets });
 
   const today = new Date().toLocaleDateString("en-NG", { weekday: "long" });
-  const todaySlots = (timetable.data ?? []).filter((slot) => slot.day === today).slice(0, 4);
+  // `dayName` is the weekday label the API sends; `day` is the Monday-first
+  // number and cannot be compared with a date's weekday name.
+  const todaySlots = (timetable.data ?? []).filter((slot) => slot.dayName === today).slice(0, 4);
   const draftSheets = results.data?.filter((r) => r.status === "draft").length ?? 0;
 
   return (

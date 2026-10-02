@@ -12,7 +12,11 @@ import type {
   MyPublishedResult,
   StaffMember,
   SubscriptionState,
-  TimetableSlot,
+  TimetableEntry,
+  TimetableEntryInput,
+  TimetableGrid,
+  TimetablePeriod,
+  TimetablePeriodInput,
   UssdConfig,
 } from "@/types";
 
@@ -182,9 +186,84 @@ export async function createResultSheet(input: ResultSheetInput): Promise<Result
   return apiFetch("/results/create", { method: "POST", body: input });
 }
 
-export async function getTimetable(): Promise<TimetableSlot[]> {
-  // SECURITY: Backend must verify permission timetable.read and schoolId match, or restrict students and teachers to assigned entries.
-  return apiFetch("/timetable");
+/**
+ * The weekly grid: periods, lessons in scope, and the reference lists the
+ * editor needs to place one.
+ *
+ * The API decides what is in scope: an administrator gets the whole school, a
+ * teacher their own week, a pupil or parent their own classes. Passing
+ * `classId` or `teacherId` narrows it further, and a pupil or parent asking for
+ * a class they are not in is refused.
+ */
+export async function getTimetableGrid(
+  scope: { classId?: string; teacherId?: string } = {},
+): Promise<TimetableGrid> {
+  // SECURITY: Backend verifies timetable.read, scopes every row to the caller's
+  // school, and refuses a classId the caller is not entitled to.
+  return apiFetch<TimetableGrid>("/timetable", { query: scope });
+}
+
+/**
+ * Lessons as a flat list, for screens that only need the rows.
+ *
+ * Kept for list views such as "my classes", which read `className` off each
+ * slot. Prefer `getTimetableGrid` where the grid or the editor is involved.
+ */
+export async function getTimetable(): Promise<TimetableEntry[]> {
+  const grid = await getTimetableGrid();
+  return grid.entries;
+}
+
+export async function createTimetableEntry(input: TimetableEntryInput): Promise<TimetableEntry> {
+  // SECURITY: Backend verifies timetable.write, rejects the class/period/teacher
+  // if they belong to another school, and raises the teacher, class and room
+  // conflicts as field errors rather than creating a double booking.
+  return apiFetch<TimetableEntry>("/timetable/entries", { method: "POST", body: input });
+}
+
+/**
+ * Change part of a lesson. Omitted fields keep their current value, so the
+ * editor can move a lesson without resending the whole row.
+ */
+export async function updateTimetableEntry(
+  id: string,
+  input: Partial<TimetableEntryInput>,
+): Promise<TimetableEntry> {
+  // SECURITY: Backend verifies timetable.write and scopes the lesson to the
+  // caller's school.
+  return apiFetch<TimetableEntry>(`/timetable/entries/${id}`, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+export async function deleteTimetableEntry(id: string): Promise<void> {
+  // SECURITY: Backend verifies timetable.write and 404s a lesson from another school.
+  return apiFetch<void>(`/timetable/entries/${id}`, { method: "DELETE" });
+}
+
+export async function createTimetablePeriod(input: TimetablePeriodInput): Promise<TimetablePeriod> {
+  // SECURITY: Backend verifies timetable.write and resolves the period inside
+  // the caller's school.
+  return apiFetch<TimetablePeriod>("/timetable/periods", { method: "POST", body: input });
+}
+
+export async function updateTimetablePeriod(
+  id: string,
+  input: Partial<TimetablePeriodInput>,
+): Promise<TimetablePeriod> {
+  // SECURITY: Backend verifies timetable.write and scopes the period to the
+  // caller's school.
+  return apiFetch<TimetablePeriod>(`/timetable/periods/${id}`, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+export async function deleteTimetablePeriod(id: string): Promise<void> {
+  // SECURITY: Backend verifies timetable.write, 404s a period from another
+  // school, and refuses to delete one that still holds lessons.
+  return apiFetch<void>(`/timetable/periods/${id}`, { method: "DELETE" });
 }
 
 export async function getLessonPlans(): Promise<LessonPlan[]> {

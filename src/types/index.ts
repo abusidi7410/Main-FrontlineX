@@ -325,14 +325,113 @@ export interface LessonPlan {
   updatedAt: string;
 }
 
-export interface TimetableSlot {
+/** Monday-first, matching the API and the school calendar. */
+export type TimetableWeekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export const TIMETABLE_WEEKDAYS: readonly TimetableWeekday[] = [0, 1, 2, 3, 4, 5, 6];
+export const TIMETABLE_WEEKDAY_NAMES: Record<TimetableWeekday, string> = {
+  0: "Monday",
+  1: "Tuesday",
+  2: "Wednesday",
+  3: "Thursday",
+  4: "Friday",
+  5: "Saturday",
+  6: "Sunday",
+};
+export const TIMETABLE_WEEKDAY_SHORT: Record<TimetableWeekday, string> = {
+  0: "Mon",
+  1: "Tue",
+  2: "Wed",
+  3: "Thu",
+  4: "Fri",
+  5: "Sat",
+  6: "Sun",
+};
+
+/** One bell in the school's day. */
+export interface TimetablePeriod {
   id: string;
-  day: string;
+  name: string;
+  /** 24-hour `HH:MM`. */
+  startTime: string;
+  endTime: string;
+  sortOrder: number;
+  /** A break is a divider in the grid and cannot hold a lesson. */
+  isBreak: boolean;
+}
+
+/**
+ * One lesson in the weekly timetable.
+ *
+ * `TimetableSlot` is kept as the loose read shape used by list screens; a
+ * `TimetableEntry` is the same lesson with the ids and weekday number the editor
+ * needs to address it.
+ */
+export interface TimetableEntry {
+  id: string;
+  /** Weekday number, Monday-first. */
+  day: number;
+  weekday: number;
+  dayName: string;
+  dayShort: string;
+  /** Period label, e.g. "P1". */
   period: string;
+  periodId: string;
+  classId: string;
   className: string;
   subject: string;
+  /** Empty when no teacher is assigned yet. */
   teacher: string;
+  teacherId: string;
+  /** Empty when no room is booked yet. */
   room: string;
+}
+
+export interface TimetableClassOption {
+  id: string;
+  name: string;
+  level: string;
+}
+
+export interface TimetableTeacherOption {
+  id: string;
+  name: string;
+}
+
+/** Everything the timetable screen needs in one response. */
+export interface TimetableGrid {
+  session: string;
+  term: string;
+  /** Teaching weekdays, derived from the school calendar. */
+  days: TimetableWeekday[];
+  dayNames: string[];
+  dayShortNames: string[];
+  periods: TimetablePeriod[];
+  entries: TimetableEntry[];
+  scope: { classId: string; teacherId: string };
+  classes: TimetableClassOption[];
+  classIds: Record<string, string>;
+  subjects: string[];
+  teachers: TimetableTeacherOption[];
+  rooms: string[];
+}
+
+/** Payload for creating a lesson. Server resolves conflicts on write. */
+export interface TimetableEntryInput {
+  weekday: number;
+  periodId: string;
+  classId: string;
+  subject: string;
+  /** Send an empty string to unassign. */
+  teacherId?: string;
+  room?: string;
+}
+
+export interface TimetablePeriodInput {
+  name: string;
+  startTime: string;
+  endTime: string;
+  isBreak?: boolean;
 }
 
 export interface PlatformSchool {

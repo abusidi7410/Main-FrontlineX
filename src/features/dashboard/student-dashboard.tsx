@@ -13,7 +13,9 @@ export function StudentDashboard() {
   const announcements = useQuery({ queryKey: ["announcements"], queryFn: getAnnouncements });
 
   const today = new Date().toLocaleDateString("en-NG", { weekday: "long" });
-  const todaySlots = (timetable.data ?? []).filter((slot) => slot.day === today);
+  // `dayName` is the weekday label the API sends; `day` is the Monday-first
+  // number and cannot be compared with a date's weekday name.
+  const todaySlots = (timetable.data ?? []).filter((slot) => slot.dayName === today);
 
   return (
     <div className="space-y-6">
