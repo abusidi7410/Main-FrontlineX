@@ -45,10 +45,10 @@ function PricingPage() {
             Pricing that follows your enrolment
           </h1>
           <p className="mt-4 leading-relaxed text-muted-foreground sm:text-lg">
-            You pay for the number of active students in your school. Every plan includes
-            unlimited staff accounts, the parent portal, the offline teacher app and AI credits.
-            Your school can grow within its tier during a billing period — we warn you before you
-            reach the limit instead of blocking you.
+            You pay for the number of active students in your school. Every plan includes unlimited
+            staff accounts, the parent portal, the offline teacher app and AI credits. Your school
+            can grow within its tier during a billing period — we warn you before you reach the
+            limit instead of blocking you.
           </p>
         </div>
 
@@ -56,7 +56,7 @@ function PricingPage() {
           {SUBSCRIPTION_TIERS.map((tier) => (
             <li
               key={tier.id}
-              className="fn-panel flex flex-col p-7 transition-[box-shadow,border-color] duration-150 hover:border-border/80 hover:shadow-raised"
+              className="fn-panel flex flex-col p-7 transition-[box-shadow,border-color] duration-150 hover:border-border/80 hover:shadow-[var(--shadow-raised)]"
             >
               <h2 className="font-display text-lg font-semibold">{tier.label}</h2>
               <p className="mt-4 font-display text-3xl font-semibold tracking-[-0.02em]">

@@ -28,3 +28,58 @@ The requested searches for “best SaaS dashboard UI design 2026”, “modern w
 
 - Validation: `npm run build` and `npm run typecheck`; edited TypeScript files pass ESLint with its Prettier rule disabled. The full-repository lint command is blocked by pre-existing CRLF-versus-LF Prettier errors across the repository.
 - This is a one-time review. No daily scheduler or autonomous design-review service is configured by this workspace.
+
+## 2026-10-02 (second pass)
+
+### Direction
+
+The earlier entry kept the green primary and moved dark surfaces toward neutral zinc. This pass changes
+the visual direction deliberately, at the user's request, to **refined institutional**: deep navy/ink
+foundation with brass accents and confident serif display headings. Geist stays on body and interface
+text so dense tables, forms and figures keep their legibility.
+
+### Design system
+
+- Replaced the green primary with deep navy (`222 62% 21%`) and introduced a brass accent family
+  (`--brass`, `--brass-foreground`, `--brass-soft`) plus `--shadow-brass`. Surfaces moved from neutral
+  gray to a warm parchment base.
+- Added **Fraunces** as the display face, loaded with `SOFT` and `WONK` held at zero for a classical
+  rather than quirky serif; headings track slightly looser to suit the serif.
+- Added two system utilities: `fn-rule` (brass hairline) and `fn-eyebrow` (uppercase micro-label).
+- Tightened the base radius from `0.75rem` to `0.625rem` and recolored every shadow navy-tinted
+  rather than neutral black.
+
+### Shell
+
+- The sidebar is now a deep navy rail with a brass gradient cap, brass active indicator and brass active
+  icons; nav states resolve against `sidebar-*` tokens so they work in both themes. The mobile nav sheet
+  matches it.
+- `PageHeader` gained the brass kicker rule and an optional `eyebrow`; `StatCard` gained an eyebrow label,
+  a brass icon tile and a KPI rule; `BrandMark` became a brass crest whose ink "FN" reads as an engraved
+  seal. `BrandLockup` took an explicit `tone` prop because it is also used on the light marketing pages.
+
+### Bugs found and fixed
+
+- `--shadow-*` tokens sat inside `@theme inline`, which bakes literal values into utilities, so
+  `shadow-overlay`/`shadow-raised`/`shadow-glow` in dialogs, sheets, select and pricing were frozen to
+  light-mode values and dead in dark mode. Moved to `:root`/`.dark` only, with all call sites switched to
+  `shadow-[var(--shadow-*)]`.
+- While doing that, the rewritten `:root` block dropped the light `--shadow-*` declarations entirely and
+  left light mode with no shadows at all. Caught by inspecting the compiled CSS rather than trusting a
+  green build.
+- WCAG checks on the new palette found brass buttons at 3.42:1 and dark-mode primary at 4.15:1. Brass now
+  uses ink-on-gold text (5.18:1) and dark-mode primary was lightened to `217 78% 60%` (5.46:1). The mobile
+  tab bar was also using brass text on a pale tint for a real 10px label at 3.08:1 and now uses foreground
+  text, keeping brass for the tint and rail.
+
+### Verification and scope
+
+- Validation: `npm run typecheck`, `npm run test` (110 passed across 12 files), `npm run build`, and ESLint
+  on every edited TypeScript file. The compiled CSS was inspected directly to confirm the tokens, the new
+  utilities and both themes' shadows were actually emitted.
+- Scope: design system and application shell only. Individual screens inherit the refreshed system but have
+  not been individually reworked yet.
+- `src/styles.css` does not satisfy `prettier --check`, but neither does its previous committed version;
+  the file has never been Prettier-formatted and the edits match its existing style, so it was left alone
+  rather than reformatted into an unrelated diff.
+

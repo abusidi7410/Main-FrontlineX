@@ -56,9 +56,7 @@ function NavLinks({
       {navGroups.map(([group, groupItems]) => (
         <div key={group}>
           {!collapsed ? (
-            <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
-              {group}
-            </p>
+            <p className="fn-eyebrow px-3 pb-2 text-sidebar-foreground/45">{group}</p>
           ) : null}
           <ul className="space-y-1">
             {groupItems.map((item) => {
@@ -75,21 +73,23 @@ function NavLinks({
                       "group relative flex min-h-[2.5rem] items-center rounded-lg text-[13px] font-medium transition-colors duration-150",
                       collapsed ? "justify-center px-0" : "gap-2.5 px-3",
                       active
-                        ? "bg-accent text-foreground"
-                        : "text-sidebar-foreground/75 hover:bg-accent/50 hover:text-foreground",
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
                     )}
                   >
                     {active ? (
                       <span
                         aria-hidden="true"
-                        className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-primary"
+                        className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-primary"
                       />
                     ) : null}
                     <NavIcon
                       name={item.icon}
                       className={cn(
                         "size-4 shrink-0",
-                        active ? "text-primary" : "text-sidebar-foreground/80",
+                        active
+                          ? "text-sidebar-primary"
+                          : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/90",
                       )}
                     />
                     {!collapsed ? <span className="truncate">{item.label}</span> : null}
@@ -130,19 +130,23 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <aside
         className={cn(
-          "fixed inset-y-3 left-3 z-30 hidden flex-col rounded-xl border border-border bg-card shadow-sm lg:flex",
+          "fixed inset-y-3 left-3 z-30 hidden flex-col overflow-hidden rounded-xl border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-[var(--shadow-overlay)] lg:flex",
           sidebarW,
         )}
       >
+        <span
+          aria-hidden="true"
+          className="h-0.5 w-full shrink-0 bg-gradient-to-r from-sidebar-primary via-sidebar-primary/55 to-transparent"
+        />
         <div className="flex h-16 shrink-0 items-center px-4">
           <Link
             to={user.role === "platform_manager" ? "/platform" : "/dashboard"}
-            className="rounded-2xl"
+            className="rounded-lg"
           >
             {sidebarCollapsed ? (
               <BrandMark />
             ) : (
-              <BrandLockup subtitle={school ? school.name : "Platform operations"} />
+              <BrandLockup tone="inverse" subtitle={school ? school.name : "Platform operations"} />
             )}
           </Link>
         </div>
@@ -150,17 +154,19 @@ export function AppShell({ children }: { children: ReactNode }) {
           <NavLinks items={items} pathname={pathname} collapsed={sidebarCollapsed} />
         </div>
         {school && !sidebarCollapsed ? (
-          <div className="mx-3 mb-3 rounded-lg border border-border bg-surface px-3.5 py-3">
-            <span className="inline-flex rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-semibold text-primary">
+          <div className="mx-3 mb-3 rounded-lg border border-sidebar-border bg-sidebar-accent/40 px-3.5 py-3">
+            <span className="inline-flex rounded-full bg-brass px-2 py-0.5 text-[11px] font-semibold text-brass-foreground">
               {school.currentSession}
             </span>
-            <p className="mt-1.5 text-xs font-medium text-muted-foreground">{school.currentTerm}</p>
+            <p className="mt-1.5 text-xs font-medium text-sidebar-foreground/70">
+              {school.currentTerm}
+            </p>
           </div>
         ) : null}
       </aside>
 
       <div className={contentPl}>
-        <header className="sticky top-3 z-20 mx-0 flex h-16 items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-sm sm:px-4">
+        <header className="sticky top-3 z-20 mx-0 flex h-16 items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-[var(--shadow-card)] sm:px-4">
           <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <SheetTrigger asChild>
               <Button
@@ -172,11 +178,18 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Menu className="size-5" aria-hidden="true" />
               </Button>
             </SheetTrigger>
-            <SheetContent side="left" className="w-[17rem] rounded-r-[24px] p-0">
+            <SheetContent
+              side="left"
+              className="w-[17rem] rounded-r-[24px] border-sidebar-border bg-sidebar p-0 text-sidebar-foreground"
+            >
               <SheetTitle className="sr-only">Navigation</SheetTitle>
+              <span
+                aria-hidden="true"
+                className="h-0.5 w-full shrink-0 bg-gradient-to-r from-sidebar-primary via-sidebar-primary/55 to-transparent"
+              />
               <div className="flex h-16 items-center gap-2.5 px-4">
                 <BrandMark />
-                <span className="font-display text-sm font-semibold tracking-tight">
+                <span className="font-display text-sm font-semibold tracking-[-0.012em] text-sidebar-foreground">
                   {school?.name ?? "Frontline Nexus"}
                 </span>
               </div>
@@ -283,7 +296,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <nav
         aria-label="Primary"
-        className="fixed inset-x-3 bottom-3 z-30 grid grid-flow-col rounded-xl border border-border bg-card shadow-md pb-[env(safe-area-inset-bottom)] lg:hidden"
+        className="fixed inset-x-3 bottom-3 z-30 grid grid-flow-col overflow-hidden rounded-xl border border-border bg-card shadow-[var(--shadow-raised)] pb-[env(safe-area-inset-bottom)] lg:hidden"
       >
         {bottomItems.map((item) => {
           const active = isActive(pathname, item.to);
@@ -294,13 +307,15 @@ export function AppShell({ children }: { children: ReactNode }) {
               aria-current={active ? "page" : undefined}
               className={cn(
                 "relative flex min-h-[3.5rem] flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-[10px] font-medium transition-colors duration-150",
-                active ? "text-primary" : "text-muted-foreground hover:text-foreground",
+                active
+                  ? "bg-brass-soft/70 text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {active ? (
                 <span
                   aria-hidden="true"
-                  className="absolute top-0 h-0.5 w-8 rounded-full bg-primary"
+                  className="absolute top-0 h-0.5 w-8 rounded-full bg-brass"
                 />
               ) : null}
               <NavIcon name={item.icon} className="size-[1.125rem]" />

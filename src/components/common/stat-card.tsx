@@ -24,15 +24,16 @@ export function StatCard({
   }[tone];
 
   return (
-    <div className="group rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm transition-[box-shadow,border-color] duration-150 hover:border-border/80 hover:shadow-md">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] font-medium text-muted-foreground">{label}</p>
+    <div className="group relative overflow-hidden rounded-xl border border-border bg-card p-5 text-card-foreground shadow-[var(--shadow-card)] transition-[border-color,box-shadow] duration-150 hover:border-foreground/15 hover:shadow-[var(--shadow-raised)]">
+      <span aria-hidden="true" className="absolute inset-x-0 top-0 h-0.5 bg-brass/70" />
+      <div className="flex items-start justify-between gap-3">
+        <p className="fn-eyebrow pt-1">{label}</p>
         <div className="flex items-center gap-2">
           {trend}
           {icon ? (
             <span
               aria-hidden="true"
-              className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted/70 text-primary"
+              className="grid size-9 shrink-0 place-items-center rounded-lg border border-brass/25 bg-brass-soft text-brass transition-colors duration-150 group-hover:border-brass/45"
             >
               {icon}
             </span>
@@ -41,13 +42,15 @@ export function StatCard({
       </div>
       <p
         className={cn(
-          "mt-4 text-[30px] font-bold leading-none tracking-[-0.03em] tabular-nums",
+          "mt-3 text-[28px] font-semibold leading-none tracking-[-0.02em] tabular-nums",
           toneClass,
         )}
       >
         {value}
       </p>
-      {hint ? <p className="mt-2 text-[13px] text-muted-foreground">{hint}</p> : null}
+      {hint ? (
+        <p className="mt-2.5 text-[13px] leading-relaxed text-muted-foreground">{hint}</p>
+      ) : null}
     </div>
   );
 }
