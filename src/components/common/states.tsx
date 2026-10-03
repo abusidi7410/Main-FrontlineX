@@ -15,36 +15,9 @@ export function EmptyState({
   icon?: ReactNode | undefined;
 }) {
   return (
-    <div className="fn-panel flex flex-col items-center gap-4 px-6 py-10 text-center">
-      <div aria-hidden="true" className="relative mb-2 grid h-24 w-28 place-items-center">
-        <svg viewBox="0 0 112 96" className="absolute inset-0 size-full text-muted-foreground/20">
-          <rect
-            x="20"
-            y="8"
-            width="62"
-            height="54"
-            rx="6"
-            fill="hsl(var(--card))"
-            stroke="currentColor"
-            strokeWidth="1.5"
-          />
-          <rect
-            x="29"
-            y="17"
-            width="62"
-            height="54"
-            rx="6"
-            fill="hsl(var(--background))"
-            stroke="currentColor"
-            strokeWidth="1.5"
-          />
-          <circle cx="43" cy="32" r="5" fill="hsl(var(--brass-soft))" />
-          <path d="M54 29h24M38 45h43M38 54h27" stroke="currentColor" strokeWidth="2" />
-          <circle cx="77" cy="68" r="15" fill="hsl(var(--primary-soft))" />
-        </svg>
-        <span className="absolute bottom-2 right-4 grid size-10 place-items-center rounded-full border-[3px] border-card bg-primary-soft text-primary">
-          {icon ?? <Inbox className="size-5" />}
-        </span>
+    <div className="fn-panel flex flex-col items-center gap-3 px-6 py-14 text-center">
+      <div className="fn-icon-tile size-12 text-primary">
+        {icon ?? <Inbox className="size-6" aria-hidden="true" />}
       </div>
       <h2 className="text-lg font-semibold">{title}</h2>
       <p className="max-w-md text-muted-foreground">{description}</p>
