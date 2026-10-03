@@ -137,6 +137,7 @@ class StudentSerializer(serializers.ModelSerializer):
                 'className': item.class_obj.name,
                 'arm': item.section.name if item.section_id else '',
                 'status': item.status,
+                'reviewNote': item.review_note,
                 'flaggedForReview': item.flagged_for_review,
             }
             for item in history

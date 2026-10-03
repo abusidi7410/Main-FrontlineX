@@ -46,4 +46,13 @@ urlpatterns = [
     path('timetable/entries/<int:pk>/', views.TimetableEntryDetailView.as_view()),
     path('timetable/periods/', views.TimetablePeriodCreateView.as_view()),
     path('timetable/periods/<int:pk>/', views.TimetablePeriodDetailView.as_view()),
+    path('lesson-plans/', views.LessonPlanListCreateView.as_view()),
+    path('lesson-plans/<int:pk>/', views.LessonPlanDetailView.as_view()),
+    path('promotion/policy/', views.PromotionPolicyView.as_view()),
+    path('promotion/classes/', views.PromotionClassesView.as_view()),
+    path('promotion/classes/<str:class_name>/', views.PromotionCandidatesView.as_view()),
+    path(
+        'promotion/classes/<str:class_name>/apply/',
+        views.PromotionApplyView.as_view(),
+    ),
 ]

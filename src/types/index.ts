@@ -127,7 +127,17 @@ export interface Student {
   attendanceRate: number;
   average: number;
   outstandingFees: number;
-  enrollmentHistory: { session: string; className: string; outcome: string }[];
+  enrollmentHistory: EnrollmentHistory[];
+}
+
+export interface EnrollmentHistory {
+  sessionId: string;
+  session: string;
+  className: string;
+  arm: string;
+  status: "not_enrolled" | "active" | "suspended" | "transferred" | "withdrawn" | "completed";
+  reviewNote: string;
+  flaggedForReview: boolean;
 }
 
 export interface StaffMember {
@@ -312,8 +322,10 @@ export interface LessonPlan {
   id: string;
   subject: string;
   className: string;
+  session: string;
+  term: string;
   topic: string;
-  duration: string;
+  durationMinutes: number;
   objectives: string;
   previousKnowledge: string;
   introduction: string;
@@ -323,6 +335,10 @@ export interface LessonPlan {
   assessment: string;
   homework: string;
   updatedAt: string;
+}
+
+export interface LessonPlanInput extends Omit<LessonPlan, "id" | "session" | "term" | "updatedAt"> {
+  id?: string;
 }
 
 /** Monday-first, matching the API and the school calendar. */

@@ -207,10 +207,21 @@ function StudentProfilePage() {
         </div>
         <ul className="divide-y">
           {student.enrollmentHistory.map((entry) => (
-            <li key={entry.session} className="flex flex-wrap items-center gap-x-4 px-5 py-4">
-              <p className="min-w-0 flex-1 font-medium">{entry.session}</p>
-              <p className="text-muted-foreground">{entry.className}</p>
-              <p className="text-muted-foreground">{entry.outcome}</p>
+            <li key={entry.sessionId} className="flex flex-wrap items-center gap-x-4 px-5 py-4">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">{entry.session}</p>
+                {entry.reviewNote ? (
+                  <p className="mt-1 text-sm text-warning">{entry.reviewNote}</p>
+                ) : null}
+              </div>
+              <p className="text-muted-foreground">
+                {entry.className}
+                {entry.arm ? ` ? ${entry.arm}` : ""}
+              </p>
+              <p className="text-muted-foreground">
+                {entry.status.replaceAll("_", " ")}
+                {entry.flaggedForReview ? " ? flagged for review" : ""}
+              </p>
             </li>
           ))}
         </ul>

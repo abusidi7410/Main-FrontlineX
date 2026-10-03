@@ -4,6 +4,7 @@ import type {
   AppNotification,
   AuditEvent,
   LessonPlan,
+  LessonPlanInput,
   ResultSheet,
   ResultSheetStatus,
   ResultSheetSummary,
@@ -271,15 +272,19 @@ export async function getLessonPlans(): Promise<LessonPlan[]> {
   return apiFetch("/lesson-plans");
 }
 
-export async function saveLessonPlan(
-  plan: Omit<LessonPlan, "id" | "updatedAt"> & { id?: string },
-): Promise<LessonPlan> {
-  if (plan.id) {
+export async function saveLessonPlan(plan: LessonPlanInput): Promise<LessonPlan> {
+  const { id, ...input } = plan;
+  if (id) {
     // SECURITY: Backend must verify permission lessonplans.write and schoolId match for the existing plan.
-    return apiFetch(`/lesson-plans/${plan.id}`, { method: "PATCH", body: plan });
+    return apiFetch(`/lesson-plans/${id}`, { method: "PATCH", body: input });
   }
   // SECURITY: Backend must verify permission lessonplans.write and schoolId match.
-  return apiFetch("/lesson-plans", { method: "POST", body: plan });
+  return apiFetch("/lesson-plans", { method: "POST", body: input });
+}
+
+export async function deleteLessonPlan(id: string): Promise<void> {
+  // SECURITY: Backend verifies lessonplans.write and scopes the plan to the caller's school.
+  return apiFetch(`/lesson-plans/${id}`, { method: "DELETE" });
 }
 
 export async function getSchoolAuditLogs(): Promise<AuditEvent[]> {

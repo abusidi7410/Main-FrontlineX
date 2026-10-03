@@ -1,15 +1,28 @@
 import { apiFetch } from "@/api/client";
-import type { Student } from "@/types";
 
-export type PromotionDecision = "promote" | "repeat" | "review";
+export type PromotionDecision = "promote" | "conditional" | "repeat" | "review";
+
+export interface PromotionPolicy {
+  promoteMinAverage: number;
+  promoteMinAttendance: number;
+  conditionalMinAverage: number;
+  conditionalMinAttendance: number;
+  conditionalMaxFailedSubjects: number;
+}
 
 export interface PromotionCandidate {
   studentId: string;
   studentName: string;
   admissionNumber: string;
   className: string;
-  average: number;
-  attendanceRate: number;
+  average: number | null;
+  attendanceRate: number | null;
+  attendanceRecords: number;
+  subjectsAssessed: number;
+  failedSubjects: number;
+  incomplete: boolean;
+  reason: string;
+  isFinalClass: boolean;
   suggested: PromotionDecision;
 }
 
@@ -18,32 +31,53 @@ export interface PromotionClassSummary {
   nextClass: string | null;
   total: number;
   promote: number;
+  conditional: number;
   repeat: number;
   review: number;
+  graduated: number;
+}
+
+export interface PromotionOverview {
+  sourceSession: string;
+  targetSession: string;
+  policy: PromotionPolicy;
+  classes: PromotionClassSummary[];
+}
+
+export interface PromotionClassCandidates {
+  className: string;
+  nextClass: string | null;
+  sourceSession: string;
+  targetSession: string;
+  policy: PromotionPolicy;
+  candidates: PromotionCandidate[];
 }
 
 export interface PromotionApplyResult {
   className: string;
+  sourceSession: string;
+  targetSession: string;
   promoted: number;
+  conditional: number;
   repeated: number;
   underReview: number;
   graduated: number;
 }
 
-export function suggestPromotion(student: Student): PromotionDecision {
-  if (student.average >= 60 && student.attendanceRate >= 70) return "promote";
-  if (student.average >= 45 && student.attendanceRate >= 50) return "review";
-  return "repeat";
-}
-
-export async function listPromotionClasses(): Promise<PromotionClassSummary[]> {
-  // SECURITY: Backend must verify permission students.read and schoolId match.
+export async function listPromotionClasses(): Promise<PromotionOverview> {
   return apiFetch("/promotion/classes");
 }
 
-export async function getPromotionCandidates(className: string): Promise<PromotionCandidate[]> {
-  // SECURITY: Backend must verify permission students.read and schoolId match for the class and every returned student.
+export async function getPromotionCandidates(className: string): Promise<PromotionClassCandidates> {
   return apiFetch(`/promotion/classes/${encodeURIComponent(className)}`);
+}
+
+export async function getPromotionPolicy(): Promise<PromotionPolicy> {
+  return apiFetch("/promotion/policy");
+}
+
+export async function updatePromotionPolicy(policy: PromotionPolicy): Promise<PromotionPolicy> {
+  return apiFetch("/promotion/policy", { method: "PATCH", body: policy });
 }
 
 export async function applyPromotion(

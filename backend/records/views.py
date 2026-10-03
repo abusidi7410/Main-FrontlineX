@@ -33,7 +33,9 @@ from .models import (
     Enrollment,
     FeeStructure,
     Invoice,
+    LessonPlan,
     Payment,
+    PromotionPolicy,
     ResultEntry,
     ResultSheet,
     SchoolClass,
@@ -51,6 +53,7 @@ from .services import attendance as attendance_service
 from .services import billing as billing_service
 from .services import enrollment as enrollment_service
 from .services import results as result_service
+from .services import promotion as promotion_service
 from .services import timetable as timetable_service
 from .student_import import (
     StudentImportError,
@@ -2074,7 +2077,9 @@ class AcademicsView(APIView):
 
         session = (request.data.get('session') or '').strip()
         term = (request.data.get('term') or '').strip()
+        parsed_session = None
         if session:
+            parsed_session = academic_service.parse_session_name(session)
             school.current_session = session
             update.append('current_session')
         if term:
@@ -2139,6 +2144,17 @@ class AcademicsView(APIView):
             raise ValidationError({
                 'session': 'Provide a session, term or calendar setting to update.',
             })
+        if session and parsed_session:
+            start_year, end_year = parsed_session
+            target_session = academic_service.ensure_session(
+                school, session, start_year=start_year, end_year=end_year,
+            )
+            school.sessions.exclude(pk=target_session.pk).filter(is_current=True).update(
+                is_current=False,
+            )
+            target_session.is_active = True
+            target_session.is_current = True
+            target_session.save(update_fields=['is_active', 'is_current'])
         school.save(update_fields=update)
         return Response(self._payload(school))
 
@@ -2382,3 +2398,496 @@ class TimetablePeriodDetailView(APIView):
         )
         period.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def _lesson_plan_payload(plan):
+    return {
+        'id': str(plan.pk),
+        'subject': plan.subject,
+        'className': plan.class_obj.name,
+        'session': plan.academic_session.name,
+        'term': plan.term,
+        'topic': plan.topic,
+        'durationMinutes': plan.duration_minutes,
+        'objectives': plan.objectives,
+        'previousKnowledge': plan.previous_knowledge,
+        'introduction': plan.introduction,
+        'teacherActivities': plan.teacher_activities,
+        'studentActivities': plan.student_activities,
+        'materials': plan.materials,
+        'assessment': plan.assessment,
+        'homework': plan.homework,
+        'updatedAt': plan.updated_at.isoformat(),
+    }
+
+
+def _lesson_plan_class_and_subject(request, school, data, plan=None):
+    class_name = data.get('className', plan.class_obj.name if plan else '')
+    subject = data.get('subject', plan.subject if plan else '')
+    if not isinstance(class_name, str) or not class_name.strip():
+        raise ValidationError({'className': 'Choose a class.'})
+    if not isinstance(subject, str) or not subject.strip():
+        raise ValidationError({'subject': 'Choose a subject.'})
+    if len(class_name.strip()) > 50:
+        raise ValidationError({'className': 'Class names must be 50 characters or fewer.'})
+    if len(subject.strip()) > 100:
+        raise ValidationError({'subject': 'Subject names must be 100 characters or fewer.'})
+    if plan and plan.class_obj.name == class_name.strip():
+        school_class = plan.class_obj
+    else:
+        school_class = get_object_or_404(
+            SchoolClass.objects.filter(school=school, is_active=True),
+            name=class_name.strip(),
+        )
+    subjects = school.subjects or DEFAULT_SUBJECTS
+    canonical_subject = next(
+        (name for name in subjects if name.casefold() == subject.strip().casefold()),
+        plan.subject if plan and plan.subject.casefold() == subject.strip().casefold() else None,
+    )
+    if canonical_subject is None:
+        raise ValidationError({'subject': 'Choose a subject configured for this school.'})
+
+    if request.user.role == 'teacher':
+        staff = getattr(request.user, 'staff_profile', None)
+        if staff is None or staff.status != StaffMember.Status.ACTIVE:
+            raise PermissionDenied('An active teacher profile is required to write lesson plans.')
+        session = academic_service.current_session(school)
+        assigned_as_class_teacher = bool(
+            session
+            and ClassTeacherAssignment.objects.filter(
+                school=school, staff=staff, class_obj=school_class,
+                academic_session=session,
+            ).exists()
+        )
+        timetable_assignment = TimetableEntry.objects.filter(
+            school=school, teacher=staff, class_obj=school_class,
+        )
+        class_assigned = (
+            school_class.name in (staff.classes or [])
+            or assigned_as_class_teacher
+            or timetable_assignment.exists()
+        )
+        subject_assigned = (
+            canonical_subject.casefold() in {
+                value.casefold() for value in (staff.subjects or [])
+            }
+            or timetable_assignment.filter(subject__iexact=canonical_subject).exists()
+            or (assigned_as_class_teacher and not staff.subjects)
+        )
+        if not class_assigned or not subject_assigned:
+            raise PermissionDenied('You can only write plans for your assigned classes and subjects.')
+    return school_class, canonical_subject
+
+
+def _lesson_plan_changes(request, school, plan=None):
+    data = request.data
+    school_class, subject = _lesson_plan_class_and_subject(request, school, data, plan)
+    changes = {'class_obj': school_class, 'subject': subject}
+
+    if 'durationMinutes' in data:
+        try:
+            duration = int(data['durationMinutes'])
+        except (TypeError, ValueError):
+            raise ValidationError({'durationMinutes': 'Enter a whole number of minutes.'})
+        if isinstance(data['durationMinutes'], bool) or not 1 <= duration <= 240:
+            raise ValidationError({'durationMinutes': 'Duration must be between 1 and 240 minutes.'})
+        changes['duration_minutes'] = duration
+    elif plan is None:
+        changes['duration_minutes'] = 40
+
+    for input_name, (model_name, required) in LESSON_PLAN_TEXT_FIELDS.items():
+        if input_name not in data:
+            if plan is None:
+                changes[model_name] = ''
+            continue
+        value = data[input_name]
+        if not isinstance(value, str):
+            raise ValidationError({input_name: 'Enter text.'})
+        value = value.strip()
+        if required and not value:
+            raise ValidationError({input_name: 'This field is required.'})
+        if input_name == 'topic' and len(value) > 200:
+            raise ValidationError({input_name: 'Topic must be 200 characters or fewer.'})
+        if len(value) > 10000:
+            raise ValidationError({input_name: 'Keep this field under 10,000 characters.'})
+        changes[model_name] = value
+
+    if plan is None:
+        session = academic_service.current_session(school) or academic_service.ensure_session(school)
+        changes.update({
+            'school': school,
+            'academic_session': session,
+            'term': school.current_term,
+            'created_by': request.user,
+        })
+    return changes
+
+
+class LessonPlanListCreateView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request):
+        if not has_permission(request.user.role, 'lessonplans.read'):
+            raise PermissionDenied('You do not have permission to read lesson plans.')
+        plans = (
+            LessonPlan.objects.filter(school_id=request.user.school_id)
+            .select_related('class_obj', 'academic_session')
+        )
+        return Response([_lesson_plan_payload(plan) for plan in plans])
+
+    def post(self, request):
+        if not has_permission(request.user.role, 'lessonplans.write'):
+            raise PermissionDenied('You do not have permission to write lesson plans.')
+        school = request.user.school
+        plan = LessonPlan.objects.create(**_lesson_plan_changes(request, school))
+        log_audit(
+            request, 'lesson_plan.created', target=plan.topic,
+            entity='lesson_plan', entity_id=str(plan.pk),
+            after={'className': plan.class_obj.name, 'subject': plan.subject},
+        )
+        return Response(_lesson_plan_payload(plan), status=status.HTTP_201_CREATED)
+
+
+class LessonPlanDetailView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def _get_plan(self, request, pk):
+        return get_object_or_404(
+            LessonPlan.objects.select_related('class_obj', 'academic_session'),
+            pk=pk, school_id=request.user.school_id,
+        )
+
+    def get(self, request, pk):
+        if not has_permission(request.user.role, 'lessonplans.read'):
+            raise PermissionDenied('You do not have permission to read lesson plans.')
+        return Response(_lesson_plan_payload(self._get_plan(request, pk)))
+
+    def patch(self, request, pk):
+        if not has_permission(request.user.role, 'lessonplans.write'):
+            raise PermissionDenied('You do not have permission to write lesson plans.')
+        plan = self._get_plan(request, pk)
+        changes = _lesson_plan_changes(request, request.user.school, plan)
+        for key, value in changes.items():
+            setattr(plan, key, value)
+        plan.save(update_fields=[*changes.keys(), 'updated_at'])
+        log_audit(
+            request, 'lesson_plan.updated', target=plan.topic,
+            entity='lesson_plan', entity_id=str(plan.pk),
+            after={'className': plan.class_obj.name, 'subject': plan.subject},
+        )
+        return Response(_lesson_plan_payload(plan))
+
+    def delete(self, request, pk):
+        if not has_permission(request.user.role, 'lessonplans.write'):
+            raise PermissionDenied('You do not have permission to delete lesson plans.')
+        plan = self._get_plan(request, pk)
+        topic = plan.topic
+        plan.delete()
+        log_audit(
+            request, 'lesson_plan.deleted', target=topic,
+            entity='lesson_plan', entity_id=str(pk), before={'topic': topic},
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ── Promotion centre ──────────────────────────────────────────────────────
+
+def _promotion_policy_payload(policy):
+    return {
+        'promoteMinAverage': float(policy.promote_min_average),
+        'promoteMinAttendance': float(policy.promote_min_attendance),
+        'conditionalMinAverage': float(policy.conditional_min_average),
+        'conditionalMinAttendance': float(policy.conditional_min_attendance),
+        'conditionalMaxFailedSubjects': policy.conditional_max_failed_subjects,
+    }
+
+
+def _promotion_context(school):
+    source = academic_service.current_session(school) or academic_service.ensure_session(school)
+    policy = promotion_service.policy_for(school)
+    return source, policy
+
+
+class PromotionPolicyView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request):
+        if not has_permission(request.user.role, 'academics.read'):
+            raise PermissionDenied('You do not have permission to read promotion policy.')
+        _, policy = _promotion_context(request.user.school)
+        return Response(_promotion_policy_payload(policy))
+
+    def patch(self, request):
+        if not has_permission(request.user.role, 'academics.write'):
+            raise PermissionDenied('You do not have permission to change promotion policy.')
+        _, policy = _promotion_context(request.user.school)
+        fields = {
+            'promoteMinAverage': ('promote_min_average', Decimal),
+            'promoteMinAttendance': ('promote_min_attendance', Decimal),
+            'conditionalMinAverage': ('conditional_min_average', Decimal),
+            'conditionalMinAttendance': ('conditional_min_attendance', Decimal),
+            'conditionalMaxFailedSubjects': ('conditional_max_failed_subjects', int),
+        }
+        unknown = set(request.data) - set(fields)
+        if unknown:
+            raise ValidationError({'detail': f'Unknown policy fields: {", ".join(sorted(unknown))}.'})
+        changes = {}
+        for input_name, (model_name, convert) in fields.items():
+            if input_name not in request.data:
+                continue
+            raw = request.data[input_name]
+            try:
+                value = convert(str(raw)) if convert is Decimal else convert(raw)
+            except (TypeError, ValueError, InvalidOperation):
+                raise ValidationError({input_name: 'Enter a valid numeric value.'})
+            if isinstance(raw, bool):
+                raise ValidationError({input_name: 'Enter a valid numeric value.'})
+            if convert is Decimal and (value < 0 or value > 100):
+                raise ValidationError({input_name: 'Enter a percentage from 0 to 100.'})
+            if convert is int and (str(raw) != str(value) or value < 0 or value > 20):
+                raise ValidationError({input_name: 'Enter a whole number from 0 to 20.'})
+            changes[model_name] = value
+        if not changes:
+            raise ValidationError({'detail': 'Provide at least one policy setting.'})
+        values = {
+            model_name: getattr(policy, model_name)
+            for model_name, _ in fields.values()
+        }
+        values.update(changes)
+        if values['conditional_min_average'] > values['promote_min_average']:
+            raise ValidationError({
+                'conditionalMinAverage': 'The conditional threshold cannot exceed the promotion threshold.',
+            })
+        if values['conditional_min_attendance'] > values['promote_min_attendance']:
+            raise ValidationError({
+                'conditionalMinAttendance': 'The conditional threshold cannot exceed the promotion threshold.',
+            })
+        for field, value in changes.items():
+            setattr(policy, field, value)
+        policy.save(update_fields=[*changes.keys(), 'updated_at'])
+        log_audit(
+            request, 'promotion.policy_updated', target=request.user.school.name,
+            entity='promotion_policy', entity_id=str(policy.pk),
+            after={key: str(value) for key, value in changes.items()},
+        )
+        return Response(_promotion_policy_payload(policy))
+
+
+class PromotionClassesView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request):
+        if not has_permission(request.user.role, 'academics.read'):
+            raise PermissionDenied('You do not have permission to review promotion candidates.')
+        source, policy = _promotion_context(request.user.school)
+        return Response({
+            'sourceSession': source.name,
+            'targetSession': promotion_service.next_session_name(source),
+            'policy': _promotion_policy_payload(policy),
+            'classes': promotion_service.class_summaries(request.user.school, source, policy),
+        })
+
+
+class PromotionCandidatesView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request, class_name):
+        if not has_permission(request.user.role, 'academics.read'):
+            raise PermissionDenied('You do not have permission to review promotion candidates.')
+        school = request.user.school
+        school_class = get_object_or_404(
+            SchoolClass.objects.filter(school=school, is_active=True).select_related('level'),
+            name=class_name,
+        )
+        source, policy = _promotion_context(school)
+        destination = promotion_service.next_class_for(school_class)
+        return Response({
+            'className': school_class.name,
+            'nextClass': destination.name if destination else None,
+            'sourceSession': source.name,
+            'targetSession': promotion_service.next_session_name(source),
+            'policy': _promotion_policy_payload(policy),
+            'candidates': promotion_service.candidates_for(
+                school, source, school_class, policy,
+            ),
+        })
+
+
+class PromotionApplyView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def post(self, request, class_name):
+        if not (
+            has_permission(request.user.role, 'students.write')
+            and has_permission(request.user.role, 'academics.write')
+        ):
+            raise PermissionDenied('You do not have permission to apply promotion decisions.')
+        school = request.user.school
+        school_class = get_object_or_404(
+            SchoolClass.objects.filter(school=school, is_active=True).select_related('level'),
+            name=class_name,
+        )
+        source, policy = _promotion_context(school)
+        candidates = promotion_service.candidates_for(school, source, school_class, policy)
+        candidate_ids = {candidate['studentId'] for candidate in candidates}
+        if not candidates:
+            raise ValidationError({'decisions': 'There are no active students to process in this class.'})
+        decisions = request.data.get('decisions')
+        if not isinstance(decisions, dict):
+            raise ValidationError({'decisions': 'Send a decision for every active student in the class.'})
+        if set(decisions) != candidate_ids:
+            raise ValidationError({
+                'decisions': 'The class roster changed. Reload the candidates before applying decisions.',
+            })
+        invalid = {
+            student_id: decision for student_id, decision in decisions.items()
+            if not isinstance(decision, str) or decision not in promotion_service.DECISIONS
+        }
+        if invalid:
+            raise ValidationError({'decisions': 'Choose a valid promotion decision for every student.'})
+
+        destination_name = promotion_service.next_session_name(source)
+        destination_start, destination_end = academic_service.parse_session_name(destination_name)
+        destination_class = promotion_service.next_class_for(school_class)
+        result = {
+            'className': school_class.name,
+            'sourceSession': source.name,
+            'targetSession': destination_name,
+            'promoted': 0,
+            'conditional': 0,
+            'repeated': 0,
+            'underReview': 0,
+            'graduated': 0,
+        }
+        with transaction.atomic():
+            active_enrollments = list(
+                Enrollment.objects.select_for_update().filter(
+                    school=school,
+                    academic_session=source,
+                    class_obj=school_class,
+                    status=Enrollment.Status.ACTIVE,
+                    student__status=Student.Status.ACTIVE,
+                ).select_related('student', 'section')
+            )
+            current_ids = {str(row.student_id) for row in active_enrollments}
+            if current_ids != candidate_ids:
+                raise ValidationError({
+                    'decisions': 'The class roster changed. Reload the candidates before applying decisions.',
+                })
+            needs_destination = any(
+                decision != 'review'
+                and not (decision == 'promote' and destination_class is None)
+                for decision in decisions.values()
+            )
+            target = None
+            if needs_destination:
+                target, _ = AcademicSession.objects.get_or_create(
+                    school=school,
+                    name=destination_name,
+                    defaults={
+                        'start_year': destination_start,
+                        'end_year': destination_end,
+                        'is_active': True,
+                    },
+                )
+                if not target.is_active:
+                    raise ValidationError({'targetSession': 'The next academic session is inactive.'})
+            moving_ids = [
+                row.student_id for row in active_enrollments
+                if decisions[str(row.student_id)] != 'review'
+                and not (
+                    decisions[str(row.student_id)] == 'promote'
+                    and destination_class is None
+                )
+            ]
+            existing_target = (
+                Enrollment.objects.filter(
+                    school=school,
+                    academic_session=target,
+                    student_id__in=moving_ids,
+                    status=Enrollment.Status.ACTIVE,
+                ).exists()
+                if target is not None else False
+            )
+            if existing_target:
+                raise ValidationError({
+                    'targetSession': 'Some students already have an active enrolment in the next session.',
+                })
+
+            candidate_by_id = {candidate['studentId']: candidate for candidate in candidates}
+            for previous in active_enrollments:
+                student = previous.student
+                decision = decisions[str(student.pk)]
+                student_summary = candidate_by_id[str(student.pk)]
+                if decision == 'review':
+                    result['underReview'] += 1
+                    log_audit(
+                        request, 'student.promotion_reviewed', target=student.admission_number,
+                        entity='student', entity_id=str(student.pk),
+                        after={'decision': 'review', 'session': source.name},
+                    )
+                    continue
+
+                if decision == 'promote' and destination_class is None:
+                    previous.status = Enrollment.Status.COMPLETED
+                    previous.review_note = ''
+                    previous.save(update_fields=['status', 'review_note', 'updated_at'])
+                    student.status = Student.Status.GRADUATED
+                    student.save(update_fields=['status', 'updated_at'])
+                    result['graduated'] += 1
+                    log_audit(
+                        request, 'student.graduated', target=student.admission_number,
+                        detail=f'Graduated after {source.name}.',
+                        entity='student', entity_id=str(student.pk),
+                        before={'className': school_class.name, 'session': source.name},
+                        after={'status': Student.Status.GRADUATED, 'session': destination_name},
+                    )
+                    continue
+
+                if decision in ('promote', 'conditional'):
+                    if destination_class is None:
+                        raise ValidationError({
+                            'decisions': 'Students in the final class can only graduate, repeat or be reviewed.',
+                        })
+                    target_class = destination_class
+                    result['promoted' if decision == 'promote' else 'conditional'] += 1
+                else:
+                    target_class = school_class
+                    result['repeated'] += 1
+
+                section = None
+                if previous.section_id:
+                    if target_class.pk == school_class.pk:
+                        section = previous.section
+                    else:
+                        section = target_class.sections.filter(
+                            is_active=True, name=previous.section.name,
+                        ).first()
+                promoted = enrollment_service.promote_student(
+                    student,
+                    from_session=source,
+                    to_session=target,
+                    class_obj=target_class,
+                    section=section,
+                    actor=request.user,
+                )
+                if decision == 'conditional':
+                    promoted.review_note = (
+                        f'Promoted with conditions: average {student_summary["average"]}%, '
+                        f'attendance {student_summary["attendanceRate"]}%, '
+                        f'{student_summary["failedSubjects"]} failed subject(s).'
+                    )[:255]
+                    promoted.save(update_fields=['review_note', 'updated_at'])
+                log_audit(
+                    request, 'student.promoted', target=student.admission_number,
+                    detail=f'{source.name} {school_class.name} -> {target.name} {target_class.name}',
+                    entity='student', entity_id=str(student.pk),
+                    before={'className': school_class.name, 'session': source.name},
+                    after={
+                        'decision': decision,
+                        'className': target_class.name,
+                        'session': target.name,
+                        'reviewNote': promoted.review_note,
+                    },
+                )
+        return Response(result)

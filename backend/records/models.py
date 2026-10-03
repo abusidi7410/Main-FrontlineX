@@ -834,6 +834,93 @@ class Enrollment(models.Model):
         return f'{self.student_id} {self.class_obj_id} {self.status}'
 
 
+class PromotionPolicy(models.Model):
+    """Per-school thresholds used to make explainable promotion suggestions.
+
+    A suggestion never changes an enrolment by itself; an authorised school
+    administrator still reviews and applies each class's decisions.
+    """
+
+    school = models.OneToOneField(
+        School, on_delete=models.CASCADE, related_name='promotion_policy',
+    )
+    promote_min_average = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('50.00'),
+    )
+    promote_min_attendance = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('75.00'),
+    )
+    conditional_min_average = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('40.00'),
+    )
+    conditional_min_attendance = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('50.00'),
+    )
+    conditional_max_failed_subjects = models.PositiveSmallIntegerField(default=2)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(promote_min_average__gte=0, promote_min_average__lte=100)
+                    & Q(promote_min_attendance__gte=0, promote_min_attendance__lte=100)
+                    & Q(conditional_min_average__gte=0, conditional_min_average__lte=100)
+                    & Q(conditional_min_attendance__gte=0, conditional_min_attendance__lte=100)
+                    & Q(conditional_min_average__lte=F('promote_min_average'))
+                    & Q(conditional_min_attendance__lte=F('promote_min_attendance'))
+                    & Q(conditional_max_failed_subjects__lte=20)
+                ),
+                name='promotion_policy_ranges',
+            ),
+        ]
+
+
+class LessonPlan(models.Model):
+    """A teacher's lesson plan anchored to the school's class and session."""
+
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='lesson_plans')
+    class_obj = models.ForeignKey(
+        SchoolClass, on_delete=models.PROTECT, related_name='lesson_plans',
+    )
+    academic_session = models.ForeignKey(
+        AcademicSession, on_delete=models.PROTECT, related_name='lesson_plans',
+    )
+    term = models.CharField(max_length=50)
+    subject = models.CharField(max_length=100)
+    topic = models.CharField(max_length=200)
+    duration_minutes = models.PositiveSmallIntegerField(default=40)
+    objectives = models.TextField()
+    previous_knowledge = models.TextField(blank=True, default='')
+    introduction = models.TextField(blank=True, default='')
+    teacher_activities = models.TextField(blank=True, default='')
+    student_activities = models.TextField(blank=True, default='')
+    materials = models.TextField(blank=True, default='')
+    assessment = models.TextField(blank=True, default='')
+    homework = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='lesson_plans',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at', '-id']
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(duration_minutes__gte=1, duration_minutes__lte=240),
+                name='lesson_plan_duration_range',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['school', 'academic_session', 'class_obj']),
+        ]
+
+    def __str__(self):
+        return f'{self.class_obj.name} {self.subject}: {self.topic}'
+
+
 class ImportBatch(models.Model):
     """Auditable record of one bulk student-migration run (spec §64-§66)."""
 
