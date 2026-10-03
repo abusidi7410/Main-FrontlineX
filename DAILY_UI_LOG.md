@@ -83,3 +83,36 @@ text so dense tables, forms and figures keep their legibility.
   the file has never been Prettier-formatted and the edits match its existing style, so it was left alone
   rather than reformatted into an unrelated diff.
 
+## 2026-10-03
+
+### References reviewed
+
+- [Linear](https://linear.app) — concise, task-oriented product language and focused activity details.
+- [Stripe](https://stripe.com) — direct product messaging anchored in concrete customer needs.
+- [Vercel](https://vercel.com) — clear product groupings, customer examples, and restrained page structure.
+- [Framer](https://www.framer.com) — editorial sectioning and customer-led product presentation.
+- [Figma](https://www.figma.com) — collaboration-centered language and customer context.
+- [Notion](https://www.notion.com) — a specific product promise supported by its product imagery.
+- [Awwwards SaaS directory](https://www.awwwards.com/websites/saas/) — a directory for browsing current SaaS presentation examples.
+
+The three requested search phrases were attempted. Google exposed no usable result listings and Bing returned
+irrelevant results, so no trend claims are attributed to search snippets. The reference review used the
+seven live product/directory pages above and the content their pages made available in this environment.
+
+### Frontend review and changes
+
+- Replaced warm-tinted light surfaces and blue-tinted dark surfaces with a consistent zinc neutral palette;
+  kept the existing navy primary hue, semantic status colors, brass brand accent, and explicit theme toggle.
+- Reworked the shared empty state with a small, theme-aware vector illustration and tighter vertical spacing.
+  Its vertical rhythm uses the existing 8px spacing grid; screen-specific copy and actions remain intact.
+- Confirmed the existing interface uses Geist for interface text and Fraunces for display headings, actual
+  service-backed dashboard figures, responsive layouts, and no generic gradient hero or repeated 3-card hero.
+
+### Verification and scope
+
+- Validation: `npm run build` passed; `npm run test` passed (187 tests across 17 files); targeted ESLint
+  and `git diff --check` passed. Contrast checks for primary and muted text in both themes were at least
+  4.65:1. `npm run typecheck` remains blocked by three TS2532 errors in the pre-existing untracked
+  `src/features/notifications/__tests__/notification-model.test.ts` at lines 146, 154, and 155.
+- No daily scheduler or unattended review/push service is configured. This entry records today's pass only;
+  recurring autonomous frontend edits and pushes are not enabled.
