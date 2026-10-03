@@ -1,5 +1,5 @@
 import { apiFetch } from "@/api/client";
-import type { PlatformOverview, PlatformOverviewRange, PlatformSchool } from "@/types";
+import type { Announcement, PlatformOverview, PlatformOverviewRange, PlatformSchool } from "@/types";
 
 export async function getPlatformOverview(
   range: PlatformOverviewRange = "30d",
@@ -131,14 +131,12 @@ export async function setSupportTicketStatus(
   return apiFetch(`/platform/support/tickets/${id}/status`, { method: "POST", body: { status } });
 }
 
-export interface PlatformBroadcast {
-  id: string;
-  title: string;
-  body: string;
-  audience: string[];
-  createdAt: string;
-  author: string;
-}
+/**
+ * A broadcast is the same wire shape as a school announcement — the platform
+ * endpoint and the school board now share one serialiser — so it is aliased
+ * rather than redeclared. Two copies of one shape is how they drift.
+ */
+export type PlatformBroadcast = Announcement;
 
 export async function listBroadcasts(): Promise<PlatformBroadcast[]> {
   // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.

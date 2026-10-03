@@ -8,6 +8,7 @@ no other test would catch. So the migration is exercised directly here.
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
+from rest_framework.test import APIClient
 
 from accounts.models import User
 from records.models import Enrollment, Level, SchoolClass, Section, Student
@@ -18,7 +19,6 @@ class BackfillMigrationTests(TransactionTestCase):
     """Migrate back to the pre-backfill state, seed legacy data, migrate forward."""
 
     migrate_from = [('records', '0002_admission_foundation')]
-    migrate_to = [('records', '0008_attendance_daily_register')]
 
     def _migrate(self, targets):
         executor = MigrationExecutor(connection)
@@ -26,15 +26,28 @@ class BackfillMigrationTests(TransactionTestCase):
         executor.migrate(targets)
         return executor.loader.project_state(targets).apps
 
+    def _migrate_to_latest(self):
+        """Forward to every app's leaf node, not to a single `records` target.
+
+        Rolling `records` back to 0002 also rolls back everything that *depends*
+        on it — `schools.0014`, `schools.0015`, `accounts.0005`,
+        `accounts.0006`. Django will not bring those back when the forward
+        target is only a `records` node, because they are its descendants, not
+        its ancestors. Restoring just `records.0008` therefore left the schema
+        permanently missing `accounts_user.last_login_ip` and the notification
+        tables for every test that ran afterwards in the same process.
+        """
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        return self._migrate(executor.loader.graph.leaf_nodes())
+
     def setUp(self):
         self.old_apps = self._migrate(self.migrate_from)
 
     def tearDown(self):
-        # Re-apply the latest migration so the schema matches the rest of the
-        # suite; unapplying a leaf node is not a valid target.
-        executor = MigrationExecutor(connection)
-        executor.loader.build_graph()
-        executor.migrate(self.migrate_to)
+        # Re-apply every migration so the schema matches the rest of the suite;
+        # unapplying a leaf node is not a valid target.
+        self._migrate_to_latest()
 
     def test_legacy_students_gain_class_section_and_enrollment(self):
         SchoolModel = self.old_apps.get_model('schools', 'School')
@@ -57,7 +70,7 @@ class BackfillMigrationTests(TransactionTestCase):
 
         school_id = school.pk
 
-        self._migrate(self.migrate_to)
+        self._migrate_to_latest()
 
         self.assertEqual(Student.objects.filter(school_id=school_id).count(), 3)
         # Levels, class and sections were created for the legacy names.
@@ -93,13 +106,13 @@ class BackfillMigrationTests(TransactionTestCase):
 
         school_id = school.pk
 
-        self._migrate(self.migrate_to)
+        self._migrate_to_latest()
         first = Enrollment.objects.filter(school_id=school_id).count()
         self.assertEqual(first, 1)
         # Re-running must not create a second active enrollment (the partial
         # unique index would raise IntegrityError).
         school_id = school.pk
-        self._migrate(self.migrate_to)
+        self._migrate_to_latest()
         self.assertEqual(Enrollment.objects.filter(school_id=school_id).count(), 1)
 
     def test_school_without_a_usable_session_is_skipped_safely(self):
@@ -116,7 +129,7 @@ class BackfillMigrationTests(TransactionTestCase):
         )
         # Must not raise; the student is left for an operator to enroll.
         school_id = school.pk
-        self._migrate(self.migrate_to)
+        self._migrate_to_latest()
         self.assertEqual(Enrollment.objects.filter(school_id=school_id).count(), 0)
         self.assertTrue(Student.objects.filter(school_id=school_id).exists())
 
@@ -133,7 +146,7 @@ class BackfillMigrationTests(TransactionTestCase):
             last_name='B', gender='male', class_name='Band 7', arm='', status='active',
         )
         school_id = school.pk
-        self._migrate(self.migrate_to)
+        self._migrate_to_latest()
         # The student survives and is enrolled under a real level.
         enrollment = Enrollment.objects.get(school_id=school_id)
         self.assertEqual(enrollment.class_obj.name, 'Band 7')
@@ -154,14 +167,11 @@ class BackfillMigrationTests(TransactionTestCase):
             status='active',
         )
         school_id = school.pk
-        self._migrate(self.migrate_to)
+        self._migrate_to_latest()
 
-        from accounts.models import User as RealUser
-        from rest_framework.test import APIClient
-
-        admin = RealUser.objects.create_user(
+        admin = User.objects.create_user(
             email='ros-admin@example.com', password='Strong-Pass-1!',
-            first_name='Ros', last_name='Admin', role=RealUser.Role.SCHOOL_ADMIN,
+            first_name='Ros', last_name='Admin', role=User.Role.SCHOOL_ADMIN,
             school_id=school.id, is_active=True,
         )
         client = APIClient()

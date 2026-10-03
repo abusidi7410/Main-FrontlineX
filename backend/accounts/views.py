@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.conf import settings
+from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import status
@@ -45,6 +46,40 @@ def _set_refresh_cookie(response, refresh_token):
 def _issue_tokens(user):
     refresh = RefreshToken.for_user(user)
     return str(refresh.access_token), refresh
+
+
+def _client_ip(request):
+    """The caller's address, honouring the proxy header Railway and friends set.
+
+    The left-most entry is the original client; the rest are proxies we added.
+    """
+    forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR') or ''
+
+
+def _record_login(request, user):
+    """Stamp this sign-in and tell the account if it came from somewhere new.
+
+    `last_login` is maintained by hand because this endpoint authenticates a JWT
+    directly and never calls `django.contrib.auth.login()`, so nothing else would
+    update it. A `security` notification is raised only when a *previous* address
+    is on record and differs — the first ever sign-in from a device is the normal
+    case, and warning about it would train people to ignore the warning.
+    """
+    address = _client_ip(request)
+    previous = user.last_login_ip
+    user.last_login = timezone.now()
+    if address:
+        user.last_login_ip = address
+    user.save(update_fields=['last_login', 'last_login_ip'])
+
+    if previous and address and previous != address:
+        # Imported here rather than at module scope: records.services imports
+        # accounts.services, so a top-level import would be circular.
+        from records.services import events as event_service
+        event_service.new_login(user, ip=address, previous_ip=previous)
 
 
 def _session_payload(user, access_token):
@@ -109,6 +144,7 @@ class LoginView(APIView):
             )
 
         access_token, refresh = _issue_tokens(user)
+        _record_login(request, user)
         resp = Response(_session_payload(user, access_token))
         return _set_refresh_cookie(resp, refresh)
 
@@ -217,6 +253,10 @@ class ChangePasswordView(APIView):
 
         request.user.set_password(serializer.validated_data['next'])
         request.user.save(update_fields=['password'])
+        # A password change is the one security event the account holder can act
+        # on immediately, so it goes to their own inbox as proof of the change.
+        from records.services import events as event_service
+        event_service.password_changed(request.user)
 
         return Response({'ok': True, 'detail': 'Password changed successfully.'})
 

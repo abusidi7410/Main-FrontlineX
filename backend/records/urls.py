@@ -55,4 +55,12 @@ urlpatterns = [
         'promotion/classes/<str:class_name>/apply/',
         views.PromotionApplyView.as_view(),
     ),
+    # Notifications are self-service (the caller's own inbox), so they sit
+    # here under records rather than under accounts: no role permission applies.
+    path('notifications/', views.NotificationListView.as_view()),
+    path('notifications/read-all/', views.NotificationReadAllView.as_view()),
+    path('notifications/preferences/', views.NotificationPreferenceView.as_view()),
+    path('notifications/<int:pk>/read/', views.NotificationMarkReadView.as_view()),
+    path('announcements/', views.AnnouncementListCreateView.as_view()),
+    path('announcements/<int:pk>/', views.AnnouncementDetailView.as_view()),
 ]

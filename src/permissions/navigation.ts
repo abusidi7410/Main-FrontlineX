@@ -28,6 +28,7 @@ const SCHOOL_ADMIN: NavItem[] = [
   { label: "Finance", to: "/finance", icon: "wallet", group: "Finance", mobile: true },
   { label: "Invoices", to: "/finance/invoices", icon: "receipt", group: "Finance" },
   { label: "Announcements", to: "/communication", icon: "megaphone", group: "Engagement" },
+  { label: "Notifications", to: "/notifications", icon: "bell", group: "Engagement" },
   { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Engagement" },
   { label: "Reports", to: "/reports", icon: "chart", group: "Manage" },
   { label: "Subscription", to: "/subscription", icon: "creditCard", group: "Manage" },
@@ -56,6 +57,7 @@ const PRINCIPAL: NavItem[] = [
   { label: "Promotion Centre", to: "/promotion", icon: "promotion", group: "Academics" },
   { label: "Invoices", to: "/finance/invoices", icon: "receipt", group: "Finance" },
   { label: "Announcements", to: "/communication", icon: "megaphone", group: "Engagement" },
+  { label: "Notifications", to: "/notifications", icon: "bell", group: "Engagement" },
   { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Engagement" },
   { label: "Reports", to: "/reports", icon: "chart", group: "Manage" },
   // Settings is where the Payment Structure lives, so a principal needs it in
@@ -78,6 +80,7 @@ const TEACHER: NavItem[] = [
   { label: "Results", to: "/results", icon: "award", group: "Teaching", mobile: true },
   { label: "Lesson Plans", to: "/lesson-plans", icon: "notebook", group: "Teaching" },
   { label: "Timetable", to: "/timetable", icon: "calendar", group: "Teaching" },
+  { label: "Notifications", to: "/notifications", icon: "bell", group: "Teaching" },
   { label: "Sync Centre", to: "/sync", icon: "refresh", group: "Device" },
   { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Device", mobile: true },
 ];
@@ -87,6 +90,7 @@ const ACCOUNTANT: NavItem[] = [
   { label: "Students", to: "/students", icon: "users", group: "Finance" },
   { label: "Invoices", to: "/finance/invoices", icon: "receipt", group: "Finance", mobile: true },
   { label: "Payments", to: "/finance", icon: "wallet", group: "Finance", mobile: true },
+  { label: "Notifications", to: "/notifications", icon: "bell", group: "Finance" },
   { label: "Reports", to: "/reports", icon: "chart", group: "Finance" },
   { label: "Settings", to: "/settings", icon: "settings", group: "Support" },
   { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Support", mobile: true },
@@ -104,6 +108,7 @@ const SECRETARY: NavItem[] = [
     group: "Engagement",
     mobile: true,
   },
+  { label: "Notifications", to: "/notifications", icon: "bell", group: "Engagement" },
 ];
 
 const PARENT: NavItem[] = [
@@ -111,6 +116,7 @@ const PARENT: NavItem[] = [
   { label: "My Children", to: "/children", icon: "users", group: "Family", mobile: true },
   { label: "Fees", to: "/fees", icon: "wallet", group: "Family", mobile: true },
   { label: "Announcements", to: "/communication", icon: "megaphone", group: "School" },
+  { label: "Notifications", to: "/notifications", icon: "bell", group: "School" },
   { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "School", mobile: true },
 ];
 
@@ -119,6 +125,7 @@ const STUDENT: NavItem[] = [
   { label: "Timetable", to: "/timetable", icon: "calendar", group: "Learning", mobile: true },
   { label: "Results", to: "/results", icon: "award", group: "Learning", mobile: true },
   { label: "Announcements", to: "/communication", icon: "megaphone", group: "School" },
+  { label: "Notifications", to: "/notifications", icon: "bell", group: "School" },
   { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "School", mobile: true },
 ];
 
@@ -133,6 +140,7 @@ const PLATFORM: NavItem[] = [
     mobile: true,
   },
   { label: "Analytics", to: "/platform/analytics", icon: "chart", group: "Revenue" },
+  { label: "Notifications", to: "/notifications", icon: "bell", group: "Operations" },
   {
     label: "Security & Audit",
     to: "/platform/security",

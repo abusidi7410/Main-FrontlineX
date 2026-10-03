@@ -292,30 +292,63 @@ export interface MyPublishedResult extends ResultReportEntry {
   session: string;
 }
 
+export type NotificationType =
+  | "payment"
+  | "attendance"
+  | "result"
+  | "announcement"
+  | "subscription"
+  | "ai"
+  | "security"
+  | "system";
+
 export interface Announcement {
   id: string;
   title: string;
   body: string;
+  /** Composer labels, already filtered to the ones this audience covers. */
   audience: string[];
   createdAt: string;
   author: string;
+  /** A pinned notice stays at the top of the board regardless of its date. */
+  isPinned: boolean;
+  /** ISO 8601, or null when the notice does not expire. */
+  expiresAt: string | null;
+  scope: "school" | "platform";
 }
 
 export interface AppNotification {
   id: string;
-  type:
-    | "payment"
-    | "attendance"
-    | "result"
-    | "announcement"
-    | "subscription"
-    | "ai"
-    | "security"
-    | "system";
+  type: NotificationType;
   title: string;
   body: string;
   createdAt: string;
   read: boolean;
+  readAt: string | null;
+  /** In-app route the notification opens, e.g. "/fees". Empty when none. */
+  link: string;
+}
+
+/**
+ * One page of the feed, plus the unread total.
+ *
+ * `unread` rides along with every poll because the header badge needs it and
+ * splitting it into a second request would double the traffic of the most
+ * frequently called endpoint in the app.
+ */
+export interface NotificationPage {
+  results: AppNotification[];
+  count: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  unread: number;
+}
+
+export interface NotificationPreference {
+  type: NotificationType;
+  label: string;
+  inApp: boolean;
 }
 
 export interface LessonPlan {

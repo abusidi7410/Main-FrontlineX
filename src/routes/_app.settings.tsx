@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/auth/session";
 import { PaymentStructurePanel } from "@/features/finance/payment-structure-panel";
+import { NotificationPreferencesPanel } from "@/features/notifications/notification-preferences-panel";
 import { ROLE_LABELS } from "@/permissions";
 
 export const Route = createFileRoute("/_app/settings")({
@@ -42,12 +43,6 @@ function SettingsPage() {
   const [address, setAddress] = useState(school?.address ?? "");
   const [currentSession, setCurrentSession] = useState(school?.currentSession ?? "");
   const [currentTerm, setCurrentTerm] = useState(school?.currentTerm ?? "");
-  const [notify, setNotify] = useState({
-    payments: true,
-    attendance: true,
-    results: true,
-    digest: false,
-  });
 
   return (
     <PermissionGate anyOf={["settings.read", "finance.read"]}>
@@ -186,49 +181,11 @@ function SettingsPage() {
           </TabsContent>
 
           <TabsContent value="notifications" className="mt-4">
-            <div className="fn-panel divide-y p-0">
-              {(
-                [
-                  [
-                    "payments",
-                    "Fee payments",
-                    "Alert me when a payment is recorded or needs verification.",
-                  ],
-                  [
-                    "attendance",
-                    "Attendance gaps",
-                    "Alert me when a class register isn't submitted by 10am.",
-                  ],
-                  [
-                    "results",
-                    "Result approvals",
-                    "Alert me when result sheets are submitted for review.",
-                  ],
-                  [
-                    "digest",
-                    "Weekly digest",
-                    "Email me a summary of school activity every Monday.",
-                  ],
-                ] as const
-              ).map(([key, title, description]) => (
-                <div key={key} className="flex items-center justify-between gap-4 p-5">
-                  <div className="min-w-0">
-                    <Label htmlFor={`notify-${key}`} className="font-medium">
-                      {title}
-                    </Label>
-                    <p className="text-sm text-muted-foreground">{description}</p>
-                  </div>
-                  <Switch
-                    id={`notify-${key}`}
-                    checked={notify[key]}
-                    onCheckedChange={(checked) => {
-                      setNotify((prev) => ({ ...prev, [key]: checked }));
-                      toast.success(`${title} notifications ${checked ? "enabled" : "disabled"}`);
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
+            <NotificationPreferencesPanel />
+            <p className="mt-3 text-sm text-muted-foreground">
+              These switches control only what reaches your own inbox. Turning one off stops new
+              notifications of that type; anything already delivered stays where it is.
+            </p>
           </TabsContent>
 
           <TabsContent value="security" className="mt-4">

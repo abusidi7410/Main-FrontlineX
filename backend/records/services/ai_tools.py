@@ -39,6 +39,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from accounts.permissions import has_permission
 
+from . import announcements as announcement_service
 from . import attendance as attendance_service
 from . import billing, clearance
 from . import enrollment as enrollment_service
@@ -55,7 +56,6 @@ from ..models import (
     StaffMember,
     Student,
 )
-from schools.models import Announcement
 
 #: Every assistant permission in the role matrix.
 AI_PERMISSIONS = (
@@ -494,12 +494,23 @@ def get_enrollment_summary(user) -> dict:
 
 
 def get_announcements(user, *, limit: int = 10) -> dict:
+    """Recent announcements the caller is actually entitled to read.
+
+    Goes through the same audience rules as the announcements screen, so the
+    assistant cannot be used as a way around a staff-only notice: a parent
+    asking the assistant for announcements gets the parents' notices and no
+    others.
+    """
     return {
         'announcements': [
-            {'title': item.title, 'body': item.body, 'publishedAt': item.created_at.isoformat()}
-            for item in Announcement.objects.filter(
-                school_id=user.school_id,
-            )[:limit]
+            {
+                'title': item.title,
+                'body': item.body,
+                'audience': announcement_service.normalise_audience(item.audience),
+                'pinned': item.is_pinned,
+                'publishedAt': item.created_at.isoformat(),
+            }
+            for item in announcement_service.visible_to(user)[:limit]
         ],
     }
 

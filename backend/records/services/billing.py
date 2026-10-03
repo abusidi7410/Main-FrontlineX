@@ -409,6 +409,13 @@ def activate_student_if_fully_paid(student) -> bool:
         return False
     student.status = Student.Status.ACTIVE
     student.save(update_fields=['status'])
+    # Notified from here rather than at each of the three call sites: this is the
+    # one place the status actually flips, so it is the one place that cannot be
+    # forgotten and cannot notify for a promotion that did not happen.
+    # Imported inside the function because records.services.events imports this
+    # module's neighbours, and a top-level import would be circular.
+    from records.services import events as event_service
+    event_service.student_activated(student)
     return True
 
 

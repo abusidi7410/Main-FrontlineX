@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from accounts.models import User
 from accounts.permissions import IsSuperAdmin
 from records.models import Student
+from records.services import announcements as announcement_service
 from .models import Announcement, AuditLog, School, SchoolSubscription, SubscriptionPlan, SupportTicket
 
 PLATFORM_STATUSES = {'active', 'trial', 'grace', 'pending_payment', 'suspended'}
@@ -668,19 +669,22 @@ class PlatformAnnouncementListView(APIView):
 
     def get(self, request):
         items = Announcement.objects.filter(scope=Announcement.Scope.PLATFORM)[:100]
-        return Response([_announcement_json(a) for a in items])
+        # Same serialiser the school board uses, so a broadcast and a school
+        # notice are the same shape everywhere in the app.
+        return Response([announcement_service.serialise(a) for a in items])
 
     def post(self, request):
         title = (request.data.get('title') or '').strip()
         body = (request.data.get('body') or '').strip()
         if not title or not body:
             return Response({'detail': 'Title and body are required.'}, status=status.HTTP_400_BAD_REQUEST)
-        item = Announcement.objects.create(
+        # Goes through the announcements service rather than a raw create so the
+        # scope, audience normalisation and pin/expiry rules live in one place.
+        # The service documents why a broadcast is not fanned out per recipient.
+        item = announcement_service.create_platform(
             author=request.user,
             title=title,
             body=body,
-            audience=['all'],
-            scope=Announcement.Scope.PLATFORM,
         )
         AuditLog.objects.create(
             actor=f'{request.user.get_full_name()} ({request.user.email})' if request.user.get_full_name() else request.user.email,
@@ -691,7 +695,7 @@ class PlatformAnnouncementListView(APIView):
             ip=_client_ip(request),
             severity='warning',
         )
-        return Response(_announcement_json(item), status=status.HTTP_201_CREATED)
+        return Response(announcement_service.serialise(item), status=status.HTTP_201_CREATED)
 
 
 def _ticket_json(ticket):
@@ -702,18 +706,6 @@ def _ticket_json(ticket):
         'requester': ticket.requester,
         'status': ticket.status,
         'createdAt': ticket.created_at.isoformat(),
-    }
-
-
-def _announcement_json(item):
-    author = item.author.get_full_name() or item.author.email if item.author_id else 'Platform'
-    return {
-        'id': str(item.id),
-        'title': item.title,
-        'body': item.body,
-        'audience': item.audience,
-        'author': author,
-        'createdAt': item.created_at.isoformat(),
     }
 
 

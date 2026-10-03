@@ -8,7 +8,7 @@ from django.db.models.functions import Coalesce
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.utils.dateparse import parse_date
+from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import MultiPartParser
@@ -16,14 +16,16 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.models import Notification, NotificationPreference
 from accounts.permissions import (
     HasSchool,
     has_permission,
     require_permissions,
     require_roles,
 )
+from accounts.services import notifications as notification_service
 from accounts.utils import audit as log_audit
-from schools.models import School, SchoolSubscription
+from schools.models import Announcement, School, SchoolSubscription
 from .constants import DEFAULT_SUBJECTS
 from .models import (
     EPOCH,
@@ -49,9 +51,11 @@ from .models import (
 from .services import academic as academic_service
 from .services import admission as admission_service
 from .services import ai_tools
+from .services import announcements as announcement_service
 from .services import attendance as attendance_service
 from .services import billing as billing_service
 from .services import enrollment as enrollment_service
+from .services import events as event_service
 from .services import results as result_service
 from .services import promotion as promotion_service
 from .services import timetable as timetable_service
@@ -1327,6 +1331,7 @@ class PaymentVerifyView(APIView):
             # classes. Only promotes PENDING_PAYMENT forward, so this can never
             # undo a suspension or a graduation.
             activated = billing_service.activate_student_if_fully_paid(invoice.student)
+            event_service.payment_verified(payment)
         return Response({**PaymentSerializer(payment).data, 'studentActivated': activated})
 
 
@@ -1349,6 +1354,7 @@ class PaymentReverseView(APIView):
             invoice.save(update_fields=['paid'])
             payment.status = Payment.Status.REVERSED
             payment.save(update_fields=['status'])
+            event_service.payment_reversed(payment)
         return Response(PaymentSerializer(payment).data)
 
 
@@ -1627,6 +1633,7 @@ class ResultSheetActionView(APIView):
             result_service.advance(sheet, target, actor=request.user)
 
         sheet.refresh_from_db()
+        event_service.result_sheet_advanced(sheet, action)
         log_audit(
             request, f'result.{action}', target=f'ResultSheet {sheet.id}',
             detail=f'{sheet.class_obj.name} {sheet.subject} {sheet.assessment} -> {sheet.status}',
@@ -2399,6 +2406,342 @@ class TimetablePeriodDetailView(APIView):
         period.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+# ─── Notifications (spec 32) ──────────────────────────────────────────────
+#
+# Every endpoint here is self-service: the caller reads and writes their own
+# notifications and nothing else. There is deliberately no `schoolId` filter and
+# no permission from the role matrix, because a notification feed is a private
+# inbox rather than a school record — a parent reading their own inbox is not
+# exercising a management right, and requiring one would have locked parents and
+# students out of their own mail.
+#
+# The queryset is built from `request.user` on every path and never from
+# request data, so there is no id here that could be tampered with to reach
+# somebody else's notifications.
+
+
+def _notification_json(item):
+    return {
+        'id': str(item.pk),
+        'type': item.type,
+        'title': item.title,
+        'body': item.body,
+        'link': item.link,
+        'createdAt': item.created_at.isoformat(),
+        'read': item.read,
+        'readAt': item.read_at.isoformat() if item.read_at else None,
+    }
+
+
+def _notification_page(queryset, request):
+    """Page a queryset and return the envelope the frontend list screens read.
+
+    `count` and `unread` are both returned: the header badge needs the unread
+    total on every poll, and making it a separate request would double the
+    traffic of the most frequently called endpoint in the product.
+    """
+    try:
+        page_number = max(1, int(request.query_params.get('page', 1)))
+        page_size = min(50, max(1, int(request.query_params.get('pageSize', 20))))
+    except (TypeError, ValueError):
+        raise ValidationError({'page': 'page and pageSize must be numbers.'})
+
+    total = queryset.count()
+    start = (page_number - 1) * page_size
+    rows = list(queryset[start:start + page_size])
+    return {
+        'results': [_notification_json(item) for item in rows],
+        'count': total,
+        'page': page_number,
+        'pageSize': page_size,
+        'hasMore': start + page_size < total,
+        'unread': Notification.objects.filter(
+            user=request.user, read_at__isnull=True,
+        ).count(),
+    }
+
+
+def _coerce_bool(value, field, default=False):
+    """Read a JSON boolean strictly.
+
+    `bool("false")` is True, so a client that sends the string "false" would
+    silently flip a flag the wrong way. Anything that is not already a boolean
+    is rejected so the author finds out instead of guessing.
+    """
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise ValidationError({field: 'Send true or false, not a string.'})
+    return value
+
+
+def _parse_expiry(raw, field='expiresAt'):
+    """Parse an announcement expiry, refusing one that has already passed.
+
+    Returns None for an absent or explicitly cleared value, which is how an
+    announcement says "keep this until I delete it".
+    """
+    if raw in (None, ''):
+        return None
+    parsed = parse_datetime(raw)
+    if parsed is None:
+        raise ValidationError({field: 'Use an ISO 8601 date and time.'})
+    if parsed <= timezone.now():
+        raise ValidationError({field: 'That expiry is already in the past.'})
+    return parsed
+
+
+class NotificationListView(APIView):
+    """The caller's own notification feed.
+
+    Supports the two reads README 32 asks for: everything, and unread only.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        queryset = Notification.objects.filter(user=request.user)
+        unread_only = str(request.query_params.get('unread', '')).lower() in (
+            '1', 'true', 'yes',
+        )
+        if unread_only:
+            queryset = queryset.filter(read_at__isnull=True)
+        type_filter = (request.query_params.get('type') or '').strip()
+        if type_filter:
+            valid = {c[0] for c in Notification.Type.choices}
+            if type_filter not in valid:
+                raise ValidationError({'type': f'Unknown notification type {type_filter!r}.'})
+            queryset = queryset.filter(type=type_filter)
+        return Response(_notification_page(queryset.order_by('-created_at', '-id'), request))
+
+
+class NotificationMarkReadView(APIView):
+    """Mark one of the caller's own notifications read."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        # Scoped to request.user in the lookup itself: a notification belonging
+        # to somebody else is simply not found, never forbidden-but-revealed.
+        item = get_object_or_404(
+            Notification, pk=pk, user=request.user,
+        )
+        notification_service.mark_read(item)
+        return Response(_notification_json(item))
+
+
+class NotificationReadAllView(APIView):
+    """Mark every unread notification for the caller read."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        updated = notification_service.mark_all_read(request.user)
+        return Response({'markedRead': updated, 'unread': 0})
+
+
+class NotificationPreferenceView(APIView):
+    """Per-type opt-in/out, backing Settings -> Notifications.
+
+    GET always returns all eight types, filling in the ones with no stored row,
+    so the client never has to know that "no row" means "enabled".
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        stored = {
+            pref.type: pref.in_app
+            for pref in NotificationPreference.objects.filter(user=request.user)
+        }
+        return Response([
+            {'type': value, 'label': label, 'inApp': stored.get(value, True)}
+            for value, label in Notification.Type.choices
+        ])
+
+    def patch(self, request):
+        payload = request.data.get('preferences') if isinstance(request.data, dict) else None
+        if not isinstance(payload, list):
+            raise ValidationError({
+                'preferences': 'Send a list of {type, inApp} objects.',
+            })
+        valid = {c[0] for c in Notification.Type.choices}
+        rows = []
+        for entry in payload:
+            if not isinstance(entry, dict) or entry.get('type') not in valid:
+                raise ValidationError({
+                    'preferences': f'Each entry needs a valid type. One of: '
+                                   f'{", ".join(sorted(valid))}.',
+                })
+            if not isinstance(entry.get('inApp', True), bool):
+                # Deliberately not `bool(...)`: the string "false" is truthy, so
+                # a loose cast would silently switch a preference *on* for a
+                # client that meant to turn it off.
+                raise ValidationError({
+                    'preferences': 'inApp must be true or false, not a string.',
+                })
+            rows.append(NotificationPreference(
+                user=request.user,
+                type=entry['type'],
+                in_app=entry['inApp'],
+            ))
+        # One upsert rather than update_or_create per row: the pair is unique, so
+        # a second save of the same toggle must update in place instead of
+        # raising, and doing it in a single statement keeps this at one query
+        # instead of two per toggle.
+        NotificationPreference.objects.bulk_create(
+            rows,
+            update_conflicts=True,
+            update_fields=['in_app'],
+            unique_fields=['user', 'type'],
+        )
+        return Response(self.get(request).data)
+
+
+# ─── Announcements (spec 30) ───────────────────────────────────────────────
+
+
+class AnnouncementListCreateView(APIView):
+    """Read the board, and publish to it.
+
+    Reading is audience-filtered self-service: staff holding
+    `communication.read` see the whole school board, parents and students see
+    only their own audience. Publishing requires `communication.write`.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request):
+        items = announcement_service.visible_to(request.user)[:100]
+        return Response([announcement_service.serialise(item) for item in items])
+
+    def post(self, request):
+        if not has_permission(request.user.role, 'communication.write'):
+            raise PermissionDenied('You cannot publish announcements.')
+
+        title = (request.data.get('title') or '').strip()
+        body = (request.data.get('body') or '').strip()
+        if not title:
+            raise ValidationError({'title': 'A title is required.'})
+        if not body:
+            raise ValidationError({'body': 'Write the message you want to send.'})
+
+        raw_audience = request.data.get('audience') or []
+        if not isinstance(raw_audience, list):
+            raise ValidationError({'audience': 'Audience must be a list of labels.'})
+        # `create` fails closed on an unknown label, so check it here where the
+        # author can be told, rather than silently publishing to nobody.
+        audience = announcement_service.normalise_audience(raw_audience)
+        if not audience:
+            raise ValidationError({
+                'audience': 'Choose who should receive this. '
+                            'One of: All, Staff, Parents, Students.',
+            })
+
+        expires_at = _parse_expiry(request.data.get('expiresAt'))
+
+        item = announcement_service.create(
+            school=request.user.school,
+            author=request.user,
+            title=title,
+            body=body,
+            audience=audience,
+            is_pinned=_coerce_bool(request.data.get('isPinned'), 'isPinned', False),
+            expires_at=expires_at,
+        )
+        log_audit(
+            request, 'announcement.published', target=item.title,
+            detail=f'{len(audience)} audience(s)',
+            entity='announcement', entity_id=str(item.pk),
+            after={'title': item.title, 'audience': audience},
+        )
+        return Response(announcement_service.serialise(item), status=status.HTTP_201_CREATED)
+
+
+class AnnouncementDetailView(APIView):
+    """Pin, unpin, edit or withdraw one school announcement."""
+
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def _get(self, request, pk):
+        # Scoped to the caller's own school so another tenant's notice is not
+        # reachable by guessing an id.
+        return get_object_or_404(Announcement, pk=pk, school_id=request.user.school_id)
+
+    def _require_write(self, request):
+        if not has_permission(request.user.role, 'communication.write'):
+            raise PermissionDenied('You cannot change announcements.')
+
+    def get(self, request, pk):
+        item = self._get(request, pk)
+        # A parent may only read an announcement addressed to their audience.
+        if item.pk not in announcement_service.visible_to(request.user).values_list('pk', flat=True):
+            raise Http404
+        return Response(announcement_service.serialise(item))
+
+    def patch(self, request, pk):
+        self._require_write(request)
+        item = self._get(request, pk)
+        changed = {}
+        if 'title' in request.data:
+            title = (request.data.get('title') or '').strip()
+            if not title:
+                raise ValidationError({'title': 'A title is required.'})
+            item.title = title
+            changed['title'] = title
+        # `fields` holds model field names for update_fields; `changed` holds the
+        # camelCase wire keys for the audit trail. Mixing the two would either
+        # write nothing or raise FieldError.
+        fields: list[str] = []
+        changed: dict = {}
+        if 'title' in request.data:
+            title = (request.data.get('title') or '').strip()
+            if not title:
+                raise ValidationError({'title': 'A title is required.'})
+            item.title = title
+            fields.append('title')
+            changed['title'] = title
+        if 'body' in request.data:
+            body = (request.data.get('body') or '').strip()
+            if not body:
+                raise ValidationError({'body': 'Write the message you want to send.'})
+            item.body = body
+            fields.append('body')
+            changed['body'] = body
+        if 'isPinned' in request.data:
+            item.is_pinned = _coerce_bool(request.data['isPinned'], 'isPinned')
+            fields.append('is_pinned')
+            changed['isPinned'] = item.is_pinned
+        if 'expiresAt' in request.data:
+            # Same rule as create: an expiry in the past would publish a notice
+            # that is already gone, which reads as the school losing it.
+            item.expires_at = _parse_expiry(request.data['expiresAt'])
+            fields.append('expires_at')
+            changed['expiresAt'] = item.expires_at.isoformat() if item.expires_at else None
+        if not fields:
+            raise ValidationError({'detail': 'Nothing to update.'})
+        item.save(update_fields=[*fields, 'updated_at'])
+        log_audit(
+            request, 'announcement.updated', target=item.title,
+            detail=', '.join(changed.keys()),
+            entity='announcement', entity_id=str(item.pk), after=changed,
+        )
+        return Response(announcement_service.serialise(item))
+
+    def delete(self, request, pk):
+        self._require_write(request)
+        item = self._get(request, pk)
+        title = item.title
+        item.delete()
+        log_audit(
+            request, 'announcement.deleted', target=title,
+            entity='announcement', entity_id=str(pk), before={'title': title},
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ── Lesson plans ───────────────────────────────────────────────────────────
 
 def _lesson_plan_payload(plan):
     return {

@@ -11,6 +11,9 @@ import type {
   ResultSheetRow,
   ResultReportEntry,
   MyPublishedResult,
+  NotificationPage,
+  NotificationPreference,
+  NotificationType,
   StaffMember,
   SubscriptionState,
   TimetableEntry,
@@ -60,25 +63,68 @@ export async function getStaff(): Promise<StaffMember[]> {
 }
 
 export async function getAnnouncements(): Promise<Announcement[]> {
-  // SECURITY: Backend must verify permission communication.read and schoolId match, or allow audience-filtered self-service.
+  // SECURITY: Backend returns only the announcements this account's audience
+  // covers — staff with communication.read see the whole board, parents and
+  // students see their own audience. No client-side filtering is needed or safe.
   return apiFetch("/announcements");
 }
 
 export async function createAnnouncement(
-  input: Omit<Announcement, "id" | "createdAt" | "author">,
+  input: Omit<Announcement, "id" | "createdAt" | "author" | "scope">,
 ): Promise<Announcement> {
   // SECURITY: Backend must verify permission communication.write and schoolId match.
   return apiFetch("/announcements", { method: "POST", body: input });
 }
 
-export async function getNotifications(): Promise<AppNotification[]> {
-  // SECURITY: Authenticated self-only endpoint; no tenant permission or schoolId match applies.
-  return apiFetch("/notifications");
+export async function updateAnnouncement(
+  id: string,
+  patch: Partial<Pick<Announcement, "title" | "body" | "isPinned" | "expiresAt">>,
+): Promise<Announcement> {
+  // SECURITY: Backend must verify permission communication.write and schoolId match.
+  return apiFetch(`/announcements/${id}`, { method: "PATCH", body: patch });
 }
 
-export async function markAllNotificationsRead(): Promise<void> {
+export async function deleteAnnouncement(id: string): Promise<void> {
+  // SECURITY: Backend must verify permission communication.write and schoolId match.
+  return apiFetch(`/announcements/${id}`, { method: "DELETE" });
+}
+
+export async function getNotifications(
+  options: { unreadOnly?: boolean; type?: NotificationType; page?: number; pageSize?: number } = {},
+): Promise<NotificationPage> {
+  // SECURITY: Authenticated self-only endpoint; no tenant permission or schoolId match applies.
+  const query: Record<string, string> = {};
+  if (options.unreadOnly) query["unread"] = "true";
+  if (options.type) query["type"] = options.type;
+  if (options.page) query["page"] = String(options.page);
+  if (options.pageSize) query["pageSize"] = String(options.pageSize);
+  return apiFetch("/notifications", { query });
+}
+
+export async function markNotificationRead(id: string): Promise<AppNotification> {
+  // SECURITY: Authenticated self-only endpoint; the backend scopes the lookup to
+  // the caller, so another person's id is simply not found.
+  return apiFetch(`/notifications/${id}/read`, { method: "POST" });
+}
+
+export async function markAllNotificationsRead(): Promise<{ markedRead: number }> {
   // SECURITY: Authenticated self-only endpoint may update only the caller's notifications; no schoolId match applies.
   return apiFetch("/notifications/read-all", { method: "POST" });
+}
+
+export async function getNotificationPreferences(): Promise<NotificationPreference[]> {
+  // SECURITY: Authenticated self-only endpoint; no tenant permission or schoolId match applies.
+  return apiFetch("/notifications/preferences");
+}
+
+export async function saveNotificationPreferences(
+  preferences: Pick<NotificationPreference, "type" | "inApp">[],
+): Promise<NotificationPreference[]> {
+  // SECURITY: Authenticated self-only endpoint may update only the caller's preferences.
+  return apiFetch("/notifications/preferences", {
+    method: "PATCH",
+    body: { preferences },
+  });
 }
 
 export async function getResultSheets(): Promise<ResultSheetSummary[]> {

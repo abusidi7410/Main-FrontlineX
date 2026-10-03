@@ -257,8 +257,23 @@ class Announcement(models.Model):
     scope = models.CharField(max_length=20, choices=Scope.choices, default=Scope.PLATFORM)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # A pinned notice stays at the top of the list regardless of publish date,
+    # because the messages a school actually needs to not lose are the ones
+    # about an exam, a closure or a fee deadline.
+    is_pinned = models.BooleanField(default=False)
+    # Optional. A school sets this on a notice that stops being true (a
+    # rescheduled exam, a cleared closure); the read path hides anything past
+    # it while the row is kept, so the history stays intact.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
-        ordering = ['-created_at']
+        ordering = ['-is_pinned', '-created_at']
+        indexes = [
+            # The read path is always "this school's live notices, pinned
+            # first", so the school column is the leading filter.
+            models.Index(fields=['school', '-is_pinned', '-created_at']),
+        ]
 
     def __str__(self):
         return self.title
