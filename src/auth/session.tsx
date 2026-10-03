@@ -20,7 +20,7 @@ interface SessionContextValue {
   status: "loading" | "authenticated" | "unauthenticated";
   signIn: (identifier: string, password: string) => Promise<authService.Session>;
   signOut: () => Promise<void>;
-  updateUser: (patch: Partial<Pick<AuthUser, "fullName" | "phone">>) => void;
+  updateUser: (patch: Partial<Pick<AuthUser, "fullName" | "phone" | "avatarUrl">>) => void;
   can: (permission: Permission) => boolean;
   canAny: (permissions: Permission[]) => boolean;
   role: Role | null;
@@ -73,21 +73,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     await navigate({ to: "/login", search: {}, replace: true });
   }, [navigate, queryClient]);
 
-  const updateUser = useCallback((patch: Partial<Pick<AuthUser, "fullName" | "phone">>) => {
-    setSession((prev) => {
-      if (!prev) return prev;
-      const next: authService.Session = {
-        ...prev,
-        user: {
-          ...prev.user,
-          fullName: patch.fullName ?? prev.user.fullName,
-          phone: patch.phone ?? prev.user.phone,
-        },
-      };
-      authService.persistSession(next);
-      return next;
-    });
-  }, []);
+  const updateUser = useCallback(
+    (patch: Partial<Pick<AuthUser, "fullName" | "phone" | "avatarUrl">>) => {
+      setSession((prev) => {
+        if (!prev) return prev;
+        const next: authService.Session = {
+          ...prev,
+          user: { ...prev.user, ...patch },
+        };
+        authService.persistSession(next);
+        return next;
+      });
+    },
+    [],
+  );
 
   const value = useMemo<SessionContextValue>(
     () => ({

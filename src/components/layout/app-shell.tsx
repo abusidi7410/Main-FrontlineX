@@ -2,7 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronsLeft, ChevronsRight, LogOut, Menu, WifiOff } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -247,6 +247,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   aria-label="Account menu"
                 >
                   <Avatar className="size-8">
+                    <AvatarImage src={user.avatarUrl ?? undefined} alt="" />
                     <AvatarFallback className="bg-primary-soft text-sm text-primary">
                       {initials(user.fullName)}
                     </AvatarFallback>

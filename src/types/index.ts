@@ -63,7 +63,7 @@ export interface AuthUser {
   role: Role;
   permissions: Permission[];
   schoolId: string | null;
-  avatarUrl?: string;
+  avatarUrl: string | null;
 }
 
 export type SchoolStatus = "pending_payment" | "active" | "grace" | "suspended" | "trial";

@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from .permissions import ROLE_PERMISSIONS
+from .services import profile_photos
 from .utils import generate_temp_password
 from .validators import normalize_phone
 
@@ -150,7 +151,20 @@ class AuthUserSerializer(serializers.ModelSerializer):
         return str(obj.school_id) if obj.school_id else None
 
     def get_avatarUrl(self, obj):
-        return None
+        return profile_photos.avatar_url(obj.profile_photo_public_id)
+
+
+class ProfilePhotoUploadSerializer(serializers.Serializer):
+    photo = serializers.ImageField()
+
+    def validate_photo(self, value):
+        if value.size > profile_photos.MAX_PROFILE_PHOTO_BYTES:
+            raise serializers.ValidationError('Choose an image smaller than 5 MB.')
+        if getattr(value.image, 'format', '').upper() not in {'JPEG', 'PNG', 'WEBP'}:
+            raise serializers.ValidationError('Upload a JPG, PNG, or WebP image.')
+        if max(value.image.size) > 4096:
+            raise serializers.ValidationError('Image dimensions must not exceed 4096 pixels.')
+        return value
 
 
 class UserSerializer(serializers.ModelSerializer):

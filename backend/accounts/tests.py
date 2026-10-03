@@ -1,10 +1,16 @@
+from io import BytesIO
+from unittest.mock import patch
+
 from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
 
 from rest_framework.test import APIClient
 
 from records.models import StaffMember, Student
 from schools.models import School
 from .models import User
+from .services import profile_photos
 
 
 class AccountManagementAPITests(TestCase):
@@ -350,3 +356,85 @@ class AccountManagementAPITests(TestCase):
         self.assertTrue(
             AuditLog.objects.filter(action='account.created').exists(),
         )
+
+
+class ProfilePhotoAPITests(TestCase):
+    def setUp(self):
+        self.school = School.objects.create(
+            name='Photo Academy', slug='photo-academy', address='1 Photo St',
+            state='Kano', lga='Fagge', phone='+2348000000003',
+            email='photo@example.com', is_active=True,
+        )
+        self.user = User.objects.create_user(
+            email='photo-user@example.com',
+            password='Strong-Pass-1!',
+            first_name='Photo',
+            last_name='User',
+            role=User.Role.TEACHER,
+            school=self.school,
+            is_active=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.url = '/api/v1/auth/profile/photo/'
+
+    def _image(self, name='profile.png'):
+        output = BytesIO()
+        Image.new('RGB', (2, 2), color='navy').save(output, format='PNG')
+        return SimpleUploadedFile(name, output.getvalue(), content_type='image/png')
+
+    @patch('accounts.services.profile_photos.avatar_url', return_value='https://res.cloudinary.com/demo/image/upload/profile.png')
+    @patch('accounts.services.profile_photos.upload_profile_photo', return_value='frontlinex/profile-photos/user-1-new')
+    def test_upload_saves_cloudinary_identifier_and_returns_url(self, upload, avatar_url):
+        response = self.client.post(
+            self.url,
+            {'photo': self._image()},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            response.data['avatarUrl'],
+            'https://res.cloudinary.com/demo/image/upload/profile.png',
+        )
+        self.user.refresh_from_db()
+        self.assertEqual(
+            self.user.profile_photo_public_id,
+            'frontlinex/profile-photos/user-1-new',
+        )
+        upload.assert_called_once()
+        avatar_url.assert_called_once_with(self.user.profile_photo_public_id)
+
+    def test_upload_rejects_non_image_files(self):
+        response = self.client.post(
+            self.url,
+            {'photo': SimpleUploadedFile('not-image.txt', b'not an image', content_type='text/plain')},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.profile_photo_public_id, '')
+
+    @patch('accounts.services.profile_photos.delete_profile_photo')
+    @patch('accounts.services.profile_photos.avatar_url', return_value=None)
+    def test_remove_clears_photo_reference_and_deletes_cloud_asset(self, avatar_url, delete_photo):
+        self.user.profile_photo_public_id = 'frontlinex/profile-photos/old-photo'
+        self.user.save(update_fields=['profile_photo_public_id'])
+        response = self.client.delete(self.url)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertIsNone(response.data['avatarUrl'])
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.profile_photo_public_id, '')
+        delete_photo.assert_called_once_with('frontlinex/profile-photos/old-photo')
+
+    @patch(
+        'accounts.services.profile_photos.upload_profile_photo',
+        side_effect=profile_photos.StorageNotConfigured('Profile photo storage is not configured.'),
+    )
+    def test_upload_reports_missing_cloudinary_configuration(self, upload):
+        response = self.client.post(
+            self.url,
+            {'photo': self._image()},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('not configured', response.data['detail'])

@@ -49,6 +49,10 @@ services:
         value: true
       - key: REDIS_URL
         sync: false
+      # Set this secret from the Cloudinary console environment URL. Image
+      # bytes are stored by Cloudinary; Django persists only each asset ID.
+      - key: CLOUDINARY_URL
+        sync: false
       - key: JWT_ACCESS_TOKEN_MINUTES
         value: 30
       - key: JWT_REFRESH_TOKEN_DAYS
