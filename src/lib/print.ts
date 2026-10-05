@@ -94,13 +94,26 @@ function printFromIframe(markup: string): boolean {
   frame.contentDocument.write(markup);
   frame.contentDocument.close();
   target.focus();
-  setTimeout(() => {
+
+  // Wait for the document to finish loading so the school's logo is on the
+  // printed page rather than a broken image, with a deadline so a stalled
+  // asset can never leave the user with no print dialog at all.
+  let printed = false;
+  const runPrint = () => {
+    if (printed) return;
+    printed = true;
     try {
       target.print();
     } finally {
       frame.remove();
     }
-  }, 150);
+  };
+  if (frame.contentDocument.readyState === "complete") {
+    setTimeout(runPrint, 50);
+  } else {
+    target.addEventListener("load", () => setTimeout(runPrint, 50), { once: true });
+    setTimeout(runPrint, 2000);
+  }
   return true;
 }
 
