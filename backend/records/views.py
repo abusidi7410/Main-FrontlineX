@@ -2210,6 +2210,11 @@ class AcademicsView(APIView):
         # authoritative and is synced back onto the mirror on read.
         return {
             'session': school.current_session,
+            'sessionId': (
+                AcademicSession.objects.filter(
+                    school=school, name=school.current_session,
+                ).values_list('id', flat=True).first()
+            ),
             'term': school.current_term,
             'classes': academic_service.sync_school_class_names(school),
             'classIds': {
@@ -2217,6 +2222,12 @@ class AcademicsView(APIView):
                 for row in school.school_classes.filter(is_active=True)
                 .order_by('sort_order', 'name').values('id', 'name')
             },
+            'sections': [
+                {'id': row['id'], 'name': row['name'], 'classId': row['class_obj_id']}
+                for row in Section.objects.filter(school=school, is_active=True)
+                .order_by('class_obj__sort_order', 'class_obj__name', 'sort_order', 'name')
+                .values('id', 'name', 'class_obj_id')
+            ],
             'subjects': school.subjects or DEFAULT_SUBJECTS,
             # The school calendar: which weekdays are non-teaching, and any
             # declared closures. Both feed `is_school_day`, so an unattended
@@ -2793,6 +2804,21 @@ class AnnouncementListCreateView(APIView):
 
         expires_at = _parse_expiry(request.data.get('expiresAt'))
 
+        target_class = target_section = target_session = None
+        if request.data.get('targetClassId'):
+            target_class = get_object_or_404(
+                SchoolClass, pk=request.data['targetClassId'], school=request.user.school,
+            )
+        if request.data.get('targetSectionId'):
+            target_section = get_object_or_404(
+                Section, pk=request.data['targetSectionId'], school=request.user.school,
+            )
+        if request.data.get('targetAcademicSessionId'):
+            target_session = get_object_or_404(
+                AcademicSession, pk=request.data['targetAcademicSessionId'],
+                school=request.user.school,
+            )
+
         item = announcement_service.create(
             school=request.user.school,
             author=request.user,
@@ -2801,6 +2827,9 @@ class AnnouncementListCreateView(APIView):
             audience=audience,
             is_pinned=_coerce_bool(request.data.get('isPinned'), 'isPinned', False),
             expires_at=expires_at,
+            target_class=target_class,
+            target_section=target_section,
+            target_academic_session=target_session,
         )
         log_audit(
             request, 'announcement.published', target=item.title,

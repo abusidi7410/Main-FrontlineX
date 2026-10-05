@@ -24,6 +24,7 @@ import { useSession } from "@/auth/session";
 import { usePrintDocuments } from "@/hooks/use-print-documents";
 import { dateFmt, dateTimeFmt, naira, percent } from "@/lib/format";
 import { toPrintProfile } from "@/lib/documents";
+import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 import { escapeHtml, printHtml, schoolHeading } from "@/lib/print";
 import { listStudentInvoices, listStudentPayments } from "@/services/finance.service";
 import { getStudent, reinstateStudent, suspendStudent } from "@/services/students.service";
@@ -60,10 +61,7 @@ function StudentProfilePage() {
   });
 
   const invalidateStudent = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["student", studentId] }),
-      queryClient.invalidateQueries({ queryKey: ["students"] }),
-    ]);
+    invalidateEnrollmentQueries(queryClient, [["student", studentId]]);
 
   const suspend = useMutation({
     mutationFn: () => suspendStudent(studentId),

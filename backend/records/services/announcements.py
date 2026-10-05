@@ -56,6 +56,82 @@ def normalise_audience(audience) -> list[str]:
     return out
 
 
+def has_targets(item) -> bool:
+    """True when the notice is aimed at a class/section/session subset."""
+    return bool(
+        item.target_class_id or item.target_section_id or item.target_academic_session_id,
+    )
+
+
+def targeted_enrollments(item) -> QuerySet:
+    """Active enrollments matching the notice's class/section/session targets."""
+    from records.models import Enrollment
+
+    queryset = Enrollment.objects.filter(
+        school=item.school, status=Enrollment.Status.ACTIVE,
+    )
+    if item.target_academic_session_id:
+        queryset = queryset.filter(academic_session_id=item.target_academic_session_id)
+    if item.target_class_id:
+        queryset = queryset.filter(class_obj_id=item.target_class_id)
+    if item.target_section_id:
+        queryset = queryset.filter(section_id=item.target_section_id)
+    return queryset
+
+
+def targeted_students(item):
+    """Students the notice addresses, from ACTIVE enrollments only."""
+    from records.models import Student
+
+    return Student.objects.filter(
+        pk__in=targeted_enrollments(item).values('student_id'),
+    )
+
+
+def user_enrollment_keys(user) -> set[tuple]:
+    """(class, section, session) triples of the user's ACTIVE enrollments.
+
+    A student matches its own enrolments; a parent matches those of every
+    explicitly linked student. Computed once per read so a board of notices
+    does not run one query per notice.
+    """
+    from records.models import Enrollment
+
+    student_ids: list[int] = []
+    if user.role == 'student' and user.student_profile_id:
+        student_ids = [user.student_profile_id]
+    elif user.role == 'parent':
+        student_ids = list(user.linked_students.values_list('pk', flat=True))
+    if not student_ids:
+        return set()
+    return set(
+        Enrollment.objects.filter(
+            student_id__in=student_ids,
+            school_id=user.school_id,
+            status=Enrollment.Status.ACTIVE,
+        ).values_list('class_obj_id', 'section_id', 'academic_session_id'),
+    )
+
+
+def matches_targets(item, enrollment_keys: set[tuple]) -> bool:
+    """True when every target on the notice is satisfied by *enrollment_keys*.
+
+    Unset targets impose no constraint, so 'JSS 2 + Section A' requires both,
+    while a section-less class notice requires only the class.
+    """
+    if not has_targets(item):
+        return True
+    for class_id, section_id, session_id in enrollment_keys:
+        if item.target_class_id and item.target_class_id != class_id:
+            continue
+        if item.target_section_id and item.target_section_id != section_id:
+            continue
+        if item.target_academic_session_id and item.target_academic_session_id != session_id:
+            continue
+        return True
+    return False
+
+
 def audience_roles(audience) -> list[str]:
     """Roles addressed by *audience*, expanded for fan-out."""
     labels = normalise_audience(audience)
@@ -68,19 +144,31 @@ def audience_roles(audience) -> list[str]:
     return roles
 
 
-def _matches(user, item) -> bool:
+def _matches(user, item, enrollment_keys: set[tuple] | None = None) -> bool:
     """Whether *user* is in *item*'s audience.
 
     Used by the queryset builder for the roles whose audience cannot be
-    expressed as a plain database filter.
+    expressed as a plain database filter. Audience labels decide *who kind*
+    of recipient; targets then narrow to the class/section/session.
     """
     labels = normalise_audience(item.audience)
     # An announcement with no audience recorded is treated as school-wide, so a
     # row imported or written by an older code path stays visible instead of
     # becoming invisible to everyone.
     if not labels or ALL in labels:
-        return True
-    return bool(ROLE_AUDIENCES.get(user.role, set()) & set(labels))
+        audience_ok = True
+    else:
+        audience_ok = bool(ROLE_AUDIENCES.get(user.role, set()) & set(labels))
+    if not audience_ok:
+        return False
+    # Staff see the whole board for operations; targeting is about reaching
+    # the right learners and guardians. Students/parents must sit in the
+    # targeted active enrolment to see or be notified.
+    if has_targets(item) and user.role in ('student', 'parent'):
+        if enrollment_keys is None:
+            enrollment_keys = user_enrollment_keys(user)
+        return matches_targets(item, enrollment_keys)
+    return True
 
 
 def visible_to(user) -> QuerySet:
@@ -109,8 +197,12 @@ def visible_to(user) -> QuerySet:
     # bounded by the live notices in one school (tens of rows), not by the
     # number of users, so this stays cheap. `.only()` keeps the wide text
     # columns off the query, since only the audience is needed to decide.
-    candidates = Announcement.objects.filter(board, live).only('pk', 'audience')
-    allowed = [i.pk for i in candidates if _matches(user, i)]
+    candidates = Announcement.objects.filter(board, live).only(
+        'pk', 'audience', 'target_class_id', 'target_section_id',
+        'target_academic_session_id',
+    )
+    enrollment_keys = user_enrollment_keys(user) if user.role in ('student', 'parent') else None
+    allowed = [i.pk for i in candidates if _matches(user, i, enrollment_keys)]
     return Announcement.objects.filter(pk__in=allowed).select_related('author', 'school')
 
 
@@ -123,6 +215,34 @@ def publish(item, *, author=None) -> int:
     """
     author = author or item.author
     name = (author.get_full_name() or author.email) if author is not None else 'The school'
+    labels = normalise_audience(item.audience)
+
+    if has_targets(item):
+        # Class/session targeting: deliver only to the learners in the
+        # addressed enrolment (and their guardians), plus staff when asked.
+        # No separate recipient list is kept — the roster *is* the recipient
+        # set, so transfers/promotions move automatically.
+        students = targeted_students(item)
+        delivered = 0
+        if ALL in labels or 'students' in labels:
+            delivered += notify_svc.notify_students(
+                students, type='announcement', title=item.title, body=item.body[:280],
+                link='/communication', dedupe_key=f'announcement:{item.pk}', school=item.school,
+            )
+        if ALL in labels or 'parents' in labels:
+            delivered += notify_svc.notify_parents(
+                students, type='announcement', title=item.title, body=item.body[:280],
+                link='/communication', dedupe_key=f'announcement:{item.pk}', school=item.school,
+            )
+        if ALL in labels or 'staff' in labels:
+            delivered += notify_svc.notify_roles(
+                item.school,
+                {role for role, groups in ROLE_AUDIENCES.items() if 'staff' in groups},
+                type='announcement', title=item.title, body=item.body[:280],
+                link='/communication', dedupe_key=f'announcement:{item.pk}',
+            )
+        return delivered
+
     return notify_svc.notify_roles(
         item.school,
         audience_roles(item.audience),
@@ -134,8 +254,10 @@ def publish(item, *, author=None) -> int:
     )
 
 
-def create(*, school, author, title, body, audience, is_pinned=False, expires_at=None) -> Announcement:
+def create(*, school, author, title, body, audience, is_pinned=False, expires_at=None,
+           target_class=None, target_section=None, target_academic_session=None) -> Announcement:
     """Create a school announcement and fan it out."""
+    _validate_targets(school, target_class, target_section, target_academic_session)
     item = Announcement.objects.create(
         school=school,
         author=author,
@@ -145,9 +267,40 @@ def create(*, school, author, title, body, audience, is_pinned=False, expires_at
         scope=Announcement.Scope.SCHOOL,
         is_pinned=is_pinned,
         expires_at=expires_at,
+        target_class=target_class,
+        target_section=target_section,
+        target_academic_session=target_academic_session,
     )
     publish(item)
     return item
+
+
+def _validate_targets(school, target_class, target_section, target_academic_session) -> None:
+    """Targets must live in the same tenant and describe one place."""
+    from rest_framework.exceptions import ValidationError
+
+    if target_class is not None and target_class.school_id != school.pk:
+        raise ValidationError({'targetClassId': 'That class belongs to another school.'})
+    if target_section is not None:
+        if target_section.school_id != school.pk:
+            raise ValidationError({'targetSectionId': 'That section belongs to another school.'})
+        if target_class is not None and target_section.class_obj_id != target_class.pk:
+            raise ValidationError({'targetSectionId': 'That section is not part of the target class.'})
+    if target_academic_session is not None and target_academic_session.school_id != school.pk:
+        raise ValidationError({
+            'targetAcademicSessionId': 'That session belongs to another school.',
+        })
+    # A class/section notice with no session would widen to every session the
+    # class ever appeared in; force the author to say which one.
+    if (target_class is not None or target_section is not None) and target_academic_session is None:
+        raise ValidationError({
+            'targetAcademicSessionId': 'Choose the academic session for a class/section notice.',
+        })
+    # A section always implies its class for enrollment lookups.
+    if target_section is not None and target_class is None:
+        raise ValidationError({
+            'targetClassId': 'Choose the class that owns the target section.',
+        })
 
 
 def create_platform(*, author, title, body, is_pinned=False, expires_at=None) -> Announcement:
@@ -198,4 +351,9 @@ def serialise(item) -> dict:
         'isPinned': item.is_pinned,
         'expiresAt': item.expires_at.isoformat() if item.expires_at else None,
         'scope': item.scope,
+        'targetClassId': str(item.target_class_id) if item.target_class_id else None,
+        'targetSectionId': str(item.target_section_id) if item.target_section_id else None,
+        'targetAcademicSessionId': (
+            str(item.target_academic_session_id) if item.target_academic_session_id else None
+        ),
     }

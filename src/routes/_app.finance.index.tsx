@@ -6,6 +6,7 @@ import { Printer } from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatusBadge } from "@/components/common/status-badge";
+import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { ErrorState, ListSkeleton } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
@@ -83,7 +84,7 @@ function PaymentsPage() {
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["payments"] });
     await queryClient.invalidateQueries({ queryKey: ["invoices"] });
-    await queryClient.invalidateQueries({ queryKey: ["finance-summary"] });
+    await invalidateEnrollmentQueries(queryClient);
   };
 
   const record = useMutation({

@@ -130,16 +130,55 @@ def pending_clearance_registrations(school, academic_session=None) -> list[Regis
     """
     queryset = Registration.objects.filter(
         school=school, status=Registration.Status.PENDING,
-    ).select_related('student', 'academic_session', 'intended_class', 'intended_section')
+    ).select_related('student', 'academic_session', 'intended_class', 'intended_section', 'invoice')
     if academic_session is not None:
         queryset = queryset.filter(academic_session=academic_session)
+    registrations = list(queryset)
+    # One aggregate over every candidate invoice rather than one
+    # `verified_paid_total` per row (N+1): the clearance answer per
+    # registration is then a lookup.
+    verified_totals = _verified_paid_totals([
+        r.invoice_id for r in registrations if r.invoice_id is not None
+    ])
     return [
-        registration for registration in queryset
+        registration for registration in registrations
         if registration.invoice_id is None
-        or is_invoice_cleared(
-            registration.invoice, requires_full_settlement=school.activation_requires_full_settlement,
+        or _is_invoice_cleared_with_paid(
+            registration.invoice,
+            verified_paid=verified_totals.get(registration.invoice_id, _zero()),
+            requires_full_settlement=school.activation_requires_full_settlement,
         )
     ]
+
+
+def _verified_paid_totals(invoice_ids: list[int]) -> dict[int, Decimal]:
+    if not invoice_ids:
+        return {}
+    from django.db.models import Coalesce, Sum
+
+    from ..models import Payment
+
+    rows = (
+        Payment.objects.filter(invoice_id__in=invoice_ids, status=Payment.Status.VERIFIED)
+        .values('invoice_id')
+        .annotate(total=Coalesce(Sum('amount'), Decimal('0')))
+    )
+    return {row['invoice_id']: row['total'] for row in rows}
+
+
+def _is_invoice_cleared_with_paid(invoice: Invoice, *, verified_paid: Decimal,
+                                  requires_full_settlement: bool) -> bool:
+    """`is_invoice_cleared` with the payment sum already loaded."""
+    if invoice.is_cancelled:
+        return False
+    if requires_full_settlement:
+        total = billing.snapshot_total(invoice)
+        return max(total - verified_paid, _zero()) <= 0
+    registration = invoice_registration_fee(invoice)
+    if registration <= 0:
+        total = billing.snapshot_total(invoice)
+        return max(total - verified_paid, _zero()) <= 0
+    return verified_paid >= registration
 
 
 def has_active_enrollment(student: Student, academic_session) -> bool:

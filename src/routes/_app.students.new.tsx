@@ -9,6 +9,7 @@ import { ApiRequestError } from "@/api/client";
 import { createStudent } from "@/services/students.service";
 import { StudentForm } from "@/features/students/student-form";
 import { naira } from "@/lib/format";
+import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 
 /**
  * Turn DRF's `{ fieldErrors: {...} }` body into one readable sentence, so a
@@ -65,9 +66,7 @@ function NewStudentPage() {
           duration: 8000,
         },
       );
-      await queryClient.invalidateQueries({ queryKey: ["students"] });
-      await queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      await queryClient.invalidateQueries({ queryKey: ["finance-summary"] });
+      await invalidateEnrollmentQueries(queryClient, [["invoices"]]);
       void navigate({ to: "/students" });
     },
     onError: (error) =>

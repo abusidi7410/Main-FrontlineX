@@ -34,6 +34,7 @@ import {
 import type { AttendanceStatus } from "@/types";
 import { cn } from "@/lib/utils";
 import { schoolToday } from "@/lib/format";
+import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 
 const STATUSES: AttendanceStatus[] = ["present", "absent", "late", "excused"];
 
@@ -189,7 +190,7 @@ function CorrectButton({
       );
       setOpen(false);
       setReason("");
-      await queryClient.invalidateQueries({ queryKey: ["attendance-history"] });
+      await invalidateEnrollmentQueries(queryClient, [["attendance-history"]]);
       onDone();
     },
     onError: () => toast.error("We couldn't correct that mark. Please try again."),

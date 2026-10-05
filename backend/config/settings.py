@@ -124,6 +124,12 @@ if DATABASES['default']['ENGINE'] == 'django.db.backends.postgresql':
     sslmode = 'require' if env.bool('DATABASE_SSL_REQUIRE', default=True) else 'prefer'
     DATABASES['default'].setdefault('OPTIONS', {})['sslmode'] = sslmode
 
+# A dedicated test-database name is useful when the default test database is
+# wedged behind a pooler session; `TEST_DB_NAME=school_os_test` python manage.py test ...
+_test_db_name = os.environ.get('TEST_DB_NAME')
+if _test_db_name:
+    DATABASES['default']['TEST'] = {'NAME': _test_db_name}
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 AUTH_USER_MODEL = 'accounts.User'

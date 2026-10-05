@@ -267,12 +267,32 @@ class Announcement(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Optional class/session targeting. When any of these is set, recipients
+    # are resolved through ACTIVE enrollments — never from a hand-maintained
+    # recipient list — so a transfer/promotion/section change moves
+    # accordingly. All three must belong to the announcement's school (checked
+    # in services.announcements.create).
+    target_class = models.ForeignKey(
+        'records.SchoolClass', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+',
+    )
+    target_section = models.ForeignKey(
+        'records.Section', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+',
+    )
+    target_academic_session = models.ForeignKey(
+        'records.AcademicSession', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+',
+    )
+
     class Meta:
         ordering = ['-is_pinned', '-created_at']
         indexes = [
             # The read path is always "this school's live notices, pinned
             # first", so the school column is the leading filter.
             models.Index(fields=['school', '-is_pinned', '-created_at']),
+            # Class-targeted boards filter on target_class within one school.
+            models.Index(fields=['school', 'target_class']),
         ]
 
     def __str__(self):

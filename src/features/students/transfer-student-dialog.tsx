@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { listPlatformSchools } from "@/services/platform.service";
 import { transferStudent } from "@/services/students.service";
+import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 import type { PlatformSchool } from "@/types";
 
 export function TransferStudentDialog({
@@ -54,10 +55,7 @@ export function TransferStudentDialog({
       setSelectedSchoolId(null);
       setSchoolSearch("");
       onOpenChange(false);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["student", studentId] }),
-        queryClient.invalidateQueries({ queryKey: ["students"] }),
-      ]);
+      await invalidateEnrollmentQueries(queryClient, [["student", studentId]]);
     },
     onError: () => toast.error("We couldn't complete the transfer. Please try again."),
   });

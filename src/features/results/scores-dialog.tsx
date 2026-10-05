@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { updateResultSheetScores } from "@/services/school.service";
+import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 import type { ResultSheet, ResultSheetRow } from "@/types";
 
 const LIMITS: Record<"ca1" | "ca2" | "assignment" | "exam", number> = {
@@ -53,8 +54,7 @@ export function ScoresDialog({
     onSuccess: async (updated) => {
       toast.success(`Scores saved for ${updated.className} ${updated.subject}.`);
       onOpenChange(false);
-      await queryClient.invalidateQueries({ queryKey: ["results"] });
-      await queryClient.invalidateQueries({ queryKey: ["result-sheet", updated.id] });
+      await invalidateEnrollmentQueries(queryClient, [["result-sheet", updated.id]]);
     },
     onError: () => toast.error("We couldn't save those scores. Please try again."),
   });

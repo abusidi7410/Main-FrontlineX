@@ -22,6 +22,7 @@ import { getRoster, submitAttendance } from "@/services/attendance.service";
 import { getAcademicStructure } from "@/services/academics.service";
 import { schoolToday } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 import type { AttendanceStatus } from "@/types";
 
 export const Route = createFileRoute("/_app/attendance")({
@@ -179,9 +180,9 @@ function AttendancePage() {
         toast.success(`Attendance submitted for ${className}${arm ? ` ${arm}` : ""}.`);
       }
       void roster.refetch();
-      // The students list shows an attendance percentage derived from these same
-      // records, so it must be recomputed after a submission.
-      void queryClient.invalidateQueries({ queryKey: ["students"] });
+      // Attendance feeds the students list percentage, the overview, and the
+      // history page — all derive from the same records, so refresh them all.
+      void invalidateEnrollmentQueries(queryClient);
     },
   });
 

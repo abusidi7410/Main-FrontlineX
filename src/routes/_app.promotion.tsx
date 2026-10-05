@@ -29,6 +29,7 @@ import {
   type PromotionDecision,
   type PromotionPolicy,
 } from "@/services/promotion.service";
+import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 
 export const Route = createFileRoute("/_app/promotion")({
   head: () => ({
@@ -135,12 +136,7 @@ function PromotionPage() {
       setSelected(null);
       setDecisions({});
       setConfirmDecisions(null);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["promotion-classes"] }),
-        queryClient.invalidateQueries({ queryKey: ["promotion-candidates"] }),
-        queryClient.invalidateQueries({ queryKey: ["students"] }),
-        queryClient.invalidateQueries({ queryKey: ["academics"] }),
-      ]);
+      await invalidateEnrollmentQueries(queryClient);
     },
     onError: () => toast.error("We couldn't apply those promotions. Please reload and try again."),
   });
@@ -150,10 +146,7 @@ function PromotionPage() {
     onSuccess: async (policy) => {
       toast.success("Promotion policy updated.");
       setPolicyDraft(policy);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["promotion-classes"] }),
-        queryClient.invalidateQueries({ queryKey: ["promotion-candidates"] }),
-      ]);
+      await invalidateEnrollmentQueries(queryClient);
     },
     onError: () =>
       toast.error("We couldn't save the promotion policy. Please check the thresholds."),

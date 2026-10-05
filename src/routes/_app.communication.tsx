@@ -26,6 +26,7 @@ import {
   getAnnouncements,
   updateAnnouncement,
 } from "@/services/school.service";
+import { getAcademicStructure } from "@/services/academics.service";
 
 export const Route = createFileRoute("/_app/communication")({
   head: () => ({
@@ -55,6 +56,13 @@ function CommunicationPage() {
   // "All" has to be a deliberate second click, not a default.
   const [audience, setAudience] = useState<string[]>(() => defaultAudience(user.role));
   const [expiresAt, setExpiresAt] = useState("");
+  const [targetClass, setTargetClass] = useState("");
+  const [targetSectionId, setTargetSectionId] = useState("");
+  const academics = useQuery({ queryKey: ["academics"], queryFn: getAcademicStructure });
+  const classOptions = Object.keys(academics.data?.classIds ?? {});
+  const sectionOptions = (academics.data?.sections ?? []).filter(
+    (section) => !targetClass || section.classId === academics.data?.classIds?.[targetClass],
+  );
   // The composer starts collapsed so parents and students, who only ever read
   // this page, are not shown a form they cannot use.
   const [composing, setComposing] = useState(false);
@@ -71,6 +79,14 @@ function CommunicationPage() {
         audience,
         isPinned: false,
         expiresAt: toIsoMinute(expiresAt),
+        targetClassId: targetClass ? String(academics.data?.classIds?.[targetClass] ?? "") : null,
+        targetSectionId: targetSectionId || null,
+        targetAcademicSessionId:
+          targetClass || targetSectionId
+            ? academics.data?.sessionId != null
+              ? String(academics.data.sessionId)
+              : null
+            : null,
       }),
     onSuccess: async () => {
       toast.success("Announcement published.");
@@ -78,6 +94,8 @@ function CommunicationPage() {
       setBody("");
       setAudience(defaultAudience(user.role));
       setExpiresAt("");
+      setTargetClass("");
+      setTargetSectionId("");
       setComposing(false);
       await refresh();
     },
@@ -159,7 +177,9 @@ function CommunicationPage() {
                     key={option}
                     type="button"
                     aria-pressed={on}
-                    onClick={() => setAudience((prev) => selectAudience(prev, option as AudienceOption))}
+                    onClick={() =>
+                      setAudience((prev) => selectAudience(prev, option as AudienceOption))
+                    }
                     className={
                       on
                         ? "min-h-11 rounded-full border border-primary bg-primary-soft px-4 font-medium text-primary"
@@ -175,6 +195,48 @@ function CommunicationPage() {
               This reaches {audiencePreview(audience)}.
             </p>
           </fieldset>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="target-class">Target class (optional)</Label>
+              <select
+                id="target-class"
+                className="h-12 w-full rounded-md border bg-surface px-3"
+                value={targetClass}
+                onChange={(event) => {
+                  setTargetClass(event.target.value);
+                  setTargetSectionId("");
+                }}
+              >
+                <option value="">Whole school</option>
+                {classOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="target-section">Target section (optional)</Label>
+              <select
+                id="target-section"
+                className="h-12 w-full rounded-md border bg-surface px-3"
+                value={targetSectionId}
+                onChange={(event) => setTargetSectionId(event.target.value)}
+                disabled={!targetClass}
+              >
+                <option value="">Any section</option>
+                {sectionOptions.map((section) => (
+                  <option key={section.id} value={String(section.id)}>
+                    {section.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-sm text-muted-foreground">
+                Recipients are resolved through active enrollment, so a transfer or promotion
+                updates who receives this.
+              </p>
+            </div>
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="expires">Expires on (optional)</Label>
             <Input

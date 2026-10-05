@@ -2,11 +2,15 @@ import { apiFetch } from "@/api/client";
 
 export interface AcademicStructure {
   session: string;
+  /** Id of the school's current `AcademicSession` row, for enrollment-linked calls. */
+  sessionId: number | null;
   term: string;
   /** Class names the school actually configured, from `SchoolClass`. */
   classes: string[];
   /** Same classes keyed by name, so callers can address a class by its id. */
   classIds: Record<string, number>;
+  /** Sections/arms with their owning class, keyed for targeting. */
+  sections: Array<{ id: number; name: string; classId: number }>;
   subjects: string[];
   /** Python weekday numbers that are non-school days: 0 = Monday … 6 = Sunday. */
   attendanceWeekendDays: number[];

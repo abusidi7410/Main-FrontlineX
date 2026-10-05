@@ -318,6 +318,9 @@ export interface Announcement {
   /** ISO 8601, or null when the notice does not expire. */
   expiresAt: string | null;
   scope: "school" | "platform";
+  targetClassId?: string | null;
+  targetSectionId?: string | null;
+  targetAcademicSessionId?: string | null;
 }
 
 export interface AppNotification {

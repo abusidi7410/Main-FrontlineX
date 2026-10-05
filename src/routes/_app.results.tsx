@@ -28,6 +28,7 @@ import {
   updateResultSheetStatus,
 } from "@/services/school.service";
 import type { ResultSheetStatus } from "@/types";
+import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 
 export const Route = createFileRoute("/_app/results")({
   head: () => ({
@@ -95,8 +96,7 @@ function ResultsPage() {
       toast.success(
         `${sheet.className} ${sheet.subject} is now ${sheet.status.replace(/_/g, " ")}.`,
       );
-      await queryClient.invalidateQueries({ queryKey: ["results"] });
-      await queryClient.invalidateQueries({ queryKey: ["result-sheet", sheet.id] });
+      await invalidateEnrollmentQueries(queryClient, [["result-sheet", sheet.id]]);
     },
     onError: () => toast.error("We couldn't update that result sheet. Please try again."),
   });
@@ -111,8 +111,7 @@ function ResultsPage() {
       );
       setCorrectionId(null);
       setCorrectionReason("");
-      await queryClient.invalidateQueries({ queryKey: ["results"] });
-      await queryClient.invalidateQueries({ queryKey: ["result-sheet", sheet.id] });
+      await invalidateEnrollmentQueries(queryClient, [["result-sheet", sheet.id]]);
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not update the correction."),
