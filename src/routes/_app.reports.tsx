@@ -182,7 +182,8 @@ function printPack(
 </table>
 </div>`,
   });
-  if (!ok) toast.error("Allow pop-ups to print. You can then save the report as PDF.");
+  if (!ok)
+    toast.error("We couldn't open the print dialog. Check that printing is allowed for this site.");
 }
 
 function reportCardStyles() {
@@ -235,7 +236,8 @@ function printReportCard(card: ReportCard) {
 <p class="fine">This report card is generated from the school's approved results. Signed copies are available at the school office.</p>
 </div>`,
   });
-  if (!ok) toast.error("Allow pop-ups to print. You can then save the report card as PDF.");
+  if (!ok)
+    toast.error("We couldn't open the print dialog. Check that printing is allowed for this site.");
 }
 
 function ReportsPage() {
