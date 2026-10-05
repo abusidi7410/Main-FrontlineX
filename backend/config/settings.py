@@ -163,6 +163,8 @@ STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 MEDIA_URL = 'media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+DATA_UPLOAD_MAX_MEMORY_SIZE = 6 * 1024 * 1024
+CLOUDINARY_URL = env('CLOUDINARY_URL', default='')
 
 STORAGES = {
     'staticfiles': {

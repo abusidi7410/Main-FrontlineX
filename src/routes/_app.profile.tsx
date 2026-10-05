@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { ImagePlus, Trash2 } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { PageHeader } from "@/components/common/page-header";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +13,12 @@ import { useSession } from "@/auth/session";
 import { ROLE_LABELS } from "@/permissions";
 import { initials, titleCase } from "@/lib/format";
 import { ngPhone, passwordField, requiredText } from "@/lib/validation";
-import { changePassword, updateProfile } from "@/services/auth.service";
+import {
+  changePassword,
+  removeProfilePhoto,
+  updateProfile,
+  uploadProfilePhoto,
+} from "@/services/auth.service";
 
 export const Route = createFileRoute("/_app/profile")({
   head: () => ({
@@ -57,6 +63,10 @@ function ProfilePage() {
   const [phone, setPhone] = useState(user?.phone ?? "");
   const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [savingPhoto, setSavingPhoto] = useState(false);
+  const [removingPhoto, setRemovingPhoto] = useState(false);
+  const photoInput = useRef<HTMLInputElement>(null);
 
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -117,6 +127,45 @@ function ProfilePage() {
     }
   };
 
+  const savePhoto = async () => {
+    if (!photo) return;
+    if (photo.size > 5 * 1024 * 1024) {
+      toast.error("Choose an image smaller than 5 MB.");
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(photo.type)) {
+      toast.error("Upload a JPG, PNG, or WebP image.");
+      return;
+    }
+    setSavingPhoto(true);
+    try {
+      const updated = await uploadProfilePhoto(photo);
+      updateUser({ avatarUrl: updated.avatarUrl });
+      setPhoto(null);
+      if (photoInput.current) photoInput.current.value = "";
+      toast.success("Profile photo saved.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "We couldn't upload your photo.");
+    } finally {
+      setSavingPhoto(false);
+    }
+  };
+
+  const clearPhoto = async () => {
+    setRemovingPhoto(true);
+    try {
+      const updated = await removeProfilePhoto();
+      updateUser({ avatarUrl: updated.avatarUrl });
+      setPhoto(null);
+      if (photoInput.current) photoInput.current.value = "";
+      toast.success("Profile photo removed.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "We couldn't remove your photo.");
+    } finally {
+      setRemovingPhoto(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -126,6 +175,7 @@ function ProfilePage() {
 
       <div className="fn-panel flex flex-wrap items-center gap-4 p-5">
         <Avatar className="size-14">
+          <AvatarImage src={user?.avatarUrl ?? undefined} alt="" />
           <AvatarFallback className="bg-primary-soft text-primary">
             {initials(user?.fullName ?? "FN")}
           </AvatarFallback>
@@ -138,6 +188,52 @@ function ProfilePage() {
           </p>
         </div>
       </div>
+
+      <section className="fn-panel flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+        <Avatar className="size-16">
+          <AvatarImage src={user?.avatarUrl ?? undefined} alt="" />
+          <AvatarFallback className="bg-primary-soft text-lg text-primary">
+            {initials(user?.fullName ?? "FN")}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1 space-y-2">
+          <Label htmlFor="profile-photo">Profile photo</Label>
+          <Input
+            ref={photoInput}
+            id="profile-photo"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={(event) => setPhoto(event.target.files?.[0] ?? null)}
+            disabled={savingPhoto || removingPhoto}
+            aria-describedby="profile-photo-hint"
+          />
+          <p id="profile-photo-hint" className="text-sm text-muted-foreground">
+            JPG, PNG, or WebP; up to 5 MB and 4096 × 4096 pixels. Your image is stored securely with
+            Cloudinary, not in the database.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            onClick={() => void savePhoto()}
+            disabled={!photo || savingPhoto || removingPhoto}
+          >
+            <ImagePlus className="mr-2 size-4" aria-hidden="true" />
+            {savingPhoto ? "Uploading…" : "Upload photo"}
+          </Button>
+          {user?.avatarUrl ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void clearPhoto()}
+              disabled={savingPhoto || removingPhoto}
+              aria-label="Remove profile photo"
+            >
+              <Trash2 className="size-4" aria-hidden="true" />
+            </Button>
+          ) : null}
+        </div>
+      </section>
 
       <form
         className="fn-panel grid gap-4 p-5 sm:grid-cols-2"

@@ -34,6 +34,7 @@ class User(AbstractUser):
         related_name='users',
     )
     is_verified = models.BooleanField(default=False)
+    profile_photo_public_id = models.CharField(max_length=255, blank=True, default='')
 
     # Optional links so role accounts map onto the school roster records.
     # SET_NULL: removing a Student/StaffMember keeps the login account alive.

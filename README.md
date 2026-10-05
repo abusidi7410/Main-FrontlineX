@@ -2936,3 +2936,10 @@ cd <repository-name>
 npm i
 npm run dev
 ```
+
+### Profile photo storage
+
+The backend requires `CLOUDINARY_URL` to upload user profile photos. Configure it
+in `backend/.env` for local development or as a secret environment variable on
+Render. Photo bytes are stored in Cloudinary; the database stores only the
+Cloudinary asset ID. Uploads accept JPG, PNG, or WebP images up to 5 MB.

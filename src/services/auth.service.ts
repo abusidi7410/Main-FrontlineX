@@ -87,6 +87,16 @@ export async function updateProfile(input: ProfileUpdate): Promise<AuthUser> {
   return apiFetch<AuthUser>("/auth/profile", { method: "PATCH", body: input });
 }
 
+export async function uploadProfilePhoto(photo: File): Promise<AuthUser> {
+  const body = new FormData();
+  body.append("photo", photo);
+  return apiFetch<AuthUser>("/auth/profile/photo", { method: "POST", body });
+}
+
+export async function removeProfilePhoto(): Promise<AuthUser> {
+  return apiFetch<AuthUser>("/auth/profile/photo", { method: "DELETE" });
+}
+
 export async function changePassword(current: string, next: string): Promise<{ ok: true }> {
   // SECURITY: Authenticated self-only endpoint must require the current password; no tenant permission or schoolId match applies.
   return apiFetch<{ ok: true }>("/auth/change-password", {

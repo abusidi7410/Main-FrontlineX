@@ -1,10 +1,14 @@
+import logging
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.conf import settings
+from django.db import DatabaseError
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,14 +22,17 @@ from .serializers import (
     LoginSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
+    ProfilePhotoUploadSerializer,
     SchoolRegistrationSerializer,
     UserSerializer,
     VerifyEmailConfirmSerializer,
     VerifyEmailRequestSerializer,
 )
+from .services import profile_photos
 from .validators import normalize_phone
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 _REFRESH_COOKIE_PATH = '/api/v1/auth/'
 
@@ -238,6 +245,73 @@ class ProfileView(APIView):
             user.phone = normalize_phone(phone) or None
         user.save(update_fields=['first_name', 'last_name', 'phone', 'updated_at'])
 
+        return Response(AuthUserSerializer(user).data)
+
+
+class ProfilePhotoView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        serializer = ProfilePhotoUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = User.objects.get(pk=request.user.pk)
+        previous_public_id = user.profile_photo_public_id
+
+        try:
+            public_id = profile_photos.upload_profile_photo(
+                serializer.validated_data['photo'],
+                user_id=user.pk,
+            )
+        except profile_photos.StorageNotConfigured as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except profile_photos.StorageError:
+            logger.exception('Profile photo upload failed for user %s.', user.pk)
+            return Response(
+                {'detail': 'The profile photo could not be uploaded. Please try again.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        user.profile_photo_public_id = public_id
+        try:
+            user.save(update_fields=['profile_photo_public_id', 'updated_at'])
+        except DatabaseError:
+            try:
+                profile_photos.delete_profile_photo(public_id)
+            except profile_photos.StorageError:
+                logger.exception(
+                    'Could not clean up profile photo %s after saving user %s failed.',
+                    public_id, user.pk,
+                )
+            raise
+
+        if previous_public_id:
+            try:
+                profile_photos.delete_profile_photo(previous_public_id)
+            except profile_photos.StorageError:
+                logger.exception(
+                    'Could not remove replaced profile photo %s for user %s.',
+                    previous_public_id, user.pk,
+                )
+
+        return Response(AuthUserSerializer(user).data)
+
+    def delete(self, request):
+        user = User.objects.get(pk=request.user.pk)
+        previous_public_id = user.profile_photo_public_id
+        if previous_public_id:
+            user.profile_photo_public_id = ''
+            user.save(update_fields=['profile_photo_public_id', 'updated_at'])
+            try:
+                profile_photos.delete_profile_photo(previous_public_id)
+            except profile_photos.StorageError:
+                logger.exception(
+                    'Could not remove profile photo %s for user %s.',
+                    previous_public_id, user.pk,
+                )
         return Response(AuthUserSerializer(user).data)
 
 
