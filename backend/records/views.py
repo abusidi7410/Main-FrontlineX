@@ -2743,6 +2743,19 @@ class AnnouncementDetailView(APIView):
 
 # ── Lesson plans ───────────────────────────────────────────────────────────
 
+LESSON_PLAN_TEXT_FIELDS = {
+    'topic': ('topic', True),
+    'objectives': ('objectives', True),
+    'previousKnowledge': ('previous_knowledge', False),
+    'introduction': ('introduction', False),
+    'teacherActivities': ('teacher_activities', False),
+    'studentActivities': ('student_activities', False),
+    'materials': ('materials', False),
+    'assessment': ('assessment', False),
+    'homework': ('homework', False),
+}
+
+
 def _lesson_plan_payload(plan):
     return {
         'id': str(plan.pk),
