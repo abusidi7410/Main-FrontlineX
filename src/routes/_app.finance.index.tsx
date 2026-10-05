@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
+import { Printer } from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatusBadge } from "@/components/common/status-badge";
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { ApiRequestError } from "@/api/client";
 import { useSession } from "@/auth/session";
+import { usePrintDocuments } from "@/hooks/use-print-documents";
 import { dateTimeFmt, naira, titleCase } from "@/lib/format";
 import {
   cancelPayment,
@@ -55,6 +57,7 @@ const METHODS: Payment["method"][] = ["cash", "bank_transfer", "card", "pos", "u
 function PaymentsPage() {
   const { can } = useSession();
   const queryClient = useQueryClient();
+  const { printReceipt } = usePrintDocuments();
   const [paymentPage, setPaymentPage] = useState(1);
   const invoices = useQuery({
     queryKey: ["invoices", "", 1, 100],
@@ -70,7 +73,9 @@ function PaymentsPage() {
   const [method, setMethod] = useState<Payment["method"]>("cash");
   const [reference, setReference] = useState("");
 
-  const selectedInvoice = (invoices.data?.results ?? []).find((invoice) => invoice.id === invoiceId);
+  const selectedInvoice = (invoices.data?.results ?? []).find(
+    (invoice) => invoice.id === invoiceId,
+  );
   const balance = selectedInvoice ? Math.max(0, selectedInvoice.total - selectedInvoice.paid) : 0;
   const amountNumber = Number(amount);
   const withinBalance = Number.isFinite(amountNumber) && amountNumber <= balance;
@@ -253,6 +258,16 @@ function PaymentsPage() {
                 </div>
                 <p className="font-medium tabular-nums">{naira(payment.amount)}</p>
                 <StatusBadge status={payment.status} />
+                {payment.status === "verified" ? (
+                  <Button
+                    variant="outline"
+                    className="h-11"
+                    onClick={() => void printReceipt(payment)}
+                  >
+                    <Printer className="size-4" aria-hidden="true" />
+                    Receipt
+                  </Button>
+                ) : null}
                 {payment.status === "pending" && can("finance.verify") ? (
                   <Button
                     variant="outline"

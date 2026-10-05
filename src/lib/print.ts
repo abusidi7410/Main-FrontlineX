@@ -37,19 +37,12 @@ export function schoolHeading(school: PrintSchoolProfile): string {
   return `<p class="school">${logo}${lines.map(escapeHtml).join("<br/>")}</p>`;
 }
 
-/**
- * Opens a printable document in a new window and starts the print dialog.
- * Returns false when pop-ups are blocked so callers can tell the user.
- */
-export function printHtml(options: PrintOptions): boolean {
-  if (typeof window === "undefined") return false;
-  const win = window.open("", "_blank", "width=820,height=960");
-  if (!win) return false;
-  win.document.write(`<!doctype html>
+export function documentMarkup(options: PrintOptions): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>${options.title}</title>
+<title>${escapeHtml(options.title)}</title>
 <style>
   body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #0f172a; margin: 40px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .school { font-size: 13px; color: #475569; margin-bottom: 4px; }
@@ -70,7 +63,61 @@ export function printHtml(options: PrintOptions): boolean {
 <body>
 ${options.bodyHtml}
 </body>
-</html>`);
+</html>`;
+}
+
+/**
+ * Print the document from a hidden same-origin iframe. This is the path that
+ * matters in practice: it needs no pop-up permission, so it still works on
+ * mobile browsers (and in any browser with pop-ups blocked) where
+ * `window.open` simply returns null and the user is left with nothing to print.
+ */
+function printFromIframe(markup: string): boolean {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.setAttribute("tabindex", "-1");
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  frame.style.visibility = "hidden";
+  document.body.appendChild(frame);
+
+  const target = frame.contentWindow;
+  if (!target || !frame.contentDocument) {
+    frame.remove();
+    return false;
+  }
+  frame.contentDocument.open();
+  frame.contentDocument.write(markup);
+  frame.contentDocument.close();
+  target.focus();
+  setTimeout(() => {
+    try {
+      target.print();
+    } finally {
+      frame.remove();
+    }
+  }, 150);
+  return true;
+}
+
+/**
+ * Renders a document and starts the print dialog, keeping the user on the page
+ * they were reading. Returns false only when no printing path is available.
+ */
+export function printHtml(options: PrintOptions): boolean {
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  const markup = documentMarkup(options);
+  if (printFromIframe(markup)) return true;
+
+  // Fallback for environments that refuse an iframe (some embedded webviews):
+  // a real window the user can also save or print by hand.
+  const win = window.open("", "_blank", "width=820,height=960");
+  if (!win) return false;
+  win.document.write(markup);
   win.document.close();
   win.focus();
   setTimeout(() => win.print(), 250);

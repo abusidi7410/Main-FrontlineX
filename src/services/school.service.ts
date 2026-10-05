@@ -77,13 +77,24 @@ export interface SchoolProfileInput {
   address?: string;
 }
 
+/**
+ * Compatibility shim: an older backend deployment exposes the profile route
+ * under /schools/schools/profile/ instead of /schools/profile. Only a missing
+ * route (404) justifies replaying the request at the other path — an auth,
+ * permission or validation failure must surface to the caller, and a PATCH must
+ * never be re-sent because of it.
+ */
+function isMissingProfileRoute(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { status?: unknown }).status === 404;
+}
+
 export async function getSchoolProfile(): Promise<SchoolProfile> {
   // SECURITY: Backend always reads the school from the caller's own account;
   // there is no schoolId parameter to swap for another tenant.
   try {
     return await apiFetch<SchoolProfile>("/schools/profile");
   } catch (err) {
-    // Compatibility: older backend deployment may expose the route under /schools/schools/profile/
+    if (!isMissingProfileRoute(err)) throw err;
     return await apiFetch<SchoolProfile>("/schools/schools/profile");
   }
 }
@@ -94,7 +105,11 @@ export async function updateSchoolProfile(input: SchoolProfileInput): Promise<Sc
   try {
     return await apiFetch<SchoolProfile>("/schools/profile", { method: "PATCH", body: input });
   } catch (err) {
-    return await apiFetch<SchoolProfile>("/schools/schools/profile", { method: "PATCH", body: input });
+    if (!isMissingProfileRoute(err)) throw err;
+    return await apiFetch<SchoolProfile>("/schools/schools/profile", {
+      method: "PATCH",
+      body: input,
+    });
   }
 }
 
@@ -106,6 +121,7 @@ export async function uploadSchoolLogo(logo: File): Promise<SchoolProfile> {
   try {
     return await apiFetch<SchoolProfile>("/schools/profile", { method: "PATCH", body });
   } catch (err) {
+    if (!isMissingProfileRoute(err)) throw err;
     return await apiFetch<SchoolProfile>("/schools/schools/profile", { method: "PATCH", body });
   }
 }

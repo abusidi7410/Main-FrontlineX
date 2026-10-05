@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Plus, Printer } from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatusBadge } from "@/components/common/status-badge";
@@ -28,6 +28,7 @@ import {
 import { ApiRequestError } from "@/api/client";
 import { useSession } from "@/auth/session";
 import { useDebounced } from "@/hooks/use-debounced";
+import { usePrintDocuments } from "@/hooks/use-print-documents";
 import { naira } from "@/lib/format";
 import { getAcademicStructure, TERM_OPTIONS } from "@/services/academics.service";
 import { generateInvoices, listInvoicePage } from "@/services/finance.service";
@@ -55,6 +56,7 @@ export const Route = createFileRoute("/_app/finance/invoices")({
 function InvoicesPage() {
   const { can } = useSession();
   const queryClient = useQueryClient();
+  const { printInvoice } = usePrintDocuments();
   const [search, setSearch] = useState("");
   const debounced = useDebounced(search, 300);
   const [page, setPage] = useState(1);
@@ -135,6 +137,9 @@ function InvoicesPage() {
                   <th scope="col" className="px-4 py-3 font-medium">
                     Status
                   </th>
+                  <th scope="col" className="px-4 py-3 text-right font-medium">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -154,6 +159,16 @@ function InvoicesPage() {
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={invoice.status} />
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Button
+                        variant="outline"
+                        className="h-10"
+                        onClick={() => void printInvoice(invoice)}
+                      >
+                        <Printer className="size-4" aria-hidden="true" />
+                        Print
+                      </Button>
                     </td>
                   </tr>
                 ))}

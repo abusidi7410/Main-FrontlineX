@@ -25,10 +25,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useSession } from "@/auth/session";
 import { ApiRequestError } from "@/api/client";
+import { usePrintDocuments } from "@/hooks/use-print-documents";
 import { dateTimeFmt, naira, titleCase } from "@/lib/format";
-import { escapeHtml, printHtml, schoolHeading, type PrintSchoolProfile } from "@/lib/print";
+import { invoiceBalance } from "@/lib/documents";
 import { getFinanceSummary, recordPayment } from "@/services/finance.service";
 import type { Invoice, Payment } from "@/types";
 
@@ -53,84 +53,9 @@ export const Route = createFileRoute("/_app/fees")({
 
 const SELF_SERVICE_METHODS: Payment["method"][] = ["card", "bank_transfer", "online", "ussd"];
 
-function balanceOf(invoice: Invoice) {
-  return Math.max(0, invoice.total - invoice.paid);
-}
-
-function printInvoice(invoice: Invoice, school: PrintSchoolProfile | null) {
-  if (!school) {
-    toast.error("Your school profile is missing. Save it in Settings before printing.");
-    return;
-  }
-  const invoiceKind = invoice.source === "admission" ? "Registration invoice" : "Fee invoice";
-  const rows = invoice.items
-    .map((item) => `<tr><td>${escapeHtml(item.label)}</td><td class="right">${naira(item.amount)}</td></tr>`)
-    .join("");
-  const ok = printHtml({
-    title: invoiceKind,
-    bodyHtml: `${schoolHeading(school)}
-<div class="doc">
-<h1>${invoiceKind}</h1>
-<p><strong>${escapeHtml(invoice.studentName)}</strong><br/>
-${escapeHtml(invoice.className)} · ${invoice.source === "admission" ? "One-time registration" : escapeHtml(invoice.term)} · ${escapeHtml(invoice.id)}</p>
-<table>
-<thead><tr><th>Item</th><th class="right">Amount</th></tr></thead>
-<tbody>${rows}
-<tr><td class="total">Total due</td><td class="right total">${naira(invoice.total)}</td></tr>
-<tr><td>Paid to date</td><td class="right">${naira(invoice.paid)}</td></tr>
-<tr><td class="total">Outstanding balance</td><td class="right total">${naira(balanceOf(invoice))}</td></tr>
-</tbody>
-</table>
-<p class="fine">Kindly settle the balance before the examination week. Payments can be made by card, bank transfer, online or USSD from the Fees page.</p>
-</div>`,
-  });
-  if (!ok) toast.error("Allow pop-ups to print. You can then download the document.");
-}
-
-function printReceipt(payment: Payment, school: PrintSchoolProfile | null) {
-  if (!school) {
-    toast.error("Your school profile is missing. Save it in Settings before printing.");
-    return;
-  }
-  const invoiceTotal = payment.invoiceTotal;
-  const invoicePaid = payment.invoicePaid;
-  const balance =
-    invoiceTotal === undefined || invoicePaid === undefined
-      ? null
-      : Math.max(0, invoiceTotal - invoicePaid);
-  const invoiceRows =
-    invoiceTotal === undefined || invoicePaid === undefined
-      ? ""
-      : `<tr><td>Invoice</td><td class="right">${escapeHtml(payment.invoiceId)}</td></tr>
-<tr><td>Invoice total</td><td class="right">${naira(invoiceTotal)}</td></tr>
-<tr><td>Invoice paid to date</td><td class="right">${naira(invoicePaid)}</td></tr>
-<tr><td class="total">Remaining balance</td><td class="right total">${naira(balance ?? 0)}</td></tr>`;
-  const ok = printHtml({
-    title: "Receipt",
-    bodyHtml: `${schoolHeading(school)}
-<div class="doc">
-<h1>Payment receipt</h1>
-<p><strong>${escapeHtml(payment.studentName)}</strong><br/>
-${payment.admissionNumber ? `Admission number ${escapeHtml(payment.admissionNumber)}<br/>` : ""}
-${escapeHtml(payment.reference)} · ${dateTimeFmt(payment.createdAt)}</p>
-<table>
-<tbody>
-<tr><td>Amount paid</td><td class="right">${naira(payment.amount)}</td></tr>
-<tr><td>Method</td><td class="right">${titleCase(payment.method)}</td></tr>
-<tr><td>Status</td><td class="right">${titleCase(payment.status)}</td></tr>
-${invoiceRows}
-<tr><td>Recorded by</td><td class="right">${escapeHtml(payment.recordedBy)}</td></tr>
-</tbody>
-</table>
-<p class="fine">This receipt confirms payment has been received and verified.</p>
-</div>`,
-  });
-  if (!ok) toast.error("Allow pop-ups to print. You can then download the document.");
-}
-
 function FeesPage() {
-  const { session } = useSession();
   const queryClient = useQueryClient();
+  const { printInvoice, printReceipt } = usePrintDocuments();
 
   const financeQuery = useQuery({ queryKey: ["finance-summary"], queryFn: getFinanceSummary });
 
@@ -140,19 +65,6 @@ function FeesPage() {
   const receipts = financeQuery.data?.recentPayments ?? [];
   const billed = financeQuery.data?.billed ?? 0;
   const paid = financeQuery.data?.paid ?? 0;
-  // School details for printed documents come from the school's own profile in
-  // the session — never a hardcoded fallback.
-  const school: PrintSchoolProfile | null = session?.school
-    ? {
-        name: session.school.name,
-        address: [session.school.address, session.school.state]
-          .filter(Boolean)
-          .join(", "),
-        phone: session.school.phone,
-        email: session.school.email,
-        logoUrl: session.school.logoUrl,
-      }
-    : null;
 
   return (
     <div className="space-y-6">
@@ -211,7 +123,7 @@ function FeesPage() {
                       <p className="text-sm">
                         Balance{" "}
                         <span className="font-semibold tabular-nums">
-                          {naira(balanceOf(invoice))}
+                          {naira(invoiceBalance(invoice))}
                         </span>{" "}
                         <span className="text-muted-foreground">of {naira(invoice.total)}</span>
                       </p>
@@ -219,7 +131,7 @@ function FeesPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => printInvoice(invoice, school)}
+                          onClick={() => void printInvoice(invoice)}
                         >
                           <Printer className="size-4" aria-hidden="true" />
                           Print invoice
@@ -262,7 +174,7 @@ function FeesPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => printReceipt(payment, school)}
+                        onClick={() => void printReceipt(payment)}
                       >
                         <Printer className="size-4" aria-hidden="true" />
                         Receipt
@@ -286,7 +198,6 @@ function FeesPage() {
           void queryClient.invalidateQueries({ queryKey: ["payments"] });
           void queryClient.invalidateQueries({ queryKey: ["finance-summary"] });
         }}
-        school={school}
       />
     </div>
   );
@@ -296,20 +207,19 @@ function PaymentDialog({
   invoice,
   onClose,
   onPaid,
-  school,
 }: {
   invoice: Invoice | null;
   onClose: () => void;
   onPaid: () => void;
-  school: PrintSchoolProfile | null;
 }) {
+  const { printReceipt } = usePrintDocuments();
   const open = invoice !== null;
   const [method, setMethod] = useState<Payment["method"]>("card");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmed, setConfirmed] = useState<Payment | null>(null);
 
-  const balance = invoice ? balanceOf(invoice) : 0;
+  const balance = invoice ? invoiceBalance(invoice) : 0;
   const amountNumber = Number(amount);
   const amountValid = Number.isFinite(amountNumber) && amountNumber > 0 && amountNumber <= balance;
 
@@ -387,7 +297,7 @@ function PaymentDialog({
               </div>
             </dl>
             <DialogFooter className="gap-2 sm:gap-2">
-              <Button variant="outline" onClick={() => printReceipt(confirmed, school)}>
+              <Button variant="outline" onClick={() => void printReceipt(confirmed)}>
                 <Printer className="size-4" aria-hidden="true" />
                 Print receipt
               </Button>

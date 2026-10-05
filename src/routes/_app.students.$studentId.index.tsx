@@ -21,13 +21,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { TransferStudentDialog } from "@/features/students/transfer-student-dialog";
 import { useSession } from "@/auth/session";
+import { usePrintDocuments } from "@/hooks/use-print-documents";
 import { dateFmt, dateTimeFmt, naira, percent } from "@/lib/format";
-import {
-  escapeHtml,
-  printHtml,
-  schoolHeading,
-  type PrintSchoolProfile,
-} from "@/lib/print";
+import { toPrintProfile } from "@/lib/documents";
+import { escapeHtml, printHtml, schoolHeading } from "@/lib/print";
 import { listStudentInvoices, listStudentPayments } from "@/services/finance.service";
 import { getStudent, reinstateStudent, suspendStudent } from "@/services/students.service";
 import type { Invoice, Payment } from "@/types";
@@ -55,6 +52,7 @@ function StudentProfilePage() {
   const { studentId } = Route.useParams();
   const queryClient = useQueryClient();
   const { session, can } = useSession();
+  const { resolveProfile } = usePrintDocuments();
   const [printing, setPrinting] = useState(false);
   const query = useQuery({
     queryKey: ["student", studentId],
@@ -107,13 +105,15 @@ function StudentProfilePage() {
    */
   const printRegistrationDocument = async () => {
     if (printing) return;
-    const school = session?.school;
-    if (!school) {
-      toast.error("Your school profile is missing. Save it in Settings before printing.");
-      return;
-    }
+    const sessionSchool = session?.school;
     setPrinting(true);
     try {
+      const profile = sessionSchool ? toPrintProfile(sessionSchool) : await resolveProfile();
+      if (!profile) {
+        toast.error("Your school profile is missing. Save it in Settings before printing.");
+        return;
+      }
+      const currentSession = sessionSchool?.currentSession;
       // Finance endpoints require finance.read, so a viewer without it still
       // gets the document, just without the financial section.
       const withFinance = can("finance.read");
@@ -126,17 +126,10 @@ function StudentProfilePage() {
         ]);
       }
 
-      const profile: PrintSchoolProfile = {
-        name: school.name,
-        address: [school.address, school.state].filter(Boolean).join(", "),
-        phone: school.phone,
-        email: school.email,
-        logoUrl: school.logoUrl,
-      };
       const fullName = `${student.firstName} ${student.lastName}`;
       const history = student.enrollmentHistory;
       const entry =
-        history.find((row) => row.session === school.currentSession) ??
+        history.find((row) => row.session === currentSession) ??
         history.find((row) => row.status !== "not_enrolled") ??
         history[0];
       const registrationInvoice = invoices.find((invoice) => invoice.source === "admission");
@@ -161,7 +154,7 @@ function StudentProfilePage() {
       ].join("");
 
       const academicRows = [
-        row("Academic session", escapeHtml(entry?.session ?? school.currentSession ?? "—")),
+        row("Academic session", escapeHtml(entry?.session ?? currentSession ?? "—")),
         row("Class", escapeHtml(student.className)),
         row("Section / arm", escapeHtml(student.arm || "—")),
         row(
@@ -179,10 +172,7 @@ function StudentProfilePage() {
       let financialRows = "";
       let invoiceBreakdownHtml = "";
       if (!withFinance) {
-        financialRows = row(
-          "Financial details",
-          "Not available for your account.",
-        );
+        financialRows = row("Financial details", "Not available for your account.");
       } else if (registrationInvoice) {
         financialRows = [
           row("Registration invoice", escapeHtml(registrationInvoice.id)),
@@ -241,7 +231,11 @@ ${invoiceBreakdownHtml}
 ${paymentsHtml}
 </div>`,
       });
-      if (!ok) toast.error("Allow pop-ups to print. You can then download the document.");
+      if (!ok) {
+        toast.error(
+          "We couldn't open the print dialog. Check that printing is allowed for this site.",
+        );
+      }
     } catch {
       toast.error("We couldn't build the registration document. Please try again.");
     } finally {
@@ -264,7 +258,11 @@ ${paymentsHtml}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={student.status} />
-            <Button variant="outline" disabled={printing} onClick={() => void printRegistrationDocument()}>
+            <Button
+              variant="outline"
+              disabled={printing}
+              onClick={() => void printRegistrationDocument()}
+            >
               <Printer className="size-4" aria-hidden="true" />{" "}
               {printing ? "Preparing…" : "Registration document"}
             </Button>
