@@ -11,5 +11,6 @@ urlpatterns = [
     path('payments/<str:reference>/verify/', views.PaymentVerifyView.as_view(), name='payment-verify'),
     # Declared before the router so `profile` is not swallowed by `schools/<pk>/`.
     path('profile/', views.SchoolProfileView.as_view(), name='school-profile'),
+    path('schools/profile/', views.SchoolProfileView.as_view(), name='school-profile-alt'),
     path('', include(router.urls)),
 ]
