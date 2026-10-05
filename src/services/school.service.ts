@@ -80,13 +80,22 @@ export interface SchoolProfileInput {
 export async function getSchoolProfile(): Promise<SchoolProfile> {
   // SECURITY: Backend always reads the school from the caller's own account;
   // there is no schoolId parameter to swap for another tenant.
-  return apiFetch<SchoolProfile>("/schools/profile");
+  try {
+    return await apiFetch<SchoolProfile>("/schools/profile");
+  } catch (err) {
+    // Compatibility: older backend deployment may expose the route under /schools/schools/profile/
+    return await apiFetch<SchoolProfile>("/schools/schools/profile");
+  }
 }
 
 export async function updateSchoolProfile(input: SchoolProfileInput): Promise<SchoolProfile> {
   // SECURITY: Backend must verify permission settings.write and derive the
   // school from the session, ignoring any id in the payload.
-  return apiFetch<SchoolProfile>("/schools/profile", { method: "PATCH", body: input });
+  try {
+    return await apiFetch<SchoolProfile>("/schools/profile", { method: "PATCH", body: input });
+  } catch (err) {
+    return await apiFetch<SchoolProfile>("/schools/schools/profile", { method: "PATCH", body: input });
+  }
 }
 
 export async function uploadSchoolLogo(logo: File): Promise<SchoolProfile> {
@@ -94,7 +103,11 @@ export async function uploadSchoolLogo(logo: File): Promise<SchoolProfile> {
   // the normal storage field instead of being embedded in the database.
   const body = new FormData();
   body.append("logo", logo);
-  return apiFetch<SchoolProfile>("/schools/profile", { method: "PATCH", body });
+  try {
+    return await apiFetch<SchoolProfile>("/schools/profile", { method: "PATCH", body });
+  } catch (err) {
+    return await apiFetch<SchoolProfile>("/schools/schools/profile", { method: "PATCH", body });
+  }
 }
 
 export async function getSubscription(): Promise<SubscriptionState> {
