@@ -70,7 +70,10 @@ describe("no fixed multi-column grid below the smallest breakpoint", () => {
     const source = read("routes/_app.promotion.tsx");
     // Whitespace-delimited so the token check cannot be fooled by
     // `sm:grid-cols-4`, which contains "grid-cols-4" as a substring.
-    expect(source).not.toMatch(/(?:^|\s)grid-cols-4(?:\s|$)/);
-    expect(source).toMatch(/grid-cols-2[^\n]*sm:grid-cols-4/);
+    // The invariant is "one or two columns on a phone, more once there is
+    // room", so the upper bound is not pinned to a column count: adding a KPI
+    // must not require editing this test.
+    expect(source).not.toMatch(/(?:^|\s)grid-cols-[3-9](?:\s|$)/);
+    expect(source).toMatch(/grid-cols-2[^\n]*sm:grid-cols-\d/);
   });
 });
