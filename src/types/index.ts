@@ -232,12 +232,15 @@ export interface Payment {
   id: string;
   invoiceId: string;
   studentName: string;
+  admissionNumber?: string;
   amount: number;
   method: "cash" | "bank_transfer" | "card" | "pos" | "ussd" | "online";
   status: "pending" | "verified" | "failed" | "refunded" | "reversed" | "cancelled";
   reference: string;
   recordedBy: string;
   createdAt: string;
+  invoiceTotal?: number;
+  invoicePaid?: number;
 }
 
 export interface ResultSheetRow {

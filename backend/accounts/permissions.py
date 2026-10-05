@@ -27,6 +27,7 @@ ROLE_PERMISSIONS = {
         'students.read', 'students.write', 'students.register', 'students.approve',
         'students.import', 'enrollment.manage',
         'staff.read', 'staff.write',
+        'accounts.read', 'accounts.write',
         'academics.read', 'academics.write',
         'attendance.read', 'attendance.write', 'attendance.correct',
         'results.read', 'results.write', 'results.approve', 'results.publish',
@@ -40,8 +41,9 @@ ROLE_PERMISSIONS = {
         'ai.academic', 'ai.finance', 'ai.teaching',
     ],
     'principal': [
-        'students.read', 'students.write', 'students.register', 'students.approve',
+        'students.read', 'students.write', 'students.register',         'students.approve',
         'staff.read', 'staff.write',
+        'accounts.read', 'accounts.write',
         'academics.read', 'academics.write',
         'attendance.read', 'attendance.correct',
         'results.read', 'results.approve',
@@ -65,6 +67,7 @@ ROLE_PERMISSIONS = {
     ],
     'secretary': [
         'students.read', 'students.write', 'students.register',
+        'accounts.read', 'accounts.write',
         'attendance.read', 'communication.read', 'communication.write',
     ],
     'parent': ['ai.parent'],

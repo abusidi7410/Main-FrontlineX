@@ -2,7 +2,15 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { AlertCircle, ArrowLeft, ArrowLeftRight, Pencil, UserCheck, UserMinus } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowLeftRight,
+  Pencil,
+  Printer,
+  UserCheck,
+  UserMinus,
+} from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { StatCard } from "@/components/common/stat-card";
 import { StatusBadge } from "@/components/common/status-badge";
@@ -12,8 +20,17 @@ import { CardsSkeleton, ErrorState } from "@/components/common/states";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { TransferStudentDialog } from "@/features/students/transfer-student-dialog";
-import { dateFmt, naira, percent } from "@/lib/format";
+import { useSession } from "@/auth/session";
+import { dateFmt, dateTimeFmt, naira, percent } from "@/lib/format";
+import {
+  escapeHtml,
+  printHtml,
+  schoolHeading,
+  type PrintSchoolProfile,
+} from "@/lib/print";
+import { listStudentInvoices, listStudentPayments } from "@/services/finance.service";
 import { getStudent, reinstateStudent, suspendStudent } from "@/services/students.service";
+import type { Invoice, Payment } from "@/types";
 
 export const Route = createFileRoute("/_app/students/$studentId/")({
   head: () => ({
@@ -37,6 +54,8 @@ export const Route = createFileRoute("/_app/students/$studentId/")({
 function StudentProfilePage() {
   const { studentId } = Route.useParams();
   const queryClient = useQueryClient();
+  const { session, can } = useSession();
+  const [printing, setPrinting] = useState(false);
   const query = useQuery({
     queryKey: ["student", studentId],
     queryFn: () => getStudent(studentId),
@@ -80,6 +99,156 @@ function StudentProfilePage() {
 
   const student = query.data;
 
+  /**
+   * The registration document is assembled from records the server already
+   * holds — the student, their enrolment history, their invoices and their
+   * payments — plus the school's own saved profile. Nothing is stored or
+   * duplicated for printing.
+   */
+  const printRegistrationDocument = async () => {
+    if (printing) return;
+    const school = session?.school;
+    if (!school) {
+      toast.error("Your school profile is missing. Save it in Settings before printing.");
+      return;
+    }
+    setPrinting(true);
+    try {
+      // Finance endpoints require finance.read, so a viewer without it still
+      // gets the document, just without the financial section.
+      const withFinance = can("finance.read");
+      let invoices: Invoice[] = [];
+      let payments: Payment[] = [];
+      if (withFinance) {
+        [invoices, payments] = await Promise.all([
+          listStudentInvoices(studentId),
+          listStudentPayments(studentId),
+        ]);
+      }
+
+      const profile: PrintSchoolProfile = {
+        name: school.name,
+        address: [school.address, school.state].filter(Boolean).join(", "),
+        phone: school.phone,
+        email: school.email,
+        logoUrl: school.logoUrl,
+      };
+      const fullName = `${student.firstName} ${student.lastName}`;
+      const history = student.enrollmentHistory;
+      const entry =
+        history.find((row) => row.session === school.currentSession) ??
+        history.find((row) => row.status !== "not_enrolled") ??
+        history[0];
+      const registrationInvoice = invoices.find((invoice) => invoice.source === "admission");
+      const outstanding = registrationInvoice
+        ? Math.max(0, registrationInvoice.total - registrationInvoice.paid)
+        : 0;
+
+      const row = (label: string, value: string) =>
+        `<tr><th scope="row">${escapeHtml(label)}</th><td>${value}</td></tr>`;
+
+      const studentRows = [
+        row("Full name", escapeHtml(fullName)),
+        row("Admission number", escapeHtml(student.admissionNumber)),
+        row("Date of birth", escapeHtml(dateFmt(student.dateOfBirth))),
+        row("Gender", escapeHtml(student.gender)),
+        row("Registration status", escapeHtml(student.status.replaceAll("_", " "))),
+      ].join("");
+
+      const guardianRows = [
+        row("Guardian name", escapeHtml(student.guardianName)),
+        row("Guardian phone", escapeHtml(student.guardianPhone)),
+      ].join("");
+
+      const academicRows = [
+        row("Academic session", escapeHtml(entry?.session ?? school.currentSession ?? "—")),
+        row("Class", escapeHtml(student.className)),
+        row("Section / arm", escapeHtml(student.arm || "—")),
+        row(
+          "Enrollment",
+          escapeHtml(
+            entry
+              ? `${entry.status.replaceAll("_", " ")}${
+                  entry.className ? ` · ${entry.className}${entry.arm ?? ""}` : ""
+                }`
+              : "Not enrolled in any session yet",
+          ),
+        ),
+      ].join("");
+
+      let financialRows = "";
+      let invoiceBreakdownHtml = "";
+      if (!withFinance) {
+        financialRows = row(
+          "Financial details",
+          "Not available for your account.",
+        );
+      } else if (registrationInvoice) {
+        financialRows = [
+          row("Registration invoice", escapeHtml(registrationInvoice.id)),
+          row("Invoice total", naira(registrationInvoice.total)),
+          row("Amount paid", naira(registrationInvoice.paid)),
+          row("Outstanding registration balance", naira(outstanding)),
+          row("Status", escapeHtml(registrationInvoice.status.replaceAll("_", " "))),
+        ].join("");
+        if (registrationInvoice.items.length) {
+          invoiceBreakdownHtml = `<h2>Invoice breakdown</h2>
+<table><thead><tr><th>Item</th><th class="right">Amount</th></tr></thead><tbody>${registrationInvoice.items
+            .map(
+              (item) =>
+                `<tr><td>${escapeHtml(item.label)}</td><td class="right">${naira(item.amount)}</td></tr>`,
+            )
+            .join("")}</tbody></table>`;
+        }
+      } else {
+        financialRows = row("Registration invoice", "No registration invoice on record.");
+      }
+
+      const paymentsHtml =
+        withFinance && payments.length
+          ? `<h2>Payments</h2>
+<table><thead><tr><th>Reference</th><th>Date</th><th>Method</th><th class="right">Amount</th><th class="right">Status</th></tr></thead><tbody>${payments
+              .map(
+                (payment) =>
+                  `<tr><td>${escapeHtml(payment.reference)}</td><td>${escapeHtml(
+                    dateTimeFmt(payment.createdAt),
+                  )}</td><td>${escapeHtml(payment.method.replaceAll("_", " "))}</td><td class="right">${naira(
+                    payment.amount,
+                  )}</td><td class="right">${escapeHtml(
+                    payment.status.replaceAll("_", " "),
+                  )}</td></tr>`,
+              )
+              .join("")}</tbody></table>`
+          : "";
+
+      const ok = printHtml({
+        title: `Registration document — ${fullName}`,
+        styles:
+          "h2 { font-size: 15px; margin: 22px 0 8px; color: #0f172a; } .doc h1 + .fine { margin-top: -8px; }",
+        bodyHtml: `${schoolHeading(profile)}
+<div class="doc">
+<h1>Student registration document</h1>
+<p class="fine">Printed ${escapeHtml(dateTimeFmt(new Date().toISOString()))}</p>
+<h2>Student</h2>
+<table><tbody>${studentRows}</tbody></table>
+<h2>Parent / guardian</h2>
+<table><tbody>${guardianRows}</tbody></table>
+<h2>Academic</h2>
+<table><tbody>${academicRows}</tbody></table>
+<h2>Financial</h2>
+<table><tbody>${financialRows}</tbody></table>
+${invoiceBreakdownHtml}
+${paymentsHtml}
+</div>`,
+      });
+      if (!ok) toast.error("Allow pop-ups to print. You can then download the document.");
+    } catch {
+      toast.error("We couldn't build the registration document. Please try again.");
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Link
@@ -95,6 +264,10 @@ function StudentProfilePage() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={student.status} />
+            <Button variant="outline" disabled={printing} onClick={() => void printRegistrationDocument()}>
+              <Printer className="size-4" aria-hidden="true" />{" "}
+              {printing ? "Preparing…" : "Registration document"}
+            </Button>
             <IfAllowed permission="students.write">
               <Button asChild variant="outline">
                 <Link to="/students/$studentId/edit" params={{ studentId }}>

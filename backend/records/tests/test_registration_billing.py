@@ -304,7 +304,13 @@ class ActivationOnSettlementTests(RegistrationBillingTests):
         self.settle('5000.00')
         self.assertEqual(self.latest().status, Student.Status.GRADUATED)
 
-    def test_outstanding_school_fees_keep_student_pending(self):
+    def test_outstanding_school_fees_do_not_hold_a_settled_registration(self):
+        """Registration state comes from the registration workflow alone.
+
+        A later term invoice is a separate business process: once the
+        registration fee is settled the student starts school, whatever the
+        normal-fee balance happens to be.
+        """
         self.register()
         student = self.latest()
         registration_invoice = Invoice.objects.get(
@@ -315,6 +321,17 @@ class ActivationOnSettlementTests(RegistrationBillingTests):
             total=Decimal('10000.00'), items=[{'label': 'Exam', 'amount': '10000.00'}],
         )
         self.settle('5000.00', invoice=registration_invoice)
+        self.assertEqual(self.latest().status, Student.Status.ACTIVE)
+
+    def test_paid_term_fees_never_clear_an_unsettled_registration(self):
+        """The mirror image: ordinary school fees are not registration money."""
+        self.register()
+        student = self.latest()
+        term_invoice = Invoice.objects.create(
+            school=self.school, student=student, term='Second Term',
+            total=Decimal('10000.00'), items=[{'label': 'Exam', 'amount': '10000.00'}],
+        )
+        self.settle('10000.00', invoice=term_invoice)
         self.assertEqual(self.latest().status, Student.Status.PENDING_PAYMENT)
 
 

@@ -28,7 +28,7 @@ import {
 import { useSession } from "@/auth/session";
 import { ApiRequestError } from "@/api/client";
 import { dateTimeFmt, naira, titleCase } from "@/lib/format";
-import { printHtml } from "@/lib/print";
+import { escapeHtml, printHtml, schoolHeading, type PrintSchoolProfile } from "@/lib/print";
 import { getFinanceSummary, recordPayment } from "@/services/finance.service";
 import type { Invoice, Payment } from "@/types";
 
@@ -57,18 +57,22 @@ function balanceOf(invoice: Invoice) {
   return Math.max(0, invoice.total - invoice.paid);
 }
 
-function printInvoice(invoice: Invoice, school: { name: string; address: string }) {
+function printInvoice(invoice: Invoice, school: PrintSchoolProfile | null) {
+  if (!school) {
+    toast.error("Your school profile is missing. Save it in Settings before printing.");
+    return;
+  }
   const invoiceKind = invoice.source === "admission" ? "Registration invoice" : "Fee invoice";
   const rows = invoice.items
-    .map((item) => `<tr><td>${item.label}</td><td class="right">${naira(item.amount)}</td></tr>`)
+    .map((item) => `<tr><td>${escapeHtml(item.label)}</td><td class="right">${naira(item.amount)}</td></tr>`)
     .join("");
   const ok = printHtml({
     title: invoiceKind,
-    bodyHtml: `<p class="school">${school.name} · ${school.address}</p>
+    bodyHtml: `${schoolHeading(school)}
 <div class="doc">
 <h1>${invoiceKind}</h1>
-<p><strong>${invoice.studentName}</strong><br/>
-${invoice.className} · ${invoice.source === "admission" ? "One-time registration" : invoice.term} · ${invoice.id}</p>
+<p><strong>${escapeHtml(invoice.studentName)}</strong><br/>
+${escapeHtml(invoice.className)} · ${invoice.source === "admission" ? "One-time registration" : escapeHtml(invoice.term)} · ${escapeHtml(invoice.id)}</p>
 <table>
 <thead><tr><th>Item</th><th class="right">Amount</th></tr></thead>
 <tbody>${rows}
@@ -83,20 +87,39 @@ ${invoice.className} · ${invoice.source === "admission" ? "One-time registratio
   if (!ok) toast.error("Allow pop-ups to print. You can then download the document.");
 }
 
-function printReceipt(payment: Payment, school: { name: string; address: string }) {
+function printReceipt(payment: Payment, school: PrintSchoolProfile | null) {
+  if (!school) {
+    toast.error("Your school profile is missing. Save it in Settings before printing.");
+    return;
+  }
+  const invoiceTotal = payment.invoiceTotal;
+  const invoicePaid = payment.invoicePaid;
+  const balance =
+    invoiceTotal === undefined || invoicePaid === undefined
+      ? null
+      : Math.max(0, invoiceTotal - invoicePaid);
+  const invoiceRows =
+    invoiceTotal === undefined || invoicePaid === undefined
+      ? ""
+      : `<tr><td>Invoice</td><td class="right">${escapeHtml(payment.invoiceId)}</td></tr>
+<tr><td>Invoice total</td><td class="right">${naira(invoiceTotal)}</td></tr>
+<tr><td>Invoice paid to date</td><td class="right">${naira(invoicePaid)}</td></tr>
+<tr><td class="total">Remaining balance</td><td class="right total">${naira(balance ?? 0)}</td></tr>`;
   const ok = printHtml({
     title: "Receipt",
-    bodyHtml: `<p class="school">${school.name} · ${school.address}</p>
+    bodyHtml: `${schoolHeading(school)}
 <div class="doc">
 <h1>Payment receipt</h1>
-<p><strong>${payment.studentName}</strong><br/>
-${payment.reference} · ${dateTimeFmt(payment.createdAt)}</p>
+<p><strong>${escapeHtml(payment.studentName)}</strong><br/>
+${payment.admissionNumber ? `Admission number ${escapeHtml(payment.admissionNumber)}<br/>` : ""}
+${escapeHtml(payment.reference)} · ${dateTimeFmt(payment.createdAt)}</p>
 <table>
 <tbody>
 <tr><td>Amount paid</td><td class="right">${naira(payment.amount)}</td></tr>
 <tr><td>Method</td><td class="right">${titleCase(payment.method)}</td></tr>
 <tr><td>Status</td><td class="right">${titleCase(payment.status)}</td></tr>
-<tr><td>Recorded by</td><td class="right">${payment.recordedBy}</td></tr>
+${invoiceRows}
+<tr><td>Recorded by</td><td class="right">${escapeHtml(payment.recordedBy)}</td></tr>
 </tbody>
 </table>
 <p class="fine">This receipt confirms payment has been received and verified.</p>
@@ -117,10 +140,19 @@ function FeesPage() {
   const receipts = financeQuery.data?.recentPayments ?? [];
   const billed = financeQuery.data?.billed ?? 0;
   const paid = financeQuery.data?.paid ?? 0;
-  const school = {
-    name: session?.school?.name ?? "Al-Noor Model Academy",
-    address: session?.school ? `${session.school.address}, ${session.school.state}` : "Nigeria",
-  };
+  // School details for printed documents come from the school's own profile in
+  // the session — never a hardcoded fallback.
+  const school: PrintSchoolProfile | null = session?.school
+    ? {
+        name: session.school.name,
+        address: [session.school.address, session.school.state]
+          .filter(Boolean)
+          .join(", "),
+        phone: session.school.phone,
+        email: session.school.email,
+        logoUrl: session.school.logoUrl,
+      }
+    : null;
 
   return (
     <div className="space-y-6">
@@ -269,7 +301,7 @@ function PaymentDialog({
   invoice: Invoice | null;
   onClose: () => void;
   onPaid: () => void;
-  school: { name: string; address: string };
+  school: PrintSchoolProfile | null;
 }) {
   const open = invoice !== null;
   const [method, setMethod] = useState<Payment["method"]>("card");

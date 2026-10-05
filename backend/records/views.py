@@ -3,7 +3,7 @@ from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Prefetch, Q, Sum
+from django.db.models import Count, F, Max, Prefetch, Q, Sum
 from django.db.models.functions import Coalesce
 from django.http import Http404
 from django.shortcuts import get_object_or_404
@@ -179,11 +179,15 @@ def _student_queryset(school_id):
 ADMISSION_INVOICE_DUE_DAYS = 30
 
 
-def _filtered_students(request, *, search='', class_name='', class_id='', student_status=''):
+def _filtered_students(request, *, search='', class_name='', class_id='', student_status='',
+                       section='', session_id='', enrollment_status=''):
     """The student list, filtered in the database rather than in the client.
 
     The base queryset is already school-scoped, so a `class_id` belonging to
     another school matches nothing instead of leaking that school's class.
+    Class, section and session membership all come from the *active enrollment*
+    rather than the denormalised `Student.class_name` mirror, so a stale mirror
+    cannot decide the list. Newest admissions come first.
     """
     qs = _student_queryset(request.user.school_id)
     if search:
@@ -201,11 +205,45 @@ def _filtered_students(request, *, search='', class_name='', class_id='', studen
         ).distinct()
     elif class_name:
         qs = qs.filter(class_name=class_name)
+    if section:
+        membership = Q(enrollments__status=Enrollment.Status.ACTIVE)
+        try:
+            uuid.UUID(str(section))
+        except ValueError:
+            membership &= Q(enrollments__section__name=section)
+        else:
+            membership &= Q(enrollments__section_id=section)
+        qs = qs.filter(membership).distinct()
+    if session_id:
+        qs = qs.filter(
+            enrollments__academic_session_id=session_id,
+            enrollments__status=Enrollment.Status.ACTIVE,
+        ).distinct()
+    if enrollment_status:
+        if enrollment_status not in Enrollment.Status.values:
+            raise ValidationError({
+                'enrollmentStatus': f'"{enrollment_status}" is not an enrollment status.',
+            })
+        # A student who was never seated has no enrollment row at all, so
+        # "not enrolled" has to mean that as well as the literal row state.
+        if enrollment_status == Enrollment.Status.NOT_ENROLLED:
+            qs = qs.filter(
+                Q(enrollments__isnull=True)
+                | Q(enrollments__status=Enrollment.Status.NOT_ENROLLED),
+            ).distinct()
+        else:
+            qs = qs.filter(enrollments__status=enrollment_status).distinct()
     if student_status:
         if student_status not in Student.Status.values:
             raise ValidationError({'status': f'"{student_status}" is not a student status.'})
         qs = qs.filter(status=student_status)
-    return qs
+    # Most recent enrollment first, taken from the enrollment's own timestamp —
+    # never from the student id, which only records insert order. A student who
+    # is not enrolled yet has no timestamp of their own to sort on, so it falls
+    # back to when the record was created; `-id` keeps ties stable.
+    return qs.annotate(
+        latest_enrollment_at=Coalesce(Max('enrollments__activated_at'), F('created_at')),
+    ).order_by('-latest_enrollment_at', '-id')
 
 
 def _resolve_admission_level(school: School, class_name: str):
@@ -343,9 +381,18 @@ class StudentListCreateView(APIView):
         class_name = request.query_params.get('className', '').strip()
         class_id = request.query_params.get('class_id') or request.query_params.get('classId')
         student_status = request.query_params.get('status', '').strip()
+        section = request.query_params.get('section', '').strip()
+        session_id = (
+            request.query_params.get('sessionId')
+            or request.query_params.get('session_id')
+            or ''
+        ).strip()
+        enrollment_status = request.query_params.get('enrollmentStatus', '').strip()
         data = _paginate(
             _filtered_students(request, search=search, class_name=class_name,
-                               class_id=class_id, student_status=student_status),
+                               class_id=class_id, student_status=student_status,
+                               section=section, session_id=session_id,
+                               enrollment_status=enrollment_status),
             request, StudentSerializer, context={'request': request},
         )
         return Response(data)
@@ -394,13 +441,37 @@ class StudentListCreateView(APIView):
                 school=school, student=student,
                 due_date=billing_service.default_due_date(None, days=ADMISSION_INVOICE_DUE_DAYS),
             )
+            # The registration row is what the payment flow approves later. Without
+            # it a settled registration invoice would flip the status but never
+            # seat the student in a class roster.
+            billing_service.ensure_registration(
+                school, student, invoice, created_by=request.user,
+            )
             if invoice is None:
                 student.status = Student.Status.ACTIVE
                 student.save(update_fields=['status'])
+                billing_service.activate_registration(student, actor=request.user)
         data = dict(serializer.data)
         data['invoiceId'] = str(invoice.id) if invoice else ''
         data['invoiceTotal'] = str(invoice.total) if invoice else ''
         data['registrationFeeConfigured'] = invoice is not None
+        log_audit(
+            request, 'student.register', target='Student',
+            detail=f'{student.first_name} {student.last_name} ({student.admission_number}) - {student.class_name}',
+            entity='student', entity_id=str(student.pk),
+            after={
+                'class': student.class_name,
+                'status': student.status,
+                'invoiceId': str(invoice.id) if invoice else '',
+            },
+        )
+        if invoice is not None:
+            log_audit(
+                request, 'invoice.created', target='Invoice',
+                detail=f'Registration invoice for {student.admission_number}',
+                entity='invoice', entity_id=str(invoice.pk),
+                after={'total': str(invoice.total), 'source': invoice.source},
+            )
         return Response(data, status=status.HTTP_201_CREATED)
 
 
@@ -474,6 +545,10 @@ class StudentDetailView(APIView):
 
     def patch(self, request, pk):
         student = self.get_object(request, pk)
+        before_status = student.status
+        requested = str(request.data.get('status') or '').strip()
+        if requested and requested != before_status:
+            self._assert_status_change_allowed(student, requested)
         serializer = StudentSerializer(
             student, data=request.data, partial=True, context={'request': request},
         )
@@ -481,8 +556,42 @@ class StudentDetailView(APIView):
         # Ownership cannot move: `school` is not a serializer field, and passing
         # it explicitly is rejected here so a crafted payload fails loudly
         # instead of being silently dropped.
-        serializer.save()
+        updated = serializer.save()
+        if updated.status != before_status:
+            log_audit(
+                request, 'student.updated', target='Student',
+                detail=f'{updated.first_name} {updated.last_name} ({updated.admission_number})',
+                entity='student', entity_id=str(updated.pk),
+                before={'status': before_status},
+                after={'status': updated.status},
+            )
         return Response(serializer.data)
+
+    def _assert_status_change_allowed(self, student, requested):
+        """A client may suspend/restore, but never drive the state machine.
+
+        The billing hold is raised by registration and cleared only by a
+        verified registration payment (or by the school having no registration
+        fee at all); a transfer and a graduation each have their own endpoint
+        that moves the student and writes the audit trail. Letting a PATCH set
+        any of these directly would let a student be activated without paying.
+        """
+        if requested not in Student.Status.values:
+            return
+        if requested in (
+            Student.Status.PENDING_PAYMENT,
+            Student.Status.TRANSFERRED,
+            Student.Status.GRADUATED,
+        ):
+            raise ValidationError({
+                'status': f'A student cannot be moved to "{requested}" from here. '
+                          'That state is set by the school\'s own workflow.',
+            })
+        if student.status == Student.Status.PENDING_PAYMENT:
+            raise ValidationError({
+                'status': 'This student is waiting for the registration payment. '
+                          'Verify the payment to activate them.',
+            })
 
 
 class StudentTransferView(APIView):
@@ -1234,7 +1343,28 @@ class PaymentListView(APIView):
             # admission fee at the bursar's desk is fully settled right here.
             # Without this the student would sit in PENDING_PAYMENT until some
             # later verification endpoint happened to run.
-            activated = billing_service.activate_student_if_fully_paid(invoice.student)
+            activated = billing_service.activate_student_if_fully_paid(
+                invoice.student, actor=request.user,
+            )
+            log_audit(
+                request, 'payment.created', target='Payment',
+                detail=f'{payment.get_method_display()} {amount} from {invoice.student.admission_number}',
+                entity='payment', entity_id=str(payment.pk),
+                after={'amount': str(amount), 'status': payment.status},
+            )
+            if verified:
+                log_audit(
+                    request, 'payment.verified', target='Payment',
+                    detail=f'Cash/POS payment verified for {invoice.student.admission_number}',
+                    entity='payment', entity_id=str(payment.pk),
+                    after={'amount': str(amount), 'invoiceId': str(invoice.pk)},
+                )
+            if activated:
+                log_audit(
+                    request, 'enrollment.activated', target='Student',
+                    detail=f'{invoice.student.admission_number} seated after registration payment',
+                    entity='student', entity_id=str(invoice.student_id),
+                )
         return Response(
             {**PaymentSerializer(payment).data, 'studentActivated': activated},
             status=status.HTTP_201_CREATED,
@@ -1314,7 +1444,15 @@ class PaymentVerifyView(APIView):
             if payment.status == Payment.Status.VERIFIED:
                 # Already verified: re-running is a no-op for the money, but the
                 # student may still be held if the earlier run failed midway.
-                activated = billing_service.activate_student_if_fully_paid(payment.invoice.student)
+                activated = billing_service.activate_student_if_fully_paid(
+                    payment.invoice.student, actor=request.user,
+                )
+                if activated:
+                    log_audit(
+                        request, 'enrollment.activated', target='Student',
+                        detail=f'{payment.invoice.student.admission_number} seated after re-verification',
+                        entity='student', entity_id=str(payment.invoice.student_id),
+                    )
                 return Response({**PaymentSerializer(payment).data, 'studentActivated': activated})
             invoice = Invoice.objects.select_for_update().get(pk=payment.invoice_id)
             outstanding = invoice.total - invoice.paid
@@ -1330,8 +1468,22 @@ class PaymentVerifyView(APIView):
             # Verifying the final instalment is what lets a new student start
             # classes. Only promotes PENDING_PAYMENT forward, so this can never
             # undo a suspension or a graduation.
-            activated = billing_service.activate_student_if_fully_paid(invoice.student)
+            activated = billing_service.activate_student_if_fully_paid(
+                invoice.student, actor=request.user,
+            )
             event_service.payment_verified(payment)
+            log_audit(
+                request, 'payment.verified', target='Payment',
+                detail=f'{payment.get_method_display()} {payment.amount} towards {invoice.student.admission_number}',
+                entity='payment', entity_id=str(payment.pk),
+                after={'amount': str(payment.amount), 'invoiceId': str(invoice.pk)},
+            )
+            if activated:
+                log_audit(
+                    request, 'enrollment.activated', target='Student',
+                    detail=f'{invoice.student.admission_number} seated after registration payment',
+                    entity='student', entity_id=str(invoice.student_id),
+                )
         return Response({**PaymentSerializer(payment).data, 'studentActivated': activated})
 
 

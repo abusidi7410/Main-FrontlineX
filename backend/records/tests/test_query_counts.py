@@ -29,8 +29,15 @@ class StudentListQueryCountTests(SecurityTestBase):
             )
 
     def test_student_list_query_count_does_not_grow_with_page_size(self):
-        """A 20-student page and a 60-student page cost the same queries."""
+        """A 20-student page and a full page cost the same queries."""
         self._seed(60)
+        # Newest admission first, so this one is guaranteed to be on page one
+        # and carries no invoice of its own.
+        Student.objects.create(
+            school=self.school, admission_number='QC-NOINVOICE',
+            first_name='No', last_name='Invoice', gender='female',
+            class_name='JSS 1', arm='A', status=Student.Status.ACTIVE,
+        )
         self.auth(self.admin)
 
         with CaptureQueriesContext(self.connection) as small:
@@ -39,19 +46,19 @@ class StudentListQueryCountTests(SecurityTestBase):
         self.assertEqual(len(resp.json()['results']), 20)
 
         with CaptureQueriesContext(self.connection) as large:
-            resp = self.client.get(self.url('/students/'), {'pageSize': 60})
+            resp = self.client.get(self.url('/students/'), {'pageSize': 100})
         self.assertEqual(resp.status_code, 200, resp.content)
-        self.assertEqual(len(resp.json()['results']), 60)
+        self.assertEqual(len(resp.json()['results']), 62)
 
         # The serialized data must still be correct with the annotations.
-        # Ordering is (last_name, first_name) so index 0 is not necessarily a
-        # seeded student; look the seeded one up by admission number.
+        # The list is ordered newest-admission-first, so rows are looked up by
+        # admission number rather than by position.
         rows = {row['admissionNumber']: row for row in resp.json()['results']}
         seeded = rows['QC-0000']
         self.assertEqual(seeded['attendanceRate'], 100)
         self.assertEqual(seeded['outstandingFees'], 600.0)
         # A student with no invoices reports zero outstanding, not None.
-        self.assertEqual(rows['SUA/JSS/2026/000100']['outstandingFees'], 0.0)
+        self.assertEqual(rows['QC-NOINVOICE']['outstandingFees'], 0.0)
 
         # Constant, not linear, in page size. `count()` runs before the slice.
         self.assertEqual(

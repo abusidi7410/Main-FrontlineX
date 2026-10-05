@@ -25,6 +25,41 @@ export async function listInvoicePage(
   return apiFetch("/invoices", { query: { search, page, pageSize } });
 }
 
+/** Every invoice the server holds for one student — used by printed documents. */
+export async function listStudentInvoices(studentId: string): Promise<Invoice[]> {
+  // SECURITY: Backend must verify permission finance.read and schoolId match,
+  // and a student account only ever sees its own invoices.
+  const invoices: Invoice[] = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const response = await apiFetch<Paginated<Invoice>>("/invoices", {
+      query: { studentId, page, pageSize: 100 },
+    });
+    invoices.push(...response.results);
+    totalPages = response.totalPages;
+    page += 1;
+  } while (page <= totalPages);
+  return invoices;
+}
+
+/** Every payment the server holds for one student — used by printed documents. */
+export async function listStudentPayments(studentId: string): Promise<Payment[]> {
+  // SECURITY: as listStudentInvoices, for the payments list.
+  const payments: Payment[] = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const response = await apiFetch<Paginated<Payment>>("/payments", {
+      query: { studentId, page, pageSize: 100 },
+    });
+    payments.push(...response.results);
+    totalPages = response.totalPages;
+    page += 1;
+  } while (page <= totalPages);
+  return payments;
+}
+
 export async function listPayments(): Promise<Payment[]> {
   const payments: Payment[] = [];
   let page = 1;

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
@@ -9,9 +9,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/auth/session";
+import { ApiRequestError } from "@/api/client";
 import { PaymentStructurePanel } from "@/features/finance/payment-structure-panel";
 import { NotificationPreferencesPanel } from "@/features/notifications/notification-preferences-panel";
 import { ROLE_LABELS } from "@/permissions";
+import { updateSchoolProfile, uploadSchoolLogo } from "@/services/school.service";
 
 export const Route = createFileRoute("/_app/settings")({
   head: () => ({
@@ -33,7 +35,7 @@ export const Route = createFileRoute("/_app/settings")({
 });
 
 function SettingsPage() {
-  const { session, can } = useSession();
+  const { session, can, updateSchool } = useSession();
   const school = session?.school;
   const readOnly = !can("settings.write");
 
@@ -43,6 +45,10 @@ function SettingsPage() {
   const [address, setAddress] = useState(school?.address ?? "");
   const [currentSession, setCurrentSession] = useState(school?.currentSession ?? "");
   const [currentTerm, setCurrentTerm] = useState(school?.currentTerm ?? "");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoUrl, setLogoUrl] = useState(school?.logoUrl ?? "");
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <PermissionGate anyOf={["settings.read", "finance.read"]}>
@@ -81,11 +87,78 @@ function SettingsPage() {
           <TabsContent value="school" className="mt-4">
             <form
               className="fn-panel grid gap-4 p-5 sm:grid-cols-2"
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
-                toast.success("School profile saved");
+                if (savingProfile) return;
+                setSavingProfile(true);
+                try {
+                  // The server always writes to the school on the caller's own
+                  // account, so this cannot touch another tenant's profile.
+                  const profile = await updateSchoolProfile({ name, phone, email, address });
+                  updateSchool(profile);
+                  toast.success("School profile saved");
+                } catch (error) {
+                  toast.error(
+                    error instanceof ApiRequestError
+                      ? error.message
+                      : "We couldn't save the school profile. Please try again.",
+                  );
+                } finally {
+                  setSavingProfile(false);
+                }
               }}
             >
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="school-logo">School logo</Label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex size-14 items-center justify-center overflow-hidden rounded-xl border border-border bg-muted">
+                    {logoUrl ? (
+                      <img src={logoUrl} alt="" className="size-full object-cover" />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">None</span>
+                    )}
+                  </div>
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={readOnly || uploadingLogo}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      setUploadingLogo(true);
+                      try {
+                        const profile = await uploadSchoolLogo(file);
+                        updateSchool(profile);
+                        setLogoUrl(profile.logoUrl ?? "");
+                        toast.success("School logo updated");
+                      } catch (error) {
+                        toast.error(
+                          error instanceof ApiRequestError
+                            ? error.message
+                            : "We couldn't upload the logo. Please try again.",
+                        );
+                      } finally {
+                        setUploadingLogo(false);
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={readOnly || uploadingLogo}
+                    onClick={() => logoInputRef.current?.click()}
+                  >
+                    {uploadingLogo ? "Uploading…" : "Upload logo"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Stored with the school's own media files and printed on receipts and
+                    registration documents.
+                  </p>
+                </div>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="school-name">School name</Label>
                 <Input
@@ -129,8 +202,8 @@ function SettingsPage() {
                 />
               </div>
               <div className="sm:col-span-2">
-                <Button type="submit" disabled={readOnly}>
-                  Save changes
+                <Button type="submit" disabled={readOnly || savingProfile}>
+                  {savingProfile ? "Saving…" : "Save changes"}
                 </Button>
               </div>
             </form>

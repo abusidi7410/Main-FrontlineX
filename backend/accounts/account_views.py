@@ -175,6 +175,13 @@ class AccountDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         attrs = serializer.validated_data
 
+        # Captured before the change so a role (and therefore permission) change
+        # is recorded with what it actually moved from and to.
+        before = {
+            'fullName': account.get_full_name(),
+            'phone': account.phone or '',
+            'role': account.role,
+        }
         if attrs.get('fullName'):
             first, _, last = attrs['fullName'].strip().partition(' ')
             account.first_name = first.strip()
@@ -185,11 +192,25 @@ class AccountDetailView(APIView):
             account.role = attrs['role']
         account.save(update_fields=['first_name', 'last_name', 'phone', 'role', 'updated_at'])
 
+        after = {
+            'fullName': account.get_full_name(),
+            'phone': account.phone or '',
+            'role': account.role,
+        }
+        changed = {
+            key: {'before': before[key], 'after': after[key]}
+            for key in after if before[key] != after[key]
+        }
+        role_changed = before['role'] != after['role']
         audit(
             request,
             'account.updated',
             f'{account.get_full_name()} ({account.email})',
-            f'Role {account.role} account updated.',
+            'Permissions changed from '
+            f'{before["role"]} to {after["role"]}.' if role_changed
+            else f'Role {account.role} account updated.',
+            severity='warning' if role_changed else 'info',
+            after=changed or None,
         )
         return Response(AccountSerializer(account).data)
 

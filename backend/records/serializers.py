@@ -185,12 +185,19 @@ class PaymentSerializer(serializers.ModelSerializer):
     id = serializers.SerializerMethodField()
     invoiceId = serializers.CharField(source='invoice_id')
     studentName = serializers.SerializerMethodField()
+    admissionNumber = serializers.SerializerMethodField()
+    invoiceTotal = serializers.SerializerMethodField()
+    invoicePaid = serializers.SerializerMethodField()
     recordedBy = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', format='%Y-%m-%dT%H:%M:%S')
 
     class Meta:
         model = Payment
-        fields = ['id', 'invoiceId', 'studentName', 'amount', 'method', 'status', 'reference', 'recordedBy', 'createdAt']
+        fields = [
+            'id', 'invoiceId', 'studentName', 'admissionNumber', 'amount', 'method',
+            'status', 'reference', 'recordedBy', 'createdAt',
+            'invoiceTotal', 'invoicePaid',
+        ]
         read_only_fields = ['status']
 
     def get_id(self, obj):
@@ -198,6 +205,15 @@ class PaymentSerializer(serializers.ModelSerializer):
 
     def get_studentName(self, obj):
         return f'{obj.invoice.student.first_name} {obj.invoice.student.last_name}'
+
+    def get_admissionNumber(self, obj):
+        return obj.invoice.student.admission_number
+
+    def get_invoiceTotal(self, obj):
+        return float(obj.invoice.total)
+
+    def get_invoicePaid(self, obj):
+        return float(obj.invoice.paid)
 
     def get_recordedBy(self, obj):
         return obj.recorded_by.get_full_name() if obj.recorded_by else ''

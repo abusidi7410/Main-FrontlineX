@@ -14,6 +14,7 @@ import type {
   NotificationPage,
   NotificationPreference,
   NotificationType,
+  School,
   StaffMember,
   SubscriptionState,
   TimetableEntry,
@@ -50,6 +51,50 @@ export async function registerSchool(payload: OnboardingPayload) {
 export async function verifySchoolPayment(reference: string) {
   // SECURITY: Public payment-verification endpoint; no authenticated permission or schoolId match is allowed.
   return apiFetch<{ status: "verified" | "pending" }>(`/payments/${reference}/verify`);
+}
+
+export type SchoolProfile = Pick<
+  School,
+  | "id"
+  | "name"
+  | "slug"
+  | "logoUrl"
+  | "status"
+  | "address"
+  | "state"
+  | "lga"
+  | "phone"
+  | "email"
+  | "branding"
+  | "studentCount"
+  | "staffCount"
+>;
+
+export interface SchoolProfileInput {
+  name?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+}
+
+export async function getSchoolProfile(): Promise<SchoolProfile> {
+  // SECURITY: Backend always reads the school from the caller's own account;
+  // there is no schoolId parameter to swap for another tenant.
+  return apiFetch<SchoolProfile>("/schools/profile");
+}
+
+export async function updateSchoolProfile(input: SchoolProfileInput): Promise<SchoolProfile> {
+  // SECURITY: Backend must verify permission settings.write and derive the
+  // school from the session, ignoring any id in the payload.
+  return apiFetch<SchoolProfile>("/schools/profile", { method: "PATCH", body: input });
+}
+
+export async function uploadSchoolLogo(logo: File): Promise<SchoolProfile> {
+  // SECURITY: as updateSchoolProfile, but multipart so the image goes through
+  // the normal storage field instead of being embedded in the database.
+  const body = new FormData();
+  body.append("logo", logo);
+  return apiFetch<SchoolProfile>("/schools/profile", { method: "PATCH", body });
 }
 
 export async function getSubscription(): Promise<SubscriptionState> {

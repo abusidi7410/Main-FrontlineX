@@ -29,10 +29,12 @@ from rest_framework.exceptions import ValidationError
 
 from ..models import (
     AcademicSession,
+    Enrollment,
     FeeStructure,
     Invoice,
     Level,
     Payment,
+    Registration,
     SchoolClass,
     Student,
     invoice_item_amount,
@@ -368,6 +370,110 @@ def live_invoices(student) -> list[Invoice]:
     ))
 
 
+def is_registration_invoice(invoice) -> bool:
+    """Is this invoice the one-time registration/admission charge?
+
+    Only that invoice decides whether a new student may start school. Regular
+    term fees are a separate business process and are never used as the test
+    for "is the registration still pending".
+    """
+    if invoice.source == Invoice.Source.ADMISSION:
+        return True
+    return any(
+        str((item or {}).get('feeType') or '') == FeeStructure.FeeType.REGISTRATION
+        for item in (invoice.items or [])
+    )
+
+
+def registration_invoices(student) -> list[Invoice]:
+    """The live invoices holding a new student's registration back, if any."""
+    return [invoice for invoice in live_invoices(student) if is_registration_invoice(invoice)]
+
+
+def registration_balance(student) -> Decimal:
+    """Unpaid registration/admission money, ignoring every other fee."""
+    outstanding = Decimal('0')
+    for invoice in registration_invoices(student):
+        outstanding += max(_decimal(invoice.total) - _decimal(invoice.verified_paid), Decimal('0'))
+    return outstanding
+
+
+def ensure_registration(
+    school, student, invoice=None, *, created_by=None,
+) -> Registration | None:
+    """Create (once) the PENDING registration a new student is admitted through.
+
+    Returns ``None`` when the school's academic structure is not ready yet —
+    a registration is anchored to a session and a class, and refusing to save
+    the student because setup is incomplete would be the worse failure.
+    """
+    from . import academic as academic_service
+
+    try:
+        session = academic_service.current_session(school)
+        if session is None:
+            session = academic_service.ensure_session(school)
+        school_class = academic_service.ensure_class(school, student.class_name)
+        section = academic_service.ensure_section(school, school_class, student.arm)
+    except ValidationError:
+        return None
+    registration, _created = Registration.objects.get_or_create(
+        school=school,
+        student=student,
+        academic_session=session,
+        defaults={
+            'intended_class': school_class,
+            'intended_section': section,
+            'invoice': invoice,
+            'created_by': created_by if getattr(created_by, 'school_id', None) else None,
+        },
+    )
+    if invoice is not None and registration.invoice_id is None:
+        registration.invoice = invoice
+        registration.save(update_fields=['invoice', 'updated_at'])
+    return registration
+
+
+def activate_registration(
+    student,
+    *,
+    actor=None,
+    source: str = Enrollment.ActivationSource.ADMIN_APPROVAL,
+) -> Enrollment | None:
+    """Approve the student's registration and seat them through an enrollment.
+
+    Idempotent: an already-approved registration keeps the enrollment it has,
+    so a repeated payment verification can never seat a student twice.
+    A rejected or cancelled registration is an administrative decision and is
+    never overridden from here.
+    """
+    from . import enrollment as enrollment_service
+
+    registration = ensure_registration(student.school, student)
+    if registration is None:
+        return None
+    if registration.status in (Registration.Status.REJECTED, Registration.Status.CANCELLED):
+        return None
+    if registration.status == Registration.Status.PENDING:
+        registration.status = Registration.Status.APPROVED
+        registration.approved_by = actor if getattr(actor, 'school_id', None) else None
+        registration.approved_at = timezone.now()
+        registration.decision_reason = registration.decision_reason or 'Approved automatically.'
+        registration.save(update_fields=[
+            'status', 'approved_by', 'approved_at', 'decision_reason', 'updated_at',
+        ])
+    enrollment = enrollment_service.activate_enrollment(
+        student=registration.student,
+        academic_session=registration.academic_session,
+        class_obj=registration.intended_class,
+        section=registration.intended_section,
+        source=source,
+        actor=actor,
+    )
+    enrollment_service.sync_student_class_mirror(registration.student, enrollment)
+    return enrollment
+
+
 def student_has_outstanding_balance(student) -> Decimal:
     """Unpaid money owed across a student's live invoices.
 
@@ -393,22 +499,31 @@ def student_has_outstanding_balance(student) -> Decimal:
     return max(outstanding, Decimal('0'))
 
 
-def activate_student_if_fully_paid(student) -> bool:
-    """Clear a PENDING_PAYMENT student once every live invoice is settled.
+def activate_student_if_fully_paid(student, actor=None) -> bool:
+    """Clear a PENDING_PAYMENT student once their registration fee is settled.
+
+    The registration invoice is the only test: ordinary school fees are billed
+    separately and never hold back — nor re-open — a completed registration, so
+    a student with an outstanding term balance stays enrolled (spec: the
+    registration workflow, not "any invoice balance > 0", decides this).
 
     Only ever promotes a student forward, so a school that later suspends
     somebody for unrelated reasons cannot have them silently reactivated by a
-    stray payment.
+    stray payment. Reaching here also seats the student's enrollment, so an
+    activated student always has one.
     """
     if student.status != Student.Status.PENDING_PAYMENT:
         return False
     invoices = live_invoices(student)
     if not invoices:
         return False
-    if student_has_outstanding_balance(student) > 0:
+    if registration_balance(student) > 0:
         return False
     student.status = Student.Status.ACTIVE
     student.save(update_fields=['status'])
+    activate_registration(
+        student, actor=actor, source=Enrollment.ActivationSource.FULL_PAYMENT,
+    )
     # Notified from here rather than at each of the three call sites: this is the
     # one place the status actually flips, so it is the one place that cannot be
     # forgotten and cannot notify for a promotion that did not happen.
@@ -455,5 +570,8 @@ def invoice_pending_students(school, *, level: Level | None = None) -> tuple[int
         else:
             student.status = Student.Status.ACTIVE
             student.save(update_fields=['status'])
+            # No registration fee applies, so the billing hold is released — and
+            # the student still has to be seated through an enrollment.
+            activate_registration(student)
             activated += 1
     return created, activated

@@ -4,6 +4,39 @@ export interface PrintOptions {
   styles?: string;
 }
 
+export interface PrintSchoolProfile {
+  name: string;
+  address?: string | undefined;
+  phone?: string | undefined;
+  email?: string | undefined;
+  logoUrl?: string | null | undefined;
+}
+
+/** Escape text before it goes into a printable document's markup. */
+export function escapeHtml(value: string | null | undefined): string {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+/**
+ * The letterhead every printable document opens with. School information always
+ * comes from the school's own saved profile — never a hardcoded string — so a
+ * receipt or registration document carries whatever the school last saved in
+ * Settings, including its logo.
+ */
+export function schoolHeading(school: PrintSchoolProfile): string {
+  const logo = school.logoUrl
+    ? `<img src="${escapeHtml(school.logoUrl)}" alt="" style="height:46px;display:block;margin-bottom:8px" />`
+    : "";
+  const contact = [school.phone, school.email].filter(Boolean).join(" · ");
+  const lines = [school.name, school.address, contact].filter(Boolean);
+  return `<p class="school">${logo}${lines.map(escapeHtml).join("<br/>")}</p>`;
+}
+
 /**
  * Opens a printable document in a new window and starts the print dialog.
  * Returns false when pop-ups are blocked so callers can tell the user.

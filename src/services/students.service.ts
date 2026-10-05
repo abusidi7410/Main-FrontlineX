@@ -5,6 +5,12 @@ export interface StudentQuery {
   search?: string;
   className?: string;
   status?: string;
+  /** Section name (the app's "arm") or section id, filtered server-side. */
+  section?: string;
+  /** Academic session id, filtered server-side. */
+  sessionId?: string;
+  /** Enrollment/registration status for the selected session. */
+  enrollmentStatus?: string;
   page?: number;
   pageSize?: number;
 }

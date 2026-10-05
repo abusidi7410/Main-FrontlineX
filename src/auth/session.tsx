@@ -13,7 +13,7 @@ import { setAccessToken, setUnauthorizedHandler } from "@/api/client";
 import { HOME_BY_ROLE } from "@/permissions/navigation";
 import { can, canAny } from "@/permissions";
 import * as authService from "@/services/auth.service";
-import type { AuthUser, Permission, Role } from "@/types";
+import type { AuthUser, Permission, Role, School } from "@/types";
 
 interface SessionContextValue {
   session: authService.Session | null;
@@ -21,6 +21,7 @@ interface SessionContextValue {
   signIn: (identifier: string, password: string) => Promise<authService.Session>;
   signOut: () => Promise<void>;
   updateUser: (patch: Partial<Pick<AuthUser, "fullName" | "phone" | "avatarUrl">>) => void;
+  updateSchool: (patch: Partial<School>) => void;
   can: (permission: Permission) => boolean;
   canAny: (permissions: Permission[]) => boolean;
   role: Role | null;
@@ -92,6 +93,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const updateSchool = useCallback(
+    (patch: Partial<School>) => {
+      setSession((prev) => {
+        if (!prev?.school) return prev;
+        const next: authService.Session = {
+          ...prev,
+          school: { ...prev.school, ...patch },
+        };
+        authService.persistSession(next);
+        return next;
+      });
+    },
+    [],
+  );
+
   const value = useMemo<SessionContextValue>(
     () => ({
       session,
@@ -99,11 +115,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       signIn,
       signOut,
       updateUser,
+      updateSchool,
       role: session?.user.role ?? null,
       can: (permission) => can(session?.user.permissions, permission),
       canAny: (permissions) => canAny(session?.user.permissions, permissions),
     }),
-    [session, status, signIn, signOut, updateUser],
+    [session, status, signIn, signOut, updateUser, updateSchool],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
