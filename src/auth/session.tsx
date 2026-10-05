@@ -42,13 +42,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const handleUnauthorized = async () => {
+    const handleUnauthorized = async (reason: string | undefined) => {
       authService.persistSession(null);
       setAccessToken(null);
       setSession(null);
       setStatus("unauthenticated");
       const redirectPath = window.location.pathname;
-      await navigate({ to: "/login", replace: true, search: { redirect: redirectPath } });
+      await navigate({
+        to: "/login",
+        replace: true,
+        search: { redirect: redirectPath, ...(reason === undefined ? {} : { reason }) },
+      });
     };
     setUnauthorizedHandler(handleUnauthorized);
     return () => setUnauthorizedHandler(null);

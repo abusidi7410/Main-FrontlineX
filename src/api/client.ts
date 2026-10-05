@@ -58,10 +58,13 @@ export function getAccessToken() {
 /**
  * Called once when an authenticated request comes back with HTTP 401, so the
  * session layer can drop the stored session and redirect to the login page
- * (spec §5 session expiration, §39 401 handling).
+ * (spec §5 session expiration, §39 401 handling). The reason is only passed
+ * when the server gave one worth saying out loud — a school suspension, for
+ * instance — so an ordinary token expiry does not land the user on a login
+ * page claiming they were cut off.
  */
-let unauthorizedHandler: (() => void) | null = null;
-export function setUnauthorizedHandler(handler: (() => void) | null) {
+let unauthorizedHandler: ((reason: string | undefined) => void) | null = null;
+export function setUnauthorizedHandler(handler: ((reason: string | undefined) => void) | null) {
   unauthorizedHandler = handler;
 }
 
@@ -115,6 +118,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     const payload = (await response.json().catch(() => null)) as {
       detail?: string;
       message?: string;
+      code?: string;
       errors?: Record<string, string>;
       fieldErrors?: Record<string, string>;
     } | null;
@@ -125,7 +129,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
       payload?.fieldErrors ?? payload?.errors,
     );
     if (response.status === 401 && accessToken && unauthorizedHandler) {
-      unauthorizedHandler();
+      unauthorizedHandler(payload?.code === "school_suspended" ? payload?.detail : undefined);
     }
     throw error;
   }

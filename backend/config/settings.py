@@ -208,7 +208,9 @@ else:
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # Wraps SimpleJWT so a token issued to a school the platform later
+        # suspends stops working on its next request (accounts.authentication).
+        'accounts.authentication.SchoolAccessJWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',

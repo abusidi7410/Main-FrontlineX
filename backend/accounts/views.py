@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 from schools.serializers import SchoolSessionSerializer
+from schools.status import SUSPENDED_DETAIL, is_suspended_school
 from .email import send_password_reset_email, send_verification_email
 from .serializers import (
     AuthUserSerializer,
@@ -150,6 +151,16 @@ class LoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Suspension belongs to the school, so it blocks every account in it at
+        # once. Checked before any token is minted: a suspended school must not
+        # be able to obtain credentials at all, not merely find them refused
+        # afterwards. Platform staff have no school and are never blocked.
+        if is_suspended_school(user.school_id):
+            return Response(
+                {'detail': SUSPENDED_DETAIL},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         access_token, refresh = _issue_tokens(user)
         _record_login(request, user)
         resp = Response(_session_payload(user, access_token))
@@ -198,6 +209,25 @@ class CookieTokenRefreshView(APIView):
                 {'detail': 'Invalid or expired refresh token.'},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+
+        # A suspended school must not refresh its way back in. The tokens this
+        # would mint are refused on use anyway (accounts.authentication), but
+        # refusing here too takes the cookie back instead of leaving it live
+        # until it expires.
+        claims = getattr(refresh, 'payload', None) or {}
+        user_id = claims.get(settings.SIMPLE_JWT.get('USER_ID_CLAIM', 'user_id'))
+        school_id = (
+            User.objects.filter(pk=user_id).values_list('school_id', flat=True).first()
+            if user_id is not None
+            else None
+        )
+        if is_suspended_school(school_id):
+            resp = Response(
+                {'detail': SUSPENDED_DETAIL},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+            resp.delete_cookie('refresh_token', path=_REFRESH_COOKIE_PATH)
+            return resp
 
         # Blacklist the OLD token first so a stolen/used refresh cannot be
         # replayed once it has been used to obtain a new pair.

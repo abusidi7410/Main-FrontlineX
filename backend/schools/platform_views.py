@@ -14,6 +14,7 @@ from accounts.permissions import IsSuperAdmin
 from records.models import Student
 from records.services import announcements as announcement_service
 from .models import Announcement, AuditLog, School, SchoolSubscription, SubscriptionPlan, SupportTicket
+from .status import school_status
 
 PLATFORM_STATUSES = {'active', 'trial', 'grace', 'pending_payment', 'suspended'}
 _SCHOOL_TYPE_CHOICES = {'nursery', 'primary', 'secondary', 'mixed'}
@@ -28,20 +29,6 @@ def _plan_for_tier(tier_id):
                 min_students__lte=int(index)
             ).order_by('-min_students').first()
     return SubscriptionPlan.objects.first() or SubscriptionPlan(name='t100', min_students=1, max_students=100)
-
-
-def _school_status(school, subscription):
-    if school.is_active:
-        return 'active'
-    if subscription:
-        if subscription.status == SchoolSubscription.Status.SUSPENDED:
-            return 'suspended'
-        if subscription.status in (
-            SchoolSubscription.Status.PENDING,
-            SchoolSubscription.Status.EXPIRED,
-        ):
-            return 'pending_payment'
-    return 'trial'
 
 
 def _client_ip(request):
@@ -60,7 +47,7 @@ def _platform_school_data(school):
         'state': school.state,
         'students': Student.objects.filter(school=school, status=Student.Status.ACTIVE).count(),
         'tierId': plan.name if plan else 't100',
-        'status': _school_status(school, subscription),
+        'status': school_status(school, subscription),
         'mrr': float(plan.monthly_price) if plan else 0,
         'createdAt': school.created_at.isoformat(),
     }
@@ -474,7 +461,7 @@ class PlatformSchoolStatusView(APIView):
         if next_status not in PLATFORM_STATUSES:
             return Response({'detail': 'Invalid status.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        current = _school_status(school, SchoolSubscription.objects.filter(school=school).first())
+        current = school_status(school, SchoolSubscription.objects.filter(school=school).first())
 
         active_statuses = {'active', 'trial', 'grace'}
         school.is_active = next_status in active_statuses

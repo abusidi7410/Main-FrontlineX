@@ -936,17 +936,22 @@ export function AuthScreens({
   initialMode,
   redirectTo,
   initialTier,
+  initialServerError,
 }: {
   initialMode: "login" | "register";
   redirectTo?: string | undefined;
   initialTier?: string | undefined;
+  initialServerError?: string | undefined;
 }) {
   const { signIn, session, status } = useSession();
   const navigate = useNavigate();
   const [mode, setMode] = useState<"login" | "register">(initialMode);
   const register = mode === "register";
 
-  const [serverError, setServerError] = useState<string | null>(null);
+  // Seeded from the redirect that brought the user here: when the server ends a
+  // session for a reason worth stating (a suspended school), the login page
+  // says so instead of looking like an inexplicable logout.
+  const [serverError, setServerError] = useState<string | null>(initialServerError ?? null);
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: { identifier: "", password: "" },

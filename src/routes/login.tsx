@@ -2,9 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AuthScreens } from "@/features/auth/auth-screens";
 
 export const Route = createFileRoute("/login")({
-  validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
-    if (typeof search["redirect"] === "string") return { redirect: search["redirect"] };
-    return {};
+  validateSearch: (search: Record<string, unknown>): { redirect?: string; reason?: string } => {
+    const out: { redirect?: string; reason?: string } = {};
+    if (typeof search["redirect"] === "string") out.redirect = search["redirect"];
+    if (typeof search["reason"] === "string") out.reason = search["reason"];
+    return out;
   },
   head: () => ({
     meta: [
@@ -19,6 +21,12 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { redirect } = Route.useSearch();
-  return <AuthScreens initialMode="login" redirectTo={redirect ?? undefined} />;
+  const { redirect, reason } = Route.useSearch();
+  return (
+    <AuthScreens
+      initialMode="login"
+      redirectTo={redirect ?? undefined}
+      initialServerError={reason ?? undefined}
+    />
+  );
 }
