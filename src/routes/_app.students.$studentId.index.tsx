@@ -216,11 +216,11 @@ function StudentProfilePage() {
               </div>
               <p className="text-muted-foreground">
                 {entry.className}
-                {entry.arm ? ` ? ${entry.arm}` : ""}
+                {entry.arm ? ` · ${entry.arm}` : ""}
               </p>
               <p className="text-muted-foreground">
                 {entry.status.replaceAll("_", " ")}
-                {entry.flaggedForReview ? " ? flagged for review" : ""}
+                {entry.flaggedForReview ? " · flagged for review" : ""}
               </p>
             </li>
           ))}
