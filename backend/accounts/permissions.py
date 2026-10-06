@@ -58,7 +58,7 @@ ROLE_PERMISSIONS = {
         'students.read', 'attendance.read', 'attendance.write',
         'results.read', 'results.write',
         'timetable.read', 'lessonplans.read', 'lessonplans.write',
-        'communication.read', 'ai.teaching',
+        'communication.read', 'ai.teaching', 'class.read', 'class.write'
     ],
     'accountant': [
         'students.read', 'finance.read', 'finance.write', 'finance.verify',
@@ -70,8 +70,8 @@ ROLE_PERMISSIONS = {
         'accounts.read', 'accounts.write',
         'attendance.read', 'communication.read', 'communication.write',
     ],
-    'parent': ['ai.parent'],
-    'student': ['ai.student'],
+    'parent': ['ai.parent', 'attendance.read'],
+    'student': ['ai.student', 'attendance.read'],
 }
 
 
