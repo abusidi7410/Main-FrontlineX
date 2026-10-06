@@ -781,6 +781,31 @@ class StudentImportView(APIView):
                     for row in analysis.valid_rows
                 ]
                 Student.objects.bulk_create(students)
+
+                # The import is an enrollment event too: without ACTIVE
+                # enrollments these students never appear on any roster.
+                session = academic_service.current_session(request.user.school)
+                school = request.user.school
+                class_map = {c.name: c for c in school.school_classes.all()}
+                section_map = {
+                    (s.class_obj_id, s.name): s
+                    for s in Section.objects.filter(school=school)
+                }
+                for student in students:
+                    school_class = class_map.get((student.class_name or '').strip())
+                    if school_class is None or session is None:
+                        continue
+                    section = (
+                        section_map.get((school_class.id, (student.arm or '').strip()))
+                        if student.arm
+                        else None
+                    )
+                    enrollment_service.activate_enrollment(
+                        student=student, academic_session=session,
+                        class_obj=school_class, section=section,
+                        source=Enrollment.ActivationSource.MIGRATION,
+                        actor=request.user,
+                    )
         except IntegrityError as exc:
             raise ValidationError({
                 'file': 'An admission number was imported by another user. Please re-run the import.',
