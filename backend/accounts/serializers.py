@@ -5,7 +5,7 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from .permissions import ROLE_PERMISSIONS
 from .services import profile_photos
-from .utils import generate_temp_password
+from .utils import DEFAULT_TEMPORARY_PASSWORD
 from .validators import normalize_phone
 
 User = get_user_model()
@@ -132,12 +132,15 @@ class AuthUserSerializer(serializers.ModelSerializer):
     permissions = serializers.SerializerMethodField()
     schoolId = serializers.SerializerMethodField()
     avatarUrl = serializers.SerializerMethodField()
+    mustChangePassword = serializers.BooleanField(
+        source='must_change_password', read_only=True,
+    )
 
     class Meta:
         model = User
         fields = [
             'id', 'fullName', 'email', 'phone', 'role', 'permissions',
-            'schoolId', 'avatarUrl',
+            'schoolId', 'avatarUrl', 'mustChangePassword',
         ]
         read_only_fields = fields
 
@@ -427,7 +430,7 @@ class AccountCreateSerializer(serializers.Serializer):
         password = validated_data.get('password') or ''
         generated = not password
         if not password:
-            password = generate_temp_password()
+            password = DEFAULT_TEMPORARY_PASSWORD
 
         with transaction.atomic():
             user = User.objects.create_user(

@@ -1,4 +1,3 @@
-import secrets
 from datetime import datetime, timedelta
 
 from django.core.cache import cache
@@ -11,6 +10,7 @@ from rest_framework.views import APIView
 
 from accounts.models import User
 from accounts.permissions import IsSuperAdmin
+from accounts.utils import DEFAULT_TEMPORARY_PASSWORD
 from records.models import Student
 from records.services import announcements as announcement_service
 from .models import Announcement, AuditLog, School, SchoolSubscription, SubscriptionPlan, SupportTicket
@@ -402,7 +402,7 @@ class PlatformSchoolListView(APIView):
             status=SchoolSubscription.Status.ACTIVE,
             starts_at=school.created_at,
         )
-        default_password = f"Admin@{secrets.token_hex(4)}"
+        default_password = DEFAULT_TEMPORARY_PASSWORD
         try:
             admin = User.objects.create_user(
                 email=email,
@@ -412,6 +412,7 @@ class PlatformSchoolListView(APIView):
                 role=User.Role.SCHOOL_ADMIN,
                 school=school,
                 is_active=True,
+                must_change_password=True,
             )
         except IntegrityError:
             return Response(

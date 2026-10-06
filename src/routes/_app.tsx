@@ -8,6 +8,7 @@ import {
 import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
+import { ForcePasswordChangeDialog } from "@/components/common/force-password-change";
 import { useSession } from "@/auth/session";
 import { readStoredSession } from "@/services/auth.service";
 
@@ -50,6 +51,7 @@ function AppLayout() {
   return (
     <AppShell>
       <Outlet />
+      <ForcePasswordChangeDialog />
     </AppShell>
   );
 }

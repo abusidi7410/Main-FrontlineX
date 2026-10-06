@@ -20,7 +20,9 @@ interface SessionContextValue {
   status: "loading" | "authenticated" | "unauthenticated";
   signIn: (identifier: string, password: string) => Promise<authService.Session>;
   signOut: () => Promise<void>;
-  updateUser: (patch: Partial<Pick<AuthUser, "fullName" | "phone" | "avatarUrl">>) => void;
+  updateUser: (
+    patch: Partial<Pick<AuthUser, "fullName" | "phone" | "avatarUrl" | "mustChangePassword">>,
+  ) => void;
   updateSchool: (patch: Partial<School>) => void;
   can: (permission: Permission) => boolean;
   canAny: (permissions: Permission[]) => boolean;
@@ -79,7 +81,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [navigate, queryClient]);
 
   const updateUser = useCallback(
-    (patch: Partial<Pick<AuthUser, "fullName" | "phone" | "avatarUrl">>) => {
+    (
+      patch: Partial<Pick<AuthUser, "fullName" | "phone" | "avatarUrl" | "mustChangePassword">>,
+    ) => {
       setSession((prev) => {
         if (!prev) return prev;
         const next: authService.Session = {

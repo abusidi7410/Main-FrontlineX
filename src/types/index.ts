@@ -64,6 +64,7 @@ export interface AuthUser {
   permissions: Permission[];
   schoolId: string | null;
   avatarUrl: string | null;
+  mustChangePassword: boolean;
 }
 
 export type SchoolStatus = "pending_payment" | "active" | "grace" | "suspended" | "trial";

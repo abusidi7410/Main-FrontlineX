@@ -356,7 +356,8 @@ class ChangePasswordView(APIView):
         serializer.is_valid(raise_exception=True)
 
         request.user.set_password(serializer.validated_data['next'])
-        request.user.save(update_fields=['password'])
+        request.user.must_change_password = False
+        request.user.save(update_fields=['password', 'must_change_password'])
         # A password change is the one security event the account holder can act
         # on immediately, so it goes to their own inbox as proof of the change.
         from records.services import events as event_service

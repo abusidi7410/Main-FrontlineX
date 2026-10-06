@@ -23,7 +23,7 @@ from .serializers import (
     AccountSerializer,
     AccountUpdateSerializer,
 )
-from .utils import audit, generate_temp_password, now, paginate
+from .utils import audit, DEFAULT_TEMPORARY_PASSWORD, now, paginate
 
 # Roles that may manage school accounts.
 MANAGE_ACCOUNTS = require_roles('school_admin', 'principal', 'secretary')
@@ -258,7 +258,7 @@ class AccountPasswordResetView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        password = generate_temp_password()
+        password = DEFAULT_TEMPORARY_PASSWORD
         account.set_password(password)
         account.must_change_password = True
         account.last_password_reset_at = now()

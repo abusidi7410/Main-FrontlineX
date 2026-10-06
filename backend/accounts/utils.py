@@ -3,8 +3,6 @@
 Kept small and dependency-free so both the auth views and the account
 management views can rely on the same pagination and audit behaviour.
 """
-import secrets
-
 from django.utils import timezone
 
 from schools.models import AuditLog
@@ -34,13 +32,7 @@ def paginate(queryset, request, serializer_class, context=None):
     }
 
 
-def generate_temp_password():
-    """Random one-time password that satisfies the default validators.
-
-    ``token_urlsafe`` output is base64url (letters + digits); 12 bytes yields
-    a 16-character password, comfortably above the 8-char minimum.
-    """
-    return f'Fnx{secrets.token_urlsafe(9)}'
+DEFAULT_TEMPORARY_PASSWORD = 'FRNX'
 
 
 def audit(
