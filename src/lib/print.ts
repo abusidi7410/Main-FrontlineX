@@ -34,7 +34,7 @@ export function schoolHeading(school: PrintSchoolProfile): string {
     : "";
   const contact = [school.phone, school.email].filter(Boolean).join(" · ");
   const lines = [school.name, school.address, contact].filter(Boolean);
-  return `<p class="school">${logo}${lines.map(escapeHtml).join("<br/>")}</p>`;
+  return `<div class="letterhead">${logo}<div><p class="school-name">${escapeHtml(school.name)}</p><p class="school-meta">${lines.slice(1).map(escapeHtml).join(" &middot; ")}</p></div></div>`;
 }
 
 export function documentMarkup(options: PrintOptions): string {
@@ -44,18 +44,26 @@ export function documentMarkup(options: PrintOptions): string {
 <meta charset="utf-8" />
 <title>${escapeHtml(options.title)}</title>
 <style>
-  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #0f172a; margin: 40px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .school { font-size: 13px; color: #475569; margin-bottom: 4px; }
-  .doc { border: 1px solid #cbd5e1; padding: 20px; margin: 16px 0; border-radius: 8px; }
-  h1 { font-size: 20px; margin: 0 0 16px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #e2e8f0; }
-  th { color: #475569; font-size: 12px; text-transform: uppercase; }
+  body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #0f172a; line-height: 1.5; margin: 40px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .letterhead { display: flex; align-items: center; gap: 14px; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 20px; }
+  .school-name { font-size: 18px; font-weight: 700; color: #0f172a; margin: 0; }
+  .school-meta { font-size: 12px; color: #475569; margin: 2px 0 0; }
+  .doc { border: 1px solid #e2e8f0; padding: 24px; margin: 16px 0; border-radius: 10px; background: #fff; }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #0f172a; }
+  h2 { font-size: 14px; margin: 12px 0 4px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #e2e8f0; }
+  th { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
   .right { text-align: right; }
   .center { text-align: center; }
   .total { font-weight: 700; font-size: 15px; }
   .muted { color: #475569; }
-  .fine { color: #475569; font-size: 12px; margin-top: 16px; }
+  .fine { color: #64748b; font-size: 12px; margin-top: 16px; }
+  .badge { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .badge-paid { background: #dcfce7; color: #166534; }
+  .badge-partial { background: #fef9c3; color: #854d0e; }
+  .badge-unpaid { background: #fee2e2; color: #991b1b; }
+  .doc-meta { color: #475569; font-size: 13px; margin-top: 2px; }
   @media print { body { margin: 0; } }
   ${options.styles ?? ""}
 </style>

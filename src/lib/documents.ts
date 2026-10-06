@@ -53,17 +53,24 @@ export function buildInvoiceHtml(invoice: Invoice, school: PrintSchoolProfile): 
         `<tr><td>${escapeHtml(item.label)}</td><td class="right">${naira(item.amount)}</td></tr>`,
     )
     .join("");
+  const balance = invoiceBalance(invoice);
+  const statusClass =
+    balance <= 0 ? "badge-paid" : invoice.paid > 0 ? "badge-partial" : "badge-unpaid";
+  const statusLabel =
+    balance <= 0 ? "Paid in full" : invoice.paid > 0 ? "Partially paid" : "Unpaid";
   return `${schoolHeading(school)}
 <div class="doc">
 <h1>${kind}</h1>
+<p class="doc-meta">Invoice ${escapeHtml(String(invoice.id))} &middot; ${invoice.source === "admission" ? "One-time registration" : escapeHtml(invoice.term)}</p>
 <p><strong>${escapeHtml(invoice.studentName)}</strong><br/>
-${escapeHtml(invoice.className)} · ${invoice.source === "admission" ? "One-time registration" : escapeHtml(invoice.term)} · ${escapeHtml(invoice.id)}</p>
+${escapeHtml(invoice.className)}</p>
+<p><span class="badge ${statusClass}">${statusLabel}</span></p>
 <table>
 <thead><tr><th>Item</th><th class="right">Amount</th></tr></thead>
 <tbody>${rows}
 <tr><td class="total">Total due</td><td class="right total">${naira(invoice.total)}</td></tr>
 <tr><td>Paid to date</td><td class="right">${naira(invoice.paid)}</td></tr>
-<tr><td class="total">Outstanding balance</td><td class="right total">${naira(invoiceBalance(invoice))}</td></tr>
+<tr><td class="total">Outstanding balance</td><td class="right total">${naira(balance)}</td></tr>
 </tbody>
 </table>
 <p class="fine">Kindly settle the balance before the examination week. Payments can be made by card, bank transfer, online or USSD from the Fees page.</p>
@@ -84,22 +91,24 @@ export function buildReceiptHtml(payment: Payment, school: PrintSchoolProfile): 
 <tr><td>Invoice paid to date</td><td class="right">${naira(invoicePaid)}</td></tr>
 <tr><td class="total">Remaining balance</td><td class="right total">${naira(Math.max(0, invoiceTotal - invoicePaid))}</td></tr>`
     : "";
+  const methodLabel = titleCase(payment.method);
   return `${schoolHeading(school)}
 <div class="doc">
 <h1>Payment receipt</h1>
+<p class="doc-meta">${escapeHtml(payment.reference)} &middot; ${dateTimeFmt(payment.createdAt)}</p>
 <p><strong>${escapeHtml(payment.studentName)}</strong><br/>
-${payment.admissionNumber ? `Admission number ${escapeHtml(payment.admissionNumber)}<br/>` : ""}
-${escapeHtml(payment.reference)} · ${dateTimeFmt(payment.createdAt)}</p>
+${payment.admissionNumber ? `Admission number ${escapeHtml(payment.admissionNumber)}` : ""}</p>
+<p><span class="badge badge-paid">${titleCase(payment.status)}</span></p>
 <table>
 <tbody>
-<tr><td>Amount paid</td><td class="right">${naira(payment.amount)}</td></tr>
-<tr><td>Method</td><td class="right">${titleCase(payment.method)}</td></tr>
+<tr><td>Amount paid</td><td class="right total">${naira(payment.amount)}</td></tr>
+<tr><td>Method</td><td class="right">${methodLabel}</td></tr>
 <tr><td>Status</td><td class="right">${titleCase(payment.status)}</td></tr>
 ${invoiceRows}
 <tr><td>Recorded by</td><td class="right">${escapeHtml(payment.recordedBy)}</td></tr>
 </tbody>
 </table>
-<p class="fine">This receipt confirms payment has been received and verified.</p>
+<p class="fine">This receipt confirms payment has been received and verified. Keep it for your records.</p>
 </div>`;
 }
 
