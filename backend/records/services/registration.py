@@ -146,6 +146,13 @@ def register_student(
             created_by=created_by if getattr(created_by, 'school_id', None) else None,
         )
 
+        _ensure_parent_account(
+            school=school,
+            student=student,
+            guardian_name=guardian_name,
+            guardian_phone=student.guardian_phone,
+        )
+
     return {
         'student': student,
         'registration': registration,
@@ -154,6 +161,51 @@ def register_student(
         'class': school_class,
         'section': section,
     }
+
+
+def _ensure_parent_account(*, school, student, guardian_name: str, guardian_phone: str):
+    """Provision (or reuse) the parent login account for a student.
+
+    One parent account serves many children: the first registration using a
+    guardian phone creates the account; every later registration with the
+    same phone links the new student to that same account. The parent signs
+    in with their phone number and the default password (FRNX), which forces
+    a password change on first login.
+    """
+    from accounts.models import User
+    from accounts.utils import DEFAULT_TEMPORARY_PASSWORD
+    from accounts.validators import normalize_phone
+
+    phone = normalize_phone(guardian_phone) if guardian_phone else ''
+    if not phone:
+        return None
+
+    parent = User.objects.filter(school=school, role=User.Role.PARENT, phone=phone).first()
+    if parent is not None:
+        parent.linked_students.add(student)
+        return parent
+
+    if User.objects.filter(phone=phone).exists():
+        raise ValidationError({
+            'guardianPhone': 'That phone number is already used by another account.',
+        })
+
+    parts = (guardian_name or '').strip().split(None, 1)
+    first = parts[0] if parts else 'Parent'
+    last = parts[1] if len(parts) > 1 else ''
+    parent = User.objects.create_user(
+        email=None,
+        password=DEFAULT_TEMPORARY_PASSWORD,
+        first_name=first,
+        last_name=last,
+        role=User.Role.PARENT,
+        school=school,
+        phone=phone,
+        is_active=True,
+        must_change_password=True,
+    )
+    parent.linked_students.add(student)
+    return parent
 
 
 def registration_state(registration: Registration) -> dict:

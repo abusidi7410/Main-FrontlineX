@@ -3095,6 +3095,31 @@ class LessonPlanListCreateView(APIView):
             LessonPlan.objects.filter(school_id=request.user.school_id)
             .select_related('class_obj', 'academic_session')
         )
+        # A teacher sees only their own plans — authored by them or for a
+        # class/subject they teach. Principals and school admins keep the
+        # school-wide view (read-only for them).
+        if request.user.role == 'teacher':
+            staff = getattr(request.user, 'staff_profile', None)
+            if staff is None or staff.status != StaffMember.Status.ACTIVE:
+                return Response([])
+            class_names = set(staff.classes or [])
+            own_class_ids = set(
+                SchoolClass.objects.filter(school=request.user.school, name__in=class_names)
+                .values_list('pk', flat=True),
+            )
+            own_class_ids |= set(
+                ClassTeacherAssignment.objects.filter(
+                    school=request.user.school, staff=staff,
+                    academic_session=academic_service.current_session(request.user.school),
+                ).values_list('class_obj_id', flat=True),
+            )
+            own_class_ids |= set(
+                TimetableEntry.objects.filter(school=request.user.school, teacher=staff)
+                .values_list('class_obj_id', flat=True),
+            )
+            plans = plans.filter(
+                Q(created_by=request.user) | Q(class_obj_id__in=own_class_ids),
+            )
         return Response([_lesson_plan_payload(plan) for plan in plans])
 
     def post(self, request):
@@ -3114,10 +3139,27 @@ class LessonPlanDetailView(APIView):
     permission_classes = [IsAuthenticated, HasSchool]
 
     def _get_plan(self, request, pk):
-        return get_object_or_404(
+        plan = get_object_or_404(
             LessonPlan.objects.select_related('class_obj', 'academic_session'),
             pk=pk, school_id=request.user.school_id,
         )
+        # A teacher may only open plans they authored or for a class they
+        # teach; principals and admins keep school-wide read access.
+        if request.user.role == 'teacher':
+            staff = getattr(request.user, 'staff_profile', None)
+            owns = plan.created_by_id == request.user.pk
+            teaches = False
+            if staff is not None:
+                teaches = plan.class_obj.name in (staff.classes or [])
+                if not teaches:
+                    teaches = ClassTeacherAssignment.objects.filter(
+                        school=request.user.school, staff=staff, class_obj=plan.class_obj,
+                    ).exists() or TimetableEntry.objects.filter(
+                        school=request.user.school, teacher=staff, class_obj=plan.class_obj,
+                    ).exists()
+            if not (owns or teaches):
+                raise Http404
+        return plan
 
     def get(self, request, pk):
         if not has_permission(request.user.role, 'lessonplans.read'):

@@ -34,7 +34,7 @@ ROLE_PERMISSIONS = {
         'finance.read', 'finance.write', 'finance.verify',
         'finance.structure', 'finance.invoice', 'finance.payment',
         'timetable.read', 'timetable.write',
-        'lessonplans.read', 'lessonplans.write',
+        'lessonplans.read',
         'communication.read', 'communication.write',
         'reports.read', 'subscription.read', 'subscription.write',
         'settings.read', 'settings.write', 'audit.read',

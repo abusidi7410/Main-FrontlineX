@@ -58,7 +58,7 @@ export type Permission =
 export interface AuthUser {
   id: string;
   fullName: string;
-  email: string;
+  email: string | null;
   phone: string;
   role: Role;
   permissions: Permission[];

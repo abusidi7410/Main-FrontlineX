@@ -23,7 +23,7 @@ class User(AbstractUser):
 
     username = None  # disable username entirely
 
-    email = models.EmailField(unique=True)
+    email = models.EmailField(unique=True, null=True, blank=True)
     phone = models.CharField(max_length=20, unique=True, null=True, blank=True)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.SCHOOL_ADMIN)
     school = models.ForeignKey(

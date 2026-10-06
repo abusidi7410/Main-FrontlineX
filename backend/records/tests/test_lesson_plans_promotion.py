@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from accounts.models import User
 from records.models import (
     AcademicSession,
     AttendanceRecord,
@@ -74,6 +75,30 @@ class LessonPlanApiTests(SecurityTestBase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(LessonPlan.objects.count(), 0)
 
+    def test_teacher_lists_only_own_plans(self):
+        self.auth(self.teacher)
+        self.client.post(self.url('/lesson-plans/'), self.payload, format='json')
+        self.auth(self.teacher)
+        response = self.client.get(self.url('/lesson-plans/'))
+        self.assertEqual(len(response.data), 1)
+
+        # A second teacher cannot see the first teacher's plan.
+        other = User.objects.create_user(
+            email='other.teacher@success.example', password='Strong-Pass-1!',
+            first_name='Other', last_name='Teacher', role=User.Role.TEACHER,
+            school=self.school,
+        )
+        other_staff = StaffMember.objects.create(
+            school=self.school, full_name='Other Teacher', role='teacher',
+            classes=['JSS 2'], status=StaffMember.Status.ACTIVE,
+        )
+        other.staff_profile = other_staff
+        other.save(update_fields=['staff_profile'])
+        self.auth(other)
+        other_response = self.client.get(self.url('/lesson-plans/'))
+        self.assertEqual(other_response.status_code, 200)
+        self.assertEqual(other_response.data, [])
+
     def test_invalid_subject_and_duration_are_rejected(self):
         self.auth(self.teacher)
         invalid_subject = self.client.post(
@@ -104,14 +129,24 @@ class LessonPlanApiTests(SecurityTestBase):
         response = self.client.get(self.url(f'/lesson-plans/{plan.pk}/'))
         self.assertEqual(response.status_code, 404)
 
-    def test_school_admin_can_create_without_teacher_assignment(self):
+    def test_school_admin_cannot_create_lesson_plans(self):
         self.auth(self.admin)
         response = self.client.post(self.url('/lesson-plans/'), self.payload, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(
-            LessonPlan.objects.get(pk=response.data['id']).created_by,
-            self.admin,
-        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(LessonPlan.objects.count(), 0)
+
+    def test_school_admin_can_still_read_every_plan(self):
+        self.auth(self.teacher)
+        self.client.post(self.url('/lesson-plans/'), self.payload, format='json')
+        self.auth(self.admin)
+        response = self.client.get(self.url('/lesson-plans/'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+
+    def test_principal_cannot_create_lesson_plans(self):
+        self.auth(self.principal)
+        response = self.client.post(self.url('/lesson-plans/'), self.payload, format='json')
+        self.assertEqual(response.status_code, 403)
 
     def test_academic_session_updates_are_used_by_new_lesson_plans(self):
         self.auth(self.admin)
@@ -125,6 +160,7 @@ class LessonPlanApiTests(SecurityTestBase):
         current = AcademicSession.objects.get(school=self.school, name='2027/2028')
         self.assertFalse(self.session.is_current)
         self.assertTrue(current.is_current)
+        self.auth(self.teacher)
         created = self.client.post(self.url('/lesson-plans/'), self.payload, format='json')
         self.assertEqual(created.status_code, 201, created.data)
         self.assertEqual(created.data['session'], '2027/2028')

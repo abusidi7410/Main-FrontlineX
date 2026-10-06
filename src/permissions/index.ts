@@ -54,7 +54,6 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "timetable.read",
     "timetable.write",
     "lessonplans.read",
-    "lessonplans.write",
     "communication.read",
     "communication.write",
     "reports.read",

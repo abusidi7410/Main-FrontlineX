@@ -447,6 +447,20 @@ class AccountCreateSerializer(serializers.Serializer):
                 student_profile=student,
                 staff_profile=staff,
             )
+            # Staff-role accounts keep a StaffMember roster row in sync: the
+            # staff directory is driven off the same single source (Accounts),
+            # so creating an account of a staff role records the employee too.
+            if role in ('teacher', 'principal', 'accountant', 'secretary') and staff is None:
+                from records.models import StaffMember
+                staff = StaffMember.objects.create(
+                    school_id=school_id,
+                    full_name=validated_data['fullName'].strip(),
+                    email=validated_data['email'],
+                    phone=validated_data.get('phone') or '',
+                    role=role,
+                )
+                user.staff_profile = staff
+                user.save(update_fields=['staff_profile'])
 
         mode = 'provisioned' if generated else 'created'
         audit(
