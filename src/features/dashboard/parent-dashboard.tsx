@@ -7,15 +7,15 @@ import { CardsSkeleton, ErrorState } from "@/components/common/states";
 import { QuickActions } from "@/features/dashboard/quick-actions";
 import { useAuthenticatedSession } from "@/auth/session";
 import { greeting, initials, naira, percent } from "@/lib/format";
-import { listStudents } from "@/services/students.service";
+import { listChildren } from "@/services/children.service";
 import { getAnnouncements } from "@/services/school.service";
 import { cn } from "@/lib/utils";
 
-/** In live mode this comes from /parents/me/children. */
+/** The parent's own children, from /parents/me/children. */
 function useChildren() {
   return useQuery({
     queryKey: ["children"],
-    queryFn: () => listStudents({ pageSize: 3 }),
+    queryFn: () => listChildren({ pageSize: 25 }),
     select: (page) => page.results,
   });
 }

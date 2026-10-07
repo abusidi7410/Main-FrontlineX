@@ -63,4 +63,18 @@ urlpatterns = [
     path('notifications/<int:pk>/read/', views.NotificationMarkReadView.as_view()),
     path('announcements/', views.AnnouncementListCreateView.as_view()),
     path('announcements/<int:pk>/', views.AnnouncementDetailView.as_view()),
+    # Parent portal: children are reached only through the login's explicit
+    # `linked_students` links, never through any id the caller supplies.
+    path('parents/me/children/', views.ParentChildrenView.as_view()),
+    path(
+        'parents/me/children/<str:student_id>/attendance/',
+        views.ParentChildAttendanceView.as_view(),
+    ),
+    path(
+        'parents/me/children/<str:student_id>/promotion/',
+        views.ParentChildPromotionView.as_view(),
+    ),
+    # The report card read model, shared by the parent portal and the staff
+    # reports screen.
+    path('reports/report-cards/<str:student_id>/', views.ReportCardView.as_view()),
 ]

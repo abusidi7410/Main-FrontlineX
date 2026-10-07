@@ -146,7 +146,7 @@ def register_student(
             created_by=created_by if getattr(created_by, 'school_id', None) else None,
         )
 
-        _ensure_parent_account(
+        ensure_parent_account(
             school=school,
             student=student,
             guardian_name=guardian_name,
@@ -163,32 +163,51 @@ def register_student(
     }
 
 
-def _ensure_parent_account(*, school, student, guardian_name: str, guardian_phone: str):
+def ensure_parent_account(*, school, student, guardian_name: str = '', guardian_phone: str = ''):
     """Provision (or reuse) the parent login account for a student.
 
-    One parent account serves many children: the first registration using a
-    guardian phone creates the account; every later registration with the
-    same phone links the new student to that same account. The parent signs
-    in with their phone number and the default password (FRNX), which forces
-    a password change on first login.
+    One parent account serves many children: the first student recorded with a
+    guardian phone creates the account, and every later student carrying that
+    same phone is linked to *that* account rather than a second one being
+    created. The parent signs in with the phone number and the default password
+    from `accounts.utils`, which forces a password change on first login.
+
+    The phone is the source of truth for the link, so a parent whose number is
+    changed on the student record is unlinked - the account stays, it simply
+    stops seeing a child the school has moved to another guardian.
+
+    Deliberately tolerant, because this runs on every student
+    create/update/import and must never be the reason a student is lost:
+    `User.phone` is unique platform-wide, so a number already owned by some
+    other account (a staff login, a parent of another school) cannot be taken
+    over. Nothing is provisioned in that case and no error is raised.
     """
     from accounts.models import User
     from accounts.utils import DEFAULT_TEMPORARY_PASSWORD
     from accounts.validators import normalize_phone
 
-    phone = normalize_phone(guardian_phone) if guardian_phone else ''
+    phone = normalize_phone((guardian_phone or '').strip())
     if not phone:
         return None
 
-    parent = User.objects.filter(school=school, role=User.Role.PARENT, phone=phone).first()
+    parent = User.objects.filter(
+        school=school, role=User.Role.PARENT, phone=phone,
+    ).first()
+
+    # Only a parent login of *this* school may hold the link: `linked_students`
+    # is the boundary the parent portal authorises against, so a cross-school
+    # account must never acquire it.
+    for stale in User.objects.filter(
+        school=school, role=User.Role.PARENT, linked_students=student,
+    ).exclude(phone=phone):
+        stale.linked_students.remove(student)
+
     if parent is not None:
         parent.linked_students.add(student)
         return parent
 
     if User.objects.filter(phone=phone).exists():
-        raise ValidationError({
-            'guardianPhone': 'That phone number is already used by another account.',
-        })
+        return None
 
     parts = (guardian_name or '').strip().split(None, 1)
     first = parts[0] if parts else 'Parent'

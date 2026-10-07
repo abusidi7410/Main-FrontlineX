@@ -12,11 +12,11 @@ from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import MultiPartParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.models import Notification, NotificationPreference
+from accounts.models import Notification, NotificationPreference, User
 from accounts.permissions import (
     HasSchool,
     has_permission,
@@ -56,8 +56,11 @@ from .services import attendance as attendance_service
 from .services import billing as billing_service
 from .services import enrollment as enrollment_service
 from .services import events as event_service
-from .services import results as result_service
+from .services import parent_portal as parent_portal_service
 from .services import promotion as promotion_service
+from .services import registration as registration_service
+from .services import report_card as report_card_service
+from .services import results as result_service
 from .services import timetable as timetable_service
 from .student_import import (
     StudentImportError,
@@ -447,6 +450,15 @@ class StudentListCreateView(APIView):
             billing_service.ensure_registration(
                 school, student, invoice, created_by=request.user,
             )
+            # The guardian phone is how that family signs in: provision the
+            # parent login (or link this child to an existing one) inside the
+            # same transaction as the student, so the portal is never left
+            # pointing at a student who does not exist.
+            registration_service.ensure_parent_account(
+                school=school, student=student,
+                guardian_name=student.guardian_name,
+                guardian_phone=student.guardian_phone,
+            )
             if invoice is None:
                 student.status = Student.Status.ACTIVE
                 student.save(update_fields=['status'])
@@ -557,6 +569,14 @@ class StudentDetailView(APIView):
         # it explicitly is rejected here so a crafted payload fails loudly
         # instead of being silently dropped.
         updated = serializer.save()
+        # A guardian phone entered (or changed) later still provisions the
+        # parent login; the link follows the phone, so a changed number moves
+        # the child to the new guardian's portal.
+        registration_service.ensure_parent_account(
+            school=request.user.school, student=updated,
+            guardian_name=updated.guardian_name,
+            guardian_phone=updated.guardian_phone,
+        )
         if updated.status != before_status:
             log_audit(
                 request, 'student.updated', target='Student',
@@ -805,6 +825,16 @@ class StudentImportView(APIView):
                         class_obj=school_class, section=section,
                         source=Enrollment.ActivationSource.MIGRATION,
                         actor=request.user,
+                    )
+                # A bulk import bypasses model signals, so the parent accounts
+                # have to be provisioned here. Reusing the guardian phone keeps
+                # a migrated family on the single account they already sign in
+                # with instead of inventing a second one.
+                for student in students:
+                    registration_service.ensure_parent_account(
+                        school=school, student=student,
+                        guardian_name=student.guardian_name,
+                        guardian_phone=student.guardian_phone,
                     )
         except IntegrityError as exc:
             raise ValidationError({
@@ -1687,6 +1717,156 @@ class MyPublishedResultsView(APIView):
             'sheet__subject',
         )
         return Response(_paginate(queryset, request, _MyPublishedResultSerializer))
+
+
+class ParentPortalAccess(BasePermission):
+    """A parent login that has finished the forced password change.
+
+    The password-change dialog is a client-side modal; without this gate the
+    endpoints it guards would still answer server-side, so a parent who loaded
+    the portal on another client with a temporary password (or never changed it
+    after login) is stopped here and told why.
+    """
+
+    message = 'Change your temporary password before using the parent portal.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and user.role == User.Role.PARENT
+            and not user.must_change_password
+        )
+
+
+class ParentChildrenView(APIView):
+    """GET /parents/me/children/  -  a parent's own children.
+
+    Same payload shape as the school roster page (a paginated `Student` list),
+    but the queryset is confined to `User.linked_students` inside the caller's
+    school, so the parent portal reuses the roster UI without ever being able
+    to page through another family's records.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, ParentPortalAccess]
+
+    def get(self, request):
+        children = _student_queryset(request.user.school_id).filter(
+            guardian_accounts=request.user,
+        )
+        return Response(_paginate(
+            children, request, StudentSerializer, context={'request': request},
+        ))
+
+
+def _optional_date(raw, field):
+    if not raw:
+        return None
+    parsed = parse_date(raw)
+    if parsed is None:
+        raise ValidationError({field: 'Enter a valid date in YYYY-MM-DD format.'})
+    return parsed
+
+
+class ParentChildAttendanceView(APIView):
+    """GET /parents/me/children/<id>/attendance/  -  one child's attendance.
+
+    Summaries are bound to the child's own session window by default, so a
+    later session can never creep into this year's figures, and a parent sees
+    neither marks before the child joined nor anyone else's child.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, ParentPortalAccess]
+
+    def get(self, request, student_id):
+        child = parent_portal_service.linked_child(request.user, student_id)
+        if child is None:
+            # 404, not 403: a parent may not learn that the id exists.
+            raise Http404
+        params = request.query_params
+        session = parent_portal_service.current_session_for(child)
+        data = parent_portal_service.attendance_for(
+            child,
+            session=session,
+            date_from=_optional_date(params.get('dateFrom'), 'dateFrom'),
+            date_to=_optional_date(params.get('dateTo'), 'dateTo'),
+        )
+        data['studentId'] = str(child.pk)
+        data['studentName'] = f'{child.first_name} {child.last_name}'.strip()
+        data['session'] = session.name if session is not None else ''
+        return Response(data)
+
+
+class ParentChildPromotionView(APIView):
+    """GET /parents/me/children/<id>/promotion/  -  the promotion suggestion.
+
+    Derived from the same calculation as the administrator's promotion screen,
+    so a parent and the head teacher always see one answer for one child.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, ParentPortalAccess]
+
+    def get(self, request, student_id):
+        child = parent_portal_service.linked_child(request.user, student_id)
+        if child is None:
+            raise Http404
+        return Response(parent_portal_service.promotion_for(child))
+
+
+class ReportCardView(APIView):
+    """GET /reports/report-cards/<studentId>/
+
+    One report card, three audiences: a linked parent, the pupil themselves,
+    or any staff login holding `reports.read`. A caller outside those audiences
+    is refused without the response ever confirming that the id exists.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request, student_id):
+        student = self._student_for(request.user, student_id)
+        session = None
+        session_id = request.query_params.get('sessionId')
+        if session_id:
+            session = get_object_or_404(
+                AcademicSession.objects.filter(school=request.user.school),
+                id=session_id,
+            )
+        card = report_card_service.build_report_card(
+            student,
+            session=session,
+            term=request.query_params.get('term', '').strip(),
+        )
+        if card is None:
+            # Nothing published yet reads as "not there" so the screens can say
+            # "no report card yet"; it never reveals whether the id exists.
+            raise Http404
+        return Response(card)
+
+    def _student_for(self, user, student_id):
+        if user.role == User.Role.PARENT:
+            if user.must_change_password:
+                raise PermissionDenied(ParentPortalAccess.message)
+            student = parent_portal_service.linked_child(user, student_id)
+            if student is None:
+                raise Http404
+            return student
+        if user.role == User.Role.STUDENT:
+            if str(getattr(user, 'student_profile_id', '') or '') != str(student_id):
+                raise Http404
+            student = Student.objects.filter(school_id=user.school_id, pk=student_id).first()
+            if student is None:
+                raise Http404
+            return student
+        # Staff: the report card is one of the artefacts `reports.read` exists
+        # to provide; a teacher with only result-entry rights cannot reach it.
+        if not has_permission(user.role, 'reports.read'):
+            raise PermissionDenied('Report cards require the reports permission.')
+        student = Student.objects.filter(school_id=user.school_id, pk=student_id).first()
+        if student is None:
+            raise Http404
+        return student
 
 
 class ResultSheetListView(APIView):
