@@ -185,6 +185,8 @@ export interface AccountCreateInput {
   password?: string;
   studentId?: string;
   staffId?: string;
+  /** How the dialog links a student account: lookup by admission number. */
+  admissionNumber?: string;
 }
 
 export interface AccountStats {

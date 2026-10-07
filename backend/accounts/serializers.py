@@ -334,7 +334,10 @@ class AccountCreateSerializer(serializers.Serializer):
         self._school_id = kwargs['context']['school_id']
 
     def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
+        # Case-insensitive: the stored address is lower-cased below and by the
+        # login flow, so an exact match misses `Foo@x.com` vs `foo@x.com` and
+        # lets the request through to a 500 from the unique constraint.
+        if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError('An account with this email already exists.')
         return value.lower()
 

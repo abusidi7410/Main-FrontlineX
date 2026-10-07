@@ -129,6 +129,32 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   student: ["ai.student"],
 };
 
+/**
+ * Mirror of `ROLE_MANAGEMENT_MATRIX` in `backend/accounts/account_views.py`:
+ * which account roles each manager is allowed to provision. The API rejects
+ * anything outside this set, so the create-account dialog must offer exactly
+ * the same choices — otherwise a secretary picking the default `teacher` role
+ * is refused with no visible reason.
+ */
+export const ROLE_MANAGEMENT_MATRIX: Partial<Record<Role, Role[]>> = {
+  school_admin: [
+    "school_admin",
+    "principal",
+    "teacher",
+    "accountant",
+    "secretary",
+    "student",
+    "parent",
+  ],
+  principal: ["teacher", "accountant", "secretary", "student", "parent"],
+  secretary: ["student", "parent"],
+};
+
+/** The roles `<manager>` may create. Empty when the role manages no accounts. */
+export function provisionableRoles(manager: Role | null): Role[] {
+  return (manager && ROLE_MANAGEMENT_MATRIX[manager]) || [];
+}
+
 export function can(permissions: Permission[] | undefined, permission: Permission) {
   return !!permissions?.includes(permission);
 }

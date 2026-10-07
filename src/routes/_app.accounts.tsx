@@ -48,10 +48,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ApiRequestError } from "@/api/client";
 import { useAuthenticatedSession } from "@/auth/session";
 import { useDebounced } from "@/hooks/use-debounced";
 import { dateFmt, numberFmt } from "@/lib/format";
-import { ROLE_LABELS } from "@/permissions";
+import { provisionableRoles, ROLE_LABELS } from "@/permissions";
+import { getAcademicStructure } from "@/services/academics.service";
+import {
+  assignClassTeacher,
+  getClassTeachers,
+  type ClassTeacherAssignment,
+} from "@/services/attendance.service";
 import {
   createAccount,
   deleteAccount,
@@ -107,7 +114,7 @@ const EMPTY_FORM = {
 };
 
 function AccountsPage() {
-  const { user } = useAuthenticatedSession();
+  const { user, can } = useAuthenticatedSession();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [role, setRole] = useState("");
@@ -120,6 +127,7 @@ function AccountsPage() {
   const [resetTarget, setResetTarget] = useState<SchoolAccount | null>(null);
   const [resetCreds, setResetCreds] = useState<DefaultCredentials | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SchoolAccount | null>(null);
+  const [assignTarget, setAssignTarget] = useState<SchoolAccount | null>(null);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
@@ -131,6 +139,27 @@ function AccountsPage() {
     queryFn: () => listAccounts({ search: debouncedSearch, role, status, page }),
   });
   const stats = useQuery({ queryKey: ["account-stats"], queryFn: getAccountStats });
+
+  // Class-teacher designations, shown in the linked-record cell and used
+  // by the assign-class dialog. Reads are open to every school member;
+  // writes need `staff.write`, which the API enforces regardless of what
+  // this renders.
+  const classTeachers = useQuery({
+    queryKey: ["class-teachers"],
+    queryFn: getClassTeachers,
+  });
+  // The class list lives in the academic structure, which requires
+  // `academics.read` — only fetched for roles that can assign at all.
+  const academics = useQuery({
+    queryKey: ["academics"],
+    queryFn: getAcademicStructure,
+    enabled: can("staff.write"),
+  });
+
+  // The API only lets a manager provision roles inside their own matrix, so
+  // the dialog must offer exactly this set — `teacher` (the old default) is
+  // not creatable by a secretary, for instance.
+  const allowedRoles = provisionableRoles(user.role);
 
   const createMutation = useMutation({
     mutationFn: createAccount,
@@ -144,7 +173,18 @@ function AccountsPage() {
       }
     },
     onError: (error) => {
-      toast.error(`${error.message} Please try again.`, { duration: 6000 });
+      // Field-level failures are rendered inside the dialog, next to the input
+      // that caused them. Toasting the generic DRF sentence turned a plain
+      // validation error ("email already taken", "role not allowed") into an
+      // unexplained failure that made the whole module look broken.
+      const fieldErrors = error instanceof ApiRequestError ? error.fieldErrors : undefined;
+      if (fieldErrors && Object.keys(fieldErrors).length > 0) return;
+      toast.error(
+        error instanceof ApiRequestError
+          ? error.message
+          : "We couldn't create that account. Please try again.",
+        { duration: 6000 },
+      );
     },
   });
 
@@ -181,6 +221,20 @@ function AccountsPage() {
     onError: (error) => toast.error(`${error.message} Please try again.`, { duration: 6000 }),
   });
 
+  const assignClassMutation = useMutation({
+    mutationFn: (input: { className: string; staffId: string }) => assignClassTeacher(input),
+    onSuccess: (data) => {
+      toast.success(`${data.classTeacher} is now the class teacher for ${data.className}.`);
+      setAssignTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ["class-teachers"] });
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (error) => toast.error(`${error.message} Please try again.`, { duration: 6000 }),
+  });
+
+  const classesForTeacher = (staffId: string) =>
+    (classTeachers.data?.assignments ?? []).filter((row) => row.staffId === staffId);
+
   const data = accounts.data;
   const byRole = stats.data?.byRole;
   const busyId =
@@ -188,7 +242,9 @@ function AccountsPage() {
       ? resetTarget.id
       : statusMutation.isPending
         ? ((statusMutation.variables as { id?: string } | undefined)?.id ?? null)
-        : null;
+        : assignClassMutation.isPending && assignTarget
+          ? assignTarget.id
+          : null;
 
   return (
     <PermissionGate permission="accounts.read">
@@ -348,7 +404,17 @@ function AccountsPage() {
                             <span className="block">{account.student.className}</span>
                           </>
                         ) : account.staff ? (
-                          account.staff.fullName
+                          <>
+                            {account.staff.fullName}
+                            {account.role === "teacher" &&
+                            classesForTeacher(account.staff.id).length > 0 ? (
+                              <span className="block">
+                                {classesForTeacher(account.staff.id)
+                                  .map((row) => row.className)
+                                  .join(", ")}
+                              </span>
+                            ) : null}
+                          </>
                         ) : (
                           "—"
                         )}
@@ -372,6 +438,11 @@ function AccountsPage() {
                               })
                             }
                             onDelete={() => setDeleteTarget(account)}
+                            onAssignClass={
+                              account.role === "teacher" && account.staff
+                                ? () => setAssignTarget(account)
+                                : undefined
+                            }
                           />
                         ) : (
                           <span className="text-sm text-muted-foreground">You</span>
@@ -418,13 +489,18 @@ function AccountsPage() {
           if (!open && !createMutation.isPending) {
             setCreateOpen(false);
             setCreated(null);
+            createMutation.reset();
           }
         }}
         isPending={createMutation.isPending}
         created={created}
+        allowedRoles={allowedRoles}
+        error={createMutation.error instanceof ApiRequestError ? createMutation.error : null}
+        clearError={createMutation.reset}
         onClose={() => {
           setCreateOpen(false);
           setCreated(null);
+          createMutation.reset();
         }}
         onSubmit={(input) => createMutation.mutate(input)}
       />
@@ -462,6 +538,21 @@ function AccountsPage() {
           if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
         }}
       />
+
+      <AssignClassDialog
+        target={assignTarget}
+        isPending={assignClassMutation.isPending}
+        classes={academics.data?.classes ?? []}
+        assignments={classTeachers.data?.assignments ?? []}
+        onOpenChange={(open) => {
+          if (!open && !assignClassMutation.isPending) setAssignTarget(null);
+        }}
+        onConfirm={(className) => {
+          if (assignTarget?.staff) {
+            assignClassMutation.mutate({ className, staffId: assignTarget.staff.id });
+          }
+        }}
+      />
     </PermissionGate>
   );
 }
@@ -472,12 +563,14 @@ function AccountRowActions({
   onResetPassword,
   onToggleStatus,
   onDelete,
+  onAssignClass,
 }: {
   account: SchoolAccount;
   busy: boolean;
   onResetPassword: () => void;
   onToggleStatus: () => void;
   onDelete: () => void;
+  onAssignClass?: (() => void) | undefined;
 }) {
   return (
     <div className="flex items-center justify-end">
@@ -493,6 +586,13 @@ function AccountRowActions({
           <DropdownMenuItem onClick={onResetPassword}>
             <RefreshCw aria-hidden="true" /> Reset password
           </DropdownMenuItem>
+          {onAssignClass ? (
+            <IfAllowed permission="staff.write">
+              <DropdownMenuItem onClick={onAssignClass}>
+                <GraduationCap aria-hidden="true" /> Assign class…
+              </DropdownMenuItem>
+            </IfAllowed>
+          ) : null}
           <DropdownMenuItem onClick={onToggleStatus}>
             {account.status === "active" ? (
               <UserMinus aria-hidden="true" />
@@ -516,6 +616,9 @@ function CreateAccountDialog({
   onOpenChange,
   isPending,
   created,
+  allowedRoles,
+  error,
+  clearError,
   onClose,
   onSubmit,
 }: {
@@ -523,6 +626,9 @@ function CreateAccountDialog({
   onOpenChange: (open: boolean) => void;
   isPending: boolean;
   created: CreatedAccount | null;
+  allowedRoles: Role[];
+  error: ApiRequestError | null;
+  clearError: () => void;
   onClose: () => void;
   onSubmit: (input: {
     fullName: string;
@@ -536,9 +642,35 @@ function CreateAccountDialog({
   const [form, setForm] = useState(EMPTY_FORM);
   const [copyLabel, setCopyLabel] = useState<string | null>(null);
 
+  // Start on a role this user is actually allowed to provision; the API
+  // rejects anything outside the caller's matrix with a 400.
+  const defaultRole: Role = allowedRoles.includes("teacher")
+    ? "teacher"
+    : (allowedRoles[0] ?? "teacher");
+
   useEffect(() => {
-    if (open && !created) setForm(EMPTY_FORM);
-  }, [open, created]);
+    if (open && !created) setForm({ ...EMPTY_FORM, role: defaultRole });
+  }, [open, created, defaultRole]);
+
+  const update = (patch: Partial<typeof EMPTY_FORM>) => {
+    setForm((current) => ({ ...current, ...patch }));
+    // Without this the previous failure stays pinned under a field the user
+    // has already corrected.
+    clearError();
+  };
+
+  const fieldErrors = error?.fieldErrors;
+  // Errors for inputs that are on screen are shown under them; everything else
+  // (a missing `studentId`, a hidden `password` field) goes to the summary box
+  // so no rejection can be invisible.
+  const visibleFields = new Set([
+    "fullName",
+    "email",
+    "role",
+    "phone",
+    form.role === "student" ? "admissionNumber" : "password",
+  ]);
+  const hiddenErrors = Object.entries(fieldErrors ?? {}).filter(([key]) => !visibleFields.has(key));
 
   const copyText = async (text: string, label: string) => {
     await navigator.clipboard.writeText(text).catch(() => undefined);
@@ -610,6 +742,19 @@ function CreateAccountDialog({
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-4">
+            {hiddenErrors.length > 0 ? (
+              <div
+                role="alert"
+                className="rounded-lg border border-destructive/40 bg-destructive/10 p-3"
+              >
+                <p className="text-sm font-medium text-destructive">Check these details:</p>
+                <ul className="mt-1 list-inside list-disc text-sm text-destructive">
+                  {hiddenErrors.map(([key, message]) => (
+                    <li key={key}>{message}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="acc-name">Full name</Label>
               <Input
@@ -618,8 +763,9 @@ function CreateAccountDialog({
                 required
                 placeholder="e.g. Ibrahim Musa"
                 value={form.fullName}
-                onChange={(event) => setForm({ ...form, fullName: event.target.value })}
+                onChange={(event) => update({ fullName: event.target.value })}
               />
+              <FieldError message={fieldErrors?.["fullName"]} />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
@@ -631,26 +777,25 @@ function CreateAccountDialog({
                   required
                   placeholder="name@school.edu.ng"
                   value={form.email}
-                  onChange={(event) => setForm({ ...form, email: event.target.value })}
+                  onChange={(event) => update({ email: event.target.value })}
                 />
+                <FieldError message={fieldErrors?.["email"]} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="acc-role">Role</Label>
-                <Select
-                  value={form.role}
-                  onValueChange={(role) => setForm({ ...form, role: role as Role })}
-                >
+                <Select value={form.role} onValueChange={(role) => update({ role: role as Role })}>
                   <SelectTrigger className="h-11">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {PROVISIONABLE_ROLES.map((role) => (
+                    {allowedRoles.map((role) => (
                       <SelectItem key={role} value={role}>
                         {ROLE_LABELS[role]}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <FieldError message={fieldErrors?.["role"]} />
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -661,8 +806,9 @@ function CreateAccountDialog({
                   className="h-11"
                   placeholder="+234..."
                   value={form.phone}
-                  onChange={(event) => setForm({ ...form, phone: event.target.value })}
+                  onChange={(event) => update({ phone: event.target.value })}
                 />
+                <FieldError message={fieldErrors?.["phone"]} />
               </div>
               {form.role === "student" ? (
                 <div className="space-y-2">
@@ -673,8 +819,9 @@ function CreateAccountDialog({
                     required
                     placeholder="e.g. ALP-001"
                     value={form.admissionNumber}
-                    onChange={(event) => setForm({ ...form, admissionNumber: event.target.value })}
+                    onChange={(event) => update({ admissionNumber: event.target.value })}
                   />
+                  <FieldError message={fieldErrors?.["admissionNumber"]} />
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -685,8 +832,9 @@ function CreateAccountDialog({
                     className="h-11"
                     placeholder="Auto-generated if blank"
                     value={form.password}
-                    onChange={(event) => setForm({ ...form, password: event.target.value })}
+                    onChange={(event) => update({ password: event.target.value })}
                   />
+                  <FieldError message={fieldErrors?.["password"]} />
                 </div>
               )}
             </div>
@@ -793,6 +941,112 @@ function ResetPasswordDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function AssignClassDialog({
+  target,
+  isPending,
+  classes,
+  assignments,
+  onOpenChange,
+  onConfirm,
+}: {
+  target: SchoolAccount | null;
+  isPending: boolean;
+  classes: string[];
+  assignments: ClassTeacherAssignment[];
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (className: string) => void;
+}) {
+  const [className, setClassName] = useState("");
+
+  useEffect(() => {
+    if (target) setClassName("");
+  }, [target]);
+
+  const staffId = target?.staff?.id;
+  const currentClasses = staffId ? assignments.filter((row) => row.staffId === staffId) : [];
+  const selectedHolder = className
+    ? assignments.find((row) => row.className === className)
+    : undefined;
+  // One class has exactly one class teacher, so picking a class that is
+  // already somebody else's replaces that designation.
+  const replacesOther = !!selectedHolder && !!staffId && selectedHolder.staffId !== staffId;
+
+  return (
+    <Dialog open={target !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-lg">Assign class — {target?.fullName ?? ""}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            The class teacher is the only one who can take that class&apos;s daily register (a
+            school admin can always submit it too).
+          </p>
+          <div className="space-y-1.5">
+            <Label>Currently assigned</Label>
+            {currentClasses.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {currentClasses.map((row) => (
+                  <span
+                    key={row.className}
+                    className="rounded-full border bg-muted/50 px-3 py-1 text-sm"
+                  >
+                    {row.className}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No class yet.</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="assign-class">Class</Label>
+            <Select value={className} onValueChange={setClassName}>
+              <SelectTrigger className="h-11">
+                <SelectValue placeholder="Choose a class" />
+              </SelectTrigger>
+              <SelectContent>
+                {classes.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {classes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No classes yet — add them on the Academics screen first.
+              </p>
+            ) : replacesOther ? (
+              <p className="text-sm text-warning">
+                {selectedHolder?.staffName} currently holds this class and will be replaced.
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button
+            disabled={!className || isPending || classes.length === 0}
+            onClick={() => {
+              if (className) onConfirm(className);
+            }}
+          >
+            {isPending ? "Assigning…" : "Assign class"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FieldError({ message }: { message?: string | undefined }) {
+  if (!message) return null;
+  return <p className="text-sm text-destructive">{message}</p>;
 }
 
 function FieldRow({
