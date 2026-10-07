@@ -1,11 +1,18 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { ClipboardList, Users } from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
+import { useAuthenticatedSession } from "@/auth/session";
 import { percent } from "@/lib/format";
+import {
+  assignedClassNames,
+  getClassTeachers,
+  visibleClassNames,
+} from "@/services/attendance.service";
 import { getTimetable } from "@/services/school.service";
 import { listStudents } from "@/services/students.service";
 
@@ -29,16 +36,60 @@ export const Route = createFileRoute("/_app/my-classes")({
 });
 
 function MyClassesPage() {
+  const { user } = useAuthenticatedSession();
+  const isTeacher = user.role === "teacher";
   const timetable = useQuery({ queryKey: ["timetable"], queryFn: getTimetable });
-  const students = useQuery({
-    queryKey: ["students", "my-classes"],
-    queryFn: () => listStudents({ pageSize: 1000 }),
+  const teachers = useQuery({
+    queryKey: ["class-teachers"],
+    queryFn: getClassTeachers,
+    enabled: isTeacher,
   });
 
-  const roster = students.data?.results ?? [];
-  const classNames = Array.from(
-    new Set((timetable.data ?? []).map((slot) => slot.className)),
-  ).sort();
+  // A teacher sees only the classes they are the designated class teacher of;
+  // everyone else keeps the timetable view of the whole school. The roster is
+  // fetched per assigned class so a teacher's browser never downloads the
+  // school-wide list. A teacher with no designation yet sees the empty state
+  // below instead of other teachers' classes.
+  const myClasses = useMemo(
+    () => (isTeacher ? assignedClassNames(teachers.data?.assignments ?? [], user.staffId) : []),
+    [isTeacher, user.staffId, teachers.data],
+  );
+  const scoped = isTeacher && user.staffId != null;
+  const scopedStudents = useQuery({
+    queryKey: ["students", "my-classes", "assigned", ...myClasses],
+    queryFn: async () => {
+      const pages = await Promise.all(
+        myClasses.map((name) => listStudents({ className: name, pageSize: 1000 })),
+      );
+      return pages.flatMap((page) => page.results);
+    },
+    enabled: scoped && !teachers.isPending && myClasses.length > 0,
+  });
+  const allStudents = useQuery({
+    queryKey: ["students", "my-classes"],
+    queryFn: () => listStudents({ pageSize: 1000 }),
+    enabled: !scoped,
+  });
+
+  const rosterLoading = scoped
+    ? teachers.isLoading || scopedStudents.isLoading
+    : allStudents.isPending;
+  const rosterError = scoped ? teachers.isError || scopedStudents.isError : allStudents.isError;
+  const retryRoster = () => {
+    if (scoped) {
+      void teachers.refetch();
+      void scopedStudents.refetch();
+    } else {
+      void allStudents.refetch();
+    }
+  };
+
+  const roster = scoped ? (scopedStudents.data ?? []) : (allStudents.data?.results ?? []);
+  const timetableNames = useMemo(
+    () => Array.from(new Set((timetable.data ?? []).map((slot) => slot.className))),
+    [timetable.data],
+  );
+  const classNames = visibleClassNames(timetableNames, myClasses, scoped);
 
   const classes = classNames.map((className) => {
     const members = roster.filter(
@@ -65,19 +116,23 @@ function MyClassesPage() {
           description="Everything you teach this term, with one tap to mark a register or enter scores."
         />
 
-        {timetable.isError || students.isError ? (
+        {timetable.isError || rosterError ? (
           <ErrorState
             onRetry={() => {
               void timetable.refetch();
-              void students.refetch();
+              retryRoster();
             }}
           />
-        ) : timetable.isPending || students.isPending ? (
+        ) : timetable.isPending || rosterLoading ? (
           <ListSkeleton />
         ) : classes.length === 0 ? (
           <EmptyState
             title="No classes assigned yet"
-            description="Once your school adds you to the timetable, your classes appear here."
+            description={
+              scoped
+                ? "Once your school names you the class teacher of a class, it appears here."
+                : "Once your school adds you to the timetable, your classes appear here."
+            }
           />
         ) : (
           <ul className="grid gap-4 md:grid-cols-2">

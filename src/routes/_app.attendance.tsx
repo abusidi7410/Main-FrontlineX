@@ -16,9 +16,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ApiRequestError } from "@/api/client";
+import { useAuthenticatedSession } from "@/auth/session";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { queueAttendance } from "@/offline/store";
-import { getRoster, submitAttendance } from "@/services/attendance.service";
+import {
+  assignedClassNames,
+  getClassTeachers,
+  getRoster,
+  submitAttendance,
+} from "@/services/attendance.service";
 import { getAcademicStructure } from "@/services/academics.service";
 import { schoolToday } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -81,8 +87,10 @@ function today() {
 
 function AttendancePage() {
   const online = useOnlineStatus();
+  const { user } = useAuthenticatedSession();
   const queryClient = useQueryClient();
   const academics = useQuery({ queryKey: ["academics"], queryFn: () => getAcademicStructure() });
+  const teachers = useQuery({ queryKey: ["class-teachers"], queryFn: getClassTeachers });
 
   // Only classes the school actually configured. The old hardcoded fallback list
   // offered 14 seeded names, which is how a dropdown could offer a class the
@@ -94,11 +102,29 @@ function AttendancePage() {
   const [marks, setMarks] = useState<Record<string, AttendanceStatus>>({});
   const [search, setSearch] = useState("");
 
-  // Default to the first real class once academics land, rather than a guessed one.
+  // A teacher opens the register on their own designated class instead of the
+  // first class in the school; everyone else keeps the existing default. The
+  // default waits for the assignments when they can change it, so a slow
+  // response cannot strand the picker on the wrong class. A teacher with no
+  // designation yet falls back to the first class and the existing read-only
+  // notice names who can submit it.
+  const myClasses = useMemo(
+    () =>
+      user.role === "teacher"
+        ? assignedClassNames(teachers.data?.assignments ?? [], user.staffId)
+        : [],
+    [user.role, user.staffId, teachers.data],
+  );
+  const defaultClass = useMemo(
+    () => myClasses.find((name) => classes.includes(name)) ?? classes[0],
+    [myClasses, classes],
+  );
+  const assignmentsReady = user.role !== "teacher" || user.staffId == null || !teachers.isPending;
   useEffect(() => {
-    const first = classes[0];
-    if (className === "" && first !== undefined) setClassName(first);
-  }, [classes, className]);
+    if (className === "" && assignmentsReady && defaultClass !== undefined) {
+      setClassName(defaultClass);
+    }
+  }, [className, assignmentsReady, defaultClass]);
 
   const roster = useQuery({
     queryKey: ["roster", className, arm, date],

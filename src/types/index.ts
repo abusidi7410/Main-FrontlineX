@@ -65,6 +65,9 @@ export interface AuthUser {
   schoolId: string | null;
   avatarUrl: string | null;
   mustChangePassword: boolean;
+  /** The teacher's staff record id, so the register can default to their own
+      class. `null` for accounts with no linked staff record (admins, parents). */
+  staffId: string | null;
 }
 
 export type SchoolStatus = "pending_payment" | "active" | "grace" | "suspended" | "trial";

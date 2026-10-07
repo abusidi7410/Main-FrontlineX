@@ -135,12 +135,13 @@ class AuthUserSerializer(serializers.ModelSerializer):
     mustChangePassword = serializers.BooleanField(
         source='must_change_password', read_only=True,
     )
+    staffId = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'fullName', 'email', 'phone', 'role', 'permissions',
-            'schoolId', 'avatarUrl', 'mustChangePassword',
+            'schoolId', 'avatarUrl', 'mustChangePassword', 'staffId',
         ]
         read_only_fields = fields
 
@@ -155,6 +156,14 @@ class AuthUserSerializer(serializers.ModelSerializer):
 
     def get_avatarUrl(self, obj):
         return profile_photos.avatar_url(obj.profile_photo_public_id)
+
+    def get_staffId(self, obj):
+        # The attendance page needs to know which class-teacher assignment is
+        # "mine" so a teacher's register defaults to their own class instead of
+        # the first class in the school. A string id (or None) keeps the
+        # frontend shape stable across integer PK backends.
+        staff_id = getattr(obj, 'staff_profile_id', None)
+        return str(staff_id) if staff_id is not None else None
 
 
 class ProfilePhotoUploadSerializer(serializers.Serializer):

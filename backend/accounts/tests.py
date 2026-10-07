@@ -73,6 +73,40 @@ class AccountManagementAPITests(TestCase):
                 self.assertEqual(response.status_code, 200, response.content)
                 self.assertEqual(response.json()['user']['id'], str(user.id))
 
+    def test_login_reports_staff_id_for_staff_linked_users_only(self):
+        staff = StaffMember.objects.create(
+            school=self.school_a,
+            full_name='Class Teacher',
+            email='classteacher@alpha.example',
+            phone='+2348099999999',
+            role='teacher',
+        )
+        teacher = User.objects.create_user(
+            email='classteacher@alpha.example',
+            password='Strong-Pass-1!',
+            first_name='Class',
+            last_name='Teacher',
+            role=User.Role.TEACHER,
+            school=self.school_a,
+            is_active=True,
+            staff_profile=staff,
+        )
+        teacher_login = APIClient().post(
+            '/api/v1/auth/login/',
+            {'identifier': 'classteacher@alpha.example', 'password': 'Strong-Pass-1!'},
+            format='json',
+        )
+        self.assertEqual(teacher_login.status_code, 200, teacher_login.content)
+        self.assertEqual(teacher_login.json()['user']['staffId'], str(staff.id))
+
+        admin_login = APIClient().post(
+            '/api/v1/auth/login/',
+            {'identifier': 'admin@alpha.example', 'password': 'Strong-Pass-1!'},
+            format='json',
+        )
+        self.assertEqual(admin_login.status_code, 200, admin_login.content)
+        self.assertIsNone(admin_login.json()['user']['staffId'])
+
     # ── create ────────────────────────────────────────────────────────────
 
     def test_admin_can_create_teacher_with_auto_password(self):

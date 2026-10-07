@@ -137,3 +137,38 @@ export async function assignClassTeacher(params: {
   // who is responsible for a register. Reads are attendance.read.
   return apiFetch("/attendance/class-teachers", { method: "POST", body: params });
 }
+
+/**
+ * The class names one staff member is the designated class teacher of, in
+ * assignment order and without duplicates. The register screen defaults a
+ * teacher to the first of these instead of the first class in the school, so
+ * "take attendance" opens on their own class. Empty when the caller has no
+ * linked staff record (admins) or no designation yet.
+ */
+export function assignedClassNames(
+  assignments: ClassTeacherAssignment[],
+  staffId: string | null | undefined,
+): string[] {
+  if (!staffId) return [];
+  const names: string[] = [];
+  for (const assignment of assignments) {
+    if (assignment.staffId === staffId && !names.includes(assignment.className)) {
+      names.push(assignment.className);
+    }
+  }
+  return names;
+}
+
+/**
+ * The class names shown on the "My classes" screen. A scoped teacher sees only
+ * the classes they are the designated class teacher of; everyone else sees the
+ * timetable-derived list. Sorted and deduped so the cards render in a stable
+ * order either way.
+ */
+export function visibleClassNames(
+  timetableNames: string[],
+  assignedNames: string[],
+  scoped: boolean,
+): string[] {
+  return Array.from(new Set(scoped ? assignedNames : timetableNames)).sort();
+}
