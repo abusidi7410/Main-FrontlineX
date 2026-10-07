@@ -7,6 +7,7 @@ import {
   GraduationCap,
   KeyRound,
   MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -16,6 +17,7 @@ import {
   UserMinus,
   Users,
   Wallet,
+  X,
 } from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { IfAllowed, PermissionGate } from "@/components/common/permission-gate";
@@ -226,6 +228,17 @@ function AccountsPage() {
     onSuccess: (data) => {
       toast.success(`${data.classTeacher} is now the class teacher for ${data.className}.`);
       setAssignTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ["class-teachers"] });
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (error) => toast.error(`${error.message} Please try again.`, { duration: 6000 }),
+  });
+
+  const unassignClassMutation = useMutation({
+    mutationFn: (input: { className: string; teacherName: string }) =>
+      assignClassTeacher({ className: input.className, assign: false }),
+    onSuccess: (_data, input) => {
+      toast.success(`${input.teacherName} is no longer the class teacher for ${input.className}.`);
       void queryClient.invalidateQueries({ queryKey: ["class-teachers"] });
       void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
@@ -542,6 +555,11 @@ function AccountsPage() {
       <AssignClassDialog
         target={assignTarget}
         isPending={assignClassMutation.isPending}
+        unassigningClass={
+          unassignClassMutation.isPending
+            ? (unassignClassMutation.variables?.className ?? null)
+            : null
+        }
         classes={academics.data?.classes ?? []}
         assignments={classTeachers.data?.assignments ?? []}
         onOpenChange={(open) => {
@@ -551,6 +569,9 @@ function AccountsPage() {
           if (assignTarget?.staff) {
             assignClassMutation.mutate({ className, staffId: assignTarget.staff.id });
           }
+        }}
+        onUnassign={(className, teacherName) => {
+          unassignClassMutation.mutate({ className, teacherName });
         }}
       />
     </PermissionGate>
@@ -589,7 +610,7 @@ function AccountRowActions({
           {onAssignClass ? (
             <IfAllowed permission="staff.write">
               <DropdownMenuItem onClick={onAssignClass}>
-                <GraduationCap aria-hidden="true" /> Assign class…
+                <Pencil aria-hidden="true" /> Edit classes…
               </DropdownMenuItem>
             </IfAllowed>
           ) : null}
@@ -946,17 +967,21 @@ function ResetPasswordDialog({
 function AssignClassDialog({
   target,
   isPending,
+  unassigningClass,
   classes,
   assignments,
   onOpenChange,
   onConfirm,
+  onUnassign,
 }: {
   target: SchoolAccount | null;
   isPending: boolean;
+  unassigningClass: string | null;
   classes: string[];
   assignments: ClassTeacherAssignment[];
   onOpenChange: (open: boolean) => void;
   onConfirm: (className: string) => void;
+  onUnassign: (className: string, teacherName: string) => void;
 }) {
   const [className, setClassName] = useState("");
 
@@ -977,7 +1002,7 @@ function AssignClassDialog({
     <Dialog open={target !== null} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-lg">Assign class — {target?.fullName ?? ""}</DialogTitle>
+          <DialogTitle className="text-lg">Edit classes — {target?.fullName ?? ""}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
@@ -987,16 +1012,30 @@ function AssignClassDialog({
           <div className="space-y-1.5">
             <Label>Currently assigned</Label>
             {currentClasses.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {currentClasses.map((row) => (
-                  <span
-                    key={row.className}
-                    className="rounded-full border bg-muted/50 px-3 py-1 text-sm"
-                  >
-                    {row.className}
-                  </span>
-                ))}
-              </div>
+              <ul className="flex flex-wrap gap-2">
+                {currentClasses.map((row) => {
+                  const removing = unassigningClass !== null && unassigningClass === row.className;
+                  return (
+                    <li
+                      key={row.className}
+                      className="flex items-center gap-1.5 rounded-full border bg-muted/50 py-1 pl-3 pr-1.5 text-sm"
+                    >
+                      {row.className}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-6 rounded-full"
+                        aria-label={`Remove ${target?.fullName ?? "teacher"} from ${row.className}`}
+                        disabled={isPending || removing}
+                        onClick={() => onUnassign(row.className, target?.staff?.fullName ?? "")}
+                      >
+                        <X className="size-3.5" aria-hidden="true" />
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
             ) : (
               <p className="text-sm text-muted-foreground">No class yet.</p>
             )}

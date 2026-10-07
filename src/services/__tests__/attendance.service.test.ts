@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { apiFetch } from "@/api/client";
 import {
+  assignClassTeacher,
   assignedClassNames,
   visibleClassNames,
   type ClassTeacherAssignment,
@@ -48,5 +50,29 @@ describe("visibleClassNames", () => {
 
   it("shows an empty list for a scoped teacher with no designation", () => {
     expect(visibleClassNames(["JSS 1"], [], true)).toEqual([]);
+  });
+});
+
+describe("assignClassTeacher", () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+  });
+
+  it("posts an unassign payload to clear a designation", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ className: "JSS 1", classTeacher: "" });
+    await assignClassTeacher({ className: "JSS 1", assign: false });
+    expect(apiFetch).toHaveBeenCalledWith("/attendance/class-teachers", {
+      method: "POST",
+      body: { className: "JSS 1", assign: false },
+    });
+  });
+
+  it("posts the staff designation to assign a class", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ className: "JSS 1", classTeacher: "Mrs Ade" });
+    await assignClassTeacher({ className: "JSS 1", staffId: "9" });
+    expect(apiFetch).toHaveBeenCalledWith("/attendance/class-teachers", {
+      method: "POST",
+      body: { className: "JSS 1", staffId: "9" },
+    });
   });
 });
