@@ -58,6 +58,7 @@ from .services import enrollment as enrollment_service
 from .services import events as event_service
 from .services import parent_portal as parent_portal_service
 from .services import policy as policy_service
+from .services import reporting as reporting_service
 from .services import promotion as promotion_service
 from .services import registration as registration_service
 from .services import report_card as report_card_service
@@ -1518,6 +1519,27 @@ class FinanceSummaryView(APIView):
         })
 
 
+class UsageReportView(APIView):
+    """The school's own paid-service P&L for one billing month.
+
+    Allowances and costs come from the school's plan and the usage ledger —
+    never from client input — so this view is a read of what enforcement
+    already recorded, not a second opinion.
+    """
+    permission_classes = [IsAuthenticated, HasSchool, require_permissions('reports.read')]
+
+    def get(self, request):
+        try:
+            year, month = reporting_service.parse_month_param(
+                request.query_params.get('month'),
+            )
+        except ValueError as exc:
+            raise ValidationError({'month': str(exc)})
+        start, end = reporting_service.month_window(year, month)
+        report = reporting_service.school_report(request.user.school, start, end)
+        return Response({'month': f'{year:04d}-{month:02d}', **report})
+
+
 class PaymentVerifyView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, CanWriteFinance]
 
@@ -2139,9 +2161,30 @@ class AssistantQueryView(APIView):
             user=request.user,
             status='succeeded',
         )
+        self._maybe_warn_usage(request.user.school)
         if action in ('confirm', 'propose'):
             return Response(result)
         return Response({'tool': request.data.get('tool'), 'data': result})
+
+    @staticmethod
+    def _maybe_warn_usage(school):
+        """Warn the admin once, per threshold, as AI allowance runs down."""
+        from .services import events as event_service
+        from .services.usage import usage_service
+        plan = usage_service._get_school_plan(school)
+        limit = plan.monthly_ai_allowance
+        if not limit:
+            return
+        used = usage_service._get_monthly_usage(school, 'ai')
+        # The emitter's dedupe key buckets by tenths, so this fires on the
+        # crossing of each 10% step and never re-fires inside one.
+        if used * 10 >= limit * 8:
+            try:
+                event_service.ai_usage_milestone(school, used=used, limit=limit)
+            except Exception:
+                # A notification problem must not fail the assistant reply
+                # the school already paid for.
+                pass
 
 
 class ResultSheetCreateView(APIView):
@@ -3638,9 +3681,15 @@ class PromotionApplyView(APIView):
             'underReview': 0,
             'graduated': 0,
         }
+        # Notifications fire only after the transaction commits: a family
+        # must never hear about a promotion that rolled back.
+        decided = []
         with transaction.atomic():
+            # of=('self',) locks only the enrollment rows: 'section' is a
+            # nullable FK, and Postgres refuses FOR UPDATE on the nullable
+            # side of the outer join that select_related('section') creates.
             active_enrollments = list(
-                Enrollment.objects.select_for_update().filter(
+                Enrollment.objects.select_for_update(of=('self',)).filter(
                     school=school,
                     academic_session=source,
                     class_obj=school_class,
@@ -3714,6 +3763,7 @@ class PromotionApplyView(APIView):
                     student.status = Student.Status.GRADUATED
                     student.save(update_fields=['status', 'updated_at'])
                     result['graduated'] += 1
+                    decided.append((student, 'graduate', destination_name, school_class.name))
                     log_audit(
                         request, 'student.graduated', target=student.admission_number,
                         detail=f'Graduated after {source.name}.',
@@ -3757,6 +3807,9 @@ class PromotionApplyView(APIView):
                         f'{student_summary["failedSubjects"]} failed subject(s).'
                     )[:255]
                     promoted.save(update_fields=['review_note', 'updated_at'])
+                decided.append(
+                    (student, decision, destination_name, target_class.name),
+                )
                 log_audit(
                     request, 'student.promoted', target=student.admission_number,
                     detail=f'{source.name} {school_class.name} -> {target.name} {target_class.name}',
@@ -3768,5 +3821,21 @@ class PromotionApplyView(APIView):
                         'session': target.name,
                         'reviewNote': promoted.review_note,
                     },
+                )
+        # The transaction has committed: every decision above is durable, so
+        # it is now safe to tell the families. A notification failure is
+        # logged, never surfaced — the promotion itself already happened.
+        for student, decision, session_name, class_name in decided:
+            try:
+                event_service.promotion_decided(
+                    school, student, decision,
+                    source_session=source.name,
+                    target_session=session_name,
+                    target_class=class_name,
+                )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f'Promotion notification failed for student {student.pk}'
                 )
         return Response(result)

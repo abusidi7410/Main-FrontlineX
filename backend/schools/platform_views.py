@@ -4,6 +4,7 @@ from django.core.cache import cache
 from django.db import IntegrityError, connection
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,6 +14,7 @@ from accounts.permissions import IsSuperAdmin
 from accounts.utils import DEFAULT_TEMPORARY_PASSWORD
 from records.models import Student
 from records.services import announcements as announcement_service
+from records.services import reporting as reporting_service
 from .models import Announcement, AuditLog, School, SchoolSubscription, SubscriptionPlan, SupportTicket
 from .status import school_status
 
@@ -715,3 +717,24 @@ class PlatformAuditListView(APIView):
             }
             for e in events
         ])
+
+
+class PlatformProfitView(APIView):
+    """Per-school P&L: subscription revenue vs SMS/OTP/AI variable cost.
+
+    Revenue is the plan's monthly price; cost is what the usage ledger
+    recorded at the plan's per-unit provider prices. Gross margin is the
+    difference. Month defaults to the current calendar month.
+    """
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def get(self, request):
+        try:
+            year, month = reporting_service.parse_month_param(
+                request.query_params.get('month'),
+            )
+        except ValueError as exc:
+            raise ValidationError({'month': str(exc)})
+        start, end = reporting_service.month_window(year, month)
+        report = reporting_service.platform_profit_report(start, end)
+        return Response({'month': f'{year:04d}-{month:02d}', **report})

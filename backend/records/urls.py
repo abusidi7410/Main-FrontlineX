@@ -16,6 +16,7 @@ urlpatterns = [
     path('staff/<str:pk>/', views.StaffDetailView.as_view()),
     path('invoices/generate/', views.InvoiceGenerateView.as_view()),
     path('finance/summary/', views.FinanceSummaryView.as_view()),
+    path('usage/report/', views.UsageReportView.as_view()),
     path('invoices/', views.InvoiceListView.as_view()),
     path('fees/structure/', views.FeeStructureView.as_view()),
     path('payments/<str:pk>/verify/', views.PaymentVerifyView.as_view()),

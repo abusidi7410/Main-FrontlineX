@@ -300,6 +300,50 @@ def student_activated(student) -> None:
     )
 
 
+def promotion_decided(school, student, decision: str, source_session: str,
+                      target_session: str, target_class: str) -> None:
+    """A promotion decision was applied to one student.
+
+    The family is told the outcome in plain terms: promoted, promoted with
+    conditions, repeating, or graduated. 'review' deliberately notifies
+    nobody — an unfinished decision is the office's business, not the
+    family's, and telling a parent "your child is under review" before the
+    school has decided would be needlessly alarming.
+    """
+    if decision == 'review':
+        return
+    name = f'{student.last_name}, {student.first_name}'
+    outcome = {
+        'promote': f'Promoted to {target_class} for {target_session}.',
+        'conditional': (
+            f'Promoted to {target_class} for {target_session} with conditions. '
+            'Check the report card for details.'
+        ),
+        'repeat': f'Will repeat {target_class} in {target_session}.',
+        'graduate': f'Graduated after {source_session}.',
+    }.get(decision)
+    if outcome is None:
+        return
+    notify_svc.notify_parents(
+        [student],
+        type='result',
+        title=f'Promotion decision — {name}',
+        body=outcome,
+        link='/children',
+        dedupe_key=f'promotion:{student.pk}:{target_session}:{decision}',
+        school=school,
+    )
+    notify_svc.notify_students(
+        [student.pk],
+        type='result',
+        title='Your promotion decision is available',
+        body=outcome,
+        link='/results',
+        dedupe_key=f'promotion:{student.pk}:{target_session}:{decision}-student',
+        school=school,
+    )
+
+
 def _students_of(sheet):
     """The students on a result sheet, read through its class and session.
 

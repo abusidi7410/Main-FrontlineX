@@ -57,3 +57,40 @@ services:
         value: 30
       - key: JWT_REFRESH_TOKEN_DAYS
         value: 7
+
+# ── Daily automation sweeps ──────────────────────────────────────────────────
+# Time-based events (missing registers, expiring subscriptions, outstanding-
+# balance SMS) cannot fire from inside a request, so they run once a day here.
+# Both commands are idempotent: a re-run on the same day adds nothing, and a
+# missed day self-heals on the next run. 06:00 UTC ~ 07:00 WAT.
+  - type: cron
+    name: frontlinex-sweeps
+    runtime: python
+    plan: free
+    rootDir: backend
+    schedule: "0 6 * * *"
+    buildCommand: ./build.sh
+    command: >
+      python manage.py sweep_notifications &&
+      python manage.py sweep_balance_reminders
+    envVars:
+      - key: DJANGO_DEBUG
+        value: false
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: DJANGO_ALLOWED_HOSTS
+        value: localhost,127.0.0.1
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL_REQUIRE
+        value: true
+      - key: REDIS_URL
+        sync: false
+      # SMS provider for balance reminders. Without these the console
+      # provider is used and reminders only print to the cron log.
+      - key: SMS_PROVIDER
+        sync: false
+      - key: TERMII_API_KEY
+        sync: false
+      - key: TERMII_SENDER_ID
+        sync: false
