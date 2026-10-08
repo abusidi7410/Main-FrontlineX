@@ -197,3 +197,53 @@ class NotificationPreference(models.Model):
 
     def __str__(self):
         return f'{self.user_id}:{self.type}={self.in_app}'
+
+
+class OTPCode(models.Model):
+    """One-time password codes for phone verification.
+
+    Used for parent phone verification, login MFA, and other sensitive actions.
+    """
+
+    class Purpose(models.TextChoices):
+        PHONE_VERIFICATION = 'phone_verification', 'Phone verification'
+        LOGIN_MFA = 'login_mfa', 'Login MFA'
+        PASSWORD_RESET = 'password_reset', 'Password reset'
+        SENSITIVE_ACTION = 'sensitive_action', 'Sensitive action'
+
+    class Channel(models.TextChoices):
+        SMS = 'sms', 'SMS'
+        EMAIL = 'email', 'Email'
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        VERIFIED = 'verified', 'Verified'
+        EXPIRED = 'expired', 'Expired'
+        FAILED = 'failed', 'Failed'
+
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='otp_codes',
+    )
+    school = models.ForeignKey(
+        'schools.School', on_delete=models.CASCADE, related_name='otp_codes',
+    )
+    code_hash = models.CharField(max_length=128)
+    purpose = models.CharField(max_length=20, choices=Purpose.choices)
+    channel = models.CharField(max_length=10, choices=Channel.choices, default=Channel.SMS)
+    status = models.CharField(max_length=15, choices=Status.choices, default=Status.PENDING)
+    attempts = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    expires_at = models.DateTimeField()
+    verified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'purpose', 'status']),
+            models.Index(fields=['school', 'created_at']),
+            models.Index(fields=['user', 'purpose', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.user_id} {self.purpose} {self.status}'

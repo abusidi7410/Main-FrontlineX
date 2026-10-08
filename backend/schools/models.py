@@ -114,11 +114,19 @@ class School(models.Model):
 
 
 class SubscriptionPlan(models.Model):
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=50, unique=True)
     min_students = models.PositiveIntegerField()
     max_students = models.PositiveIntegerField()
-    monthly_price = models.DecimalField(max_digits=12, decimal_places=2)
+    monthly_price = models.DecimalField(max_digits=10, decimal_places=2)
     ai_credits = models.PositiveIntegerField(default=0)
+    # Per-period allowances for paid services (reset each billing cycle)
+    monthly_sms_allowance = models.PositiveIntegerField(default=0)
+    monthly_otp_allowance = models.PositiveIntegerField(default=0)
+    monthly_ai_allowance = models.PositiveIntegerField(default=0)
+    # Provider costs for margin calculation (per-unit, in kobo)
+    sms_cost_per_unit = models.PositiveIntegerField(default=0)
+    otp_cost_per_unit = models.PositiveIntegerField(default=0)
+    ai_cost_per_credit = models.PositiveIntegerField(default=0)
     features = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

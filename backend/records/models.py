@@ -112,6 +112,9 @@ class AcademicSession(models.Model):
     name = models.CharField(max_length=20)
     start_year = models.PositiveIntegerField()
     end_year = models.PositiveIntegerField()
+    # End of the current term inside this session (academic calendar anchor
+    # for scheduled balance reminders). Blank = no reminder rule applies.
+    term_end_date = models.DateField(null=True, blank=True)
     is_current = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -661,7 +664,7 @@ class Payment(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     method = models.CharField(max_length=20, choices=Method.choices)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
-    reference = models.CharField(max_length=64, unique=True)
+    reference = models.CharField(max_length=64)
     provider = models.CharField(max_length=30, blank=True, default='')
     # The provider's own reference. Unique so a replayed webhook can never
     # create a second payment (spec §17, §86).
@@ -691,6 +694,12 @@ class Payment(models.Model):
             models.CheckConstraint(
                 condition=Q(amount__gt=0), name='payment_amount_positive',
             ),
+            # References are a per-school namespace: one school's reference
+            # must never block or reveal another school's payments.
+            models.UniqueConstraint(
+                fields=['school', 'reference'],
+                name='unique_payment_reference_per_school',
+            ),
         ]
         indexes = [
             models.Index(fields=['school', 'status']),
@@ -702,13 +711,86 @@ class Payment(models.Model):
         return f'{self.reference} {self.amount} {self.status}'
 
 
-class Registration(models.Model):
-    """New-student admission (spec §19, §30).
+class UsageRecord(models.Model):
+    """Centralized usage ledger for paid services (SMS, OTP, AI).
 
-    Deliberately separate from Student, Invoice and Enrollment so a registration
-    can be PENDING while the invoice is PARTIALLY_PAID and no enrollment exists.
+    Every paid operation must create a record here so the platform can
+    calculate actual variable cost per school and enforce allowances.
     """
 
+    class ResourceType(models.TextChoices):
+        SMS = 'sms', 'SMS'
+        OTP = 'otp', 'OTP'
+        AI = 'ai', 'AI'
+
+    class ActionType(models.TextChoices):
+        # SMS actions
+        PAYMENT_NOTIFICATION = 'payment_notification', 'Payment notification'
+        BALANCE_REMINDER = 'balance_reminder', 'Balance reminder'
+        OTP_SEND = 'otp_send', 'OTP send'
+        # AI actions
+        AI_REQUEST = 'ai_request', 'AI request'
+        AI_PROPOSAL = 'ai_proposal', 'AI proposal'
+        AI_CONFIRMATION = 'ai_confirmation', 'AI confirmation'
+
+    class Status(models.TextChoices):
+        SUCCEEDED = 'succeeded', 'Succeeded'
+        FAILED = 'failed', 'Failed'
+        PENDING = 'pending', 'Pending'
+        EXHAUSTED = 'exhausted', 'Allowance exhausted'
+
+    school = models.ForeignKey(
+        'schools.School', on_delete=models.CASCADE, related_name='usage_records',
+    )
+    resource_type = models.CharField(max_length=10, choices=ResourceType.choices)
+    action_type = models.CharField(max_length=30, choices=ActionType.choices)
+    quantity = models.PositiveIntegerField(default=1)
+    credits_used = models.PositiveIntegerField(default=0)
+    provider = models.CharField(max_length=50, blank=True, default='')
+    provider_reference = models.CharField(max_length=100, blank=True, default='')
+    estimated_cost = models.PositiveIntegerField(default=0)
+    actual_cost = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=15, choices=Status.choices, default=Status.PENDING)
+    # Optional relationships for traceability
+    student = models.ForeignKey(
+        Student, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='usage_records',
+    )
+    user = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='usage_records',
+    )
+    invoice = models.ForeignKey(
+        Invoice, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='usage_records',
+    )
+    payment = models.ForeignKey(
+        Payment, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='usage_records',
+    )
+    result_sheet = models.ForeignKey(
+        'ResultSheet', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='usage_records',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['school', 'resource_type', 'created_at']),
+            models.Index(fields=['school', 'resource_type', 'action_type']),
+            models.Index(fields=['school', 'status']),
+            models.Index(fields=['student', 'resource_type']),
+            models.Index(fields=['user', 'resource_type']),
+            models.Index(fields=['invoice', 'resource_type']),
+            models.Index(fields=['payment', 'resource_type']),
+        ]
+
+    def __str__(self):
+        return f'{self.school_id} {self.resource_type} {self.action_type} {self.status}'
+
+
+class Registration(models.Model):
     class Status(models.TextChoices):
         PENDING = 'pending', 'Pending'
         APPROVED = 'approved', 'Approved'
@@ -759,6 +841,39 @@ class Registration(models.Model):
 
     def __str__(self):
         return f'{self.student_id} {self.academic_session_id} {self.status}'
+
+
+class ReminderLog(models.Model):
+    """Idempotency ledger for scheduled reminders.
+
+    One row per (school, student, reminder_type, term, reminder_rule). The
+    unique constraint is the dedupe mechanism: a re-run of the sweep cannot
+    send the same reminder twice, even under concurrency.
+    """
+
+    school = models.ForeignKey('schools.School', on_delete=models.CASCADE, related_name='reminder_logs')
+    student = models.ForeignKey('Student', on_delete=models.CASCADE, related_name='reminder_logs')
+    reminder_type = models.CharField(max_length=30)
+    term = models.CharField(max_length=50, blank=True, default='')
+    reminder_rule = models.CharField(max_length=50, blank=True, default='')
+    sent_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, default='sent')
+
+    class Meta:
+        ordering = ['-sent_at']
+        indexes = [
+            models.Index(fields=['school', 'student', 'reminder_type', 'term']),
+            models.Index(fields=['school', 'sent_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['school', 'student', 'reminder_type', 'term', 'reminder_rule'],
+                name='unique_reminder_per_rule',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.school_id} {self.student_id} {self.reminder_type}'
 
 
 class Enrollment(models.Model):

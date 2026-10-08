@@ -179,7 +179,10 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
         model = SubscriptionPlan
         fields = [
             'id', 'name', 'min_students', 'max_students',
-            'monthly_price', 'ai_credits', 'features', 'is_active',
+            'monthly_price', 'ai_credits',
+            'monthly_sms_allowance', 'monthly_otp_allowance', 'monthly_ai_allowance',
+            'sms_cost_per_unit', 'otp_cost_per_unit', 'ai_cost_per_credit',
+            'features', 'is_active',
         ]
         read_only_fields = fields
 

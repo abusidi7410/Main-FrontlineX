@@ -56,7 +56,10 @@ export function ScoresDialog({
       onOpenChange(false);
       await invalidateEnrollmentQueries(queryClient, [["result-sheet", updated.id]]);
     },
-    onError: () => toast.error("We couldn't save those scores. Please try again."),
+    onError: (error) =>
+      toast.error(
+        error instanceof Error ? error.message : "We couldn't save those scores. Please try again.",
+      ),
   });
 
   if (!sheet) return null;

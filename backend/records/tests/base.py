@@ -50,6 +50,15 @@ class SchoolTestCase(TestCase):
         )
         plan = SubscriptionPlan.objects.create(
             name='standard', min_students=1, max_students=5000, monthly_price=100,
+            # Usage allowances the platform enforces on paid services. The
+            # fixture mirrors a real paid plan so allowance logic is exercised
+            # with headroom; exhaustion tests zero these out per-test.
+            monthly_sms_allowance=1000,
+            monthly_otp_allowance=1000,
+            monthly_ai_allowance=1000,
+            sms_cost_per_unit=200,
+            otp_cost_per_unit=100,
+            ai_cost_per_credit=50,
         )
         SchoolSubscription.objects.create(
             school=self.school, plan=plan, status=SchoolSubscription.Status.ACTIVE,

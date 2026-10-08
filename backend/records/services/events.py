@@ -19,6 +19,7 @@ score would be the worst bug this module could have.
 
 from accounts.services import notifications as notify_svc
 from records.services import attendance as attendance_service
+from records.services import usage as usage_service
 
 # Roles that sign money off. A principal sees the school's finances read-only,
 # so they are included for visibility but not for action.
@@ -54,6 +55,53 @@ def payment_verified(payment) -> None:
         dedupe_key=f'payment:{payment.pk}:parent',
         school=school,
     )
+
+    # Send SMS notification to parent/guardian phone. Payment success is
+    # never coupled to SMS success: every failure mode (allowance exhausted,
+    # provider down, bad number) is caught here so the verified payment stands.
+    #
+    # Idempotency: a succeeded ledger row for (payment, payment_notification)
+    # means the SMS already went out, so a re-verification retries nothing.
+    from records.models import UsageRecord
+    already_sent = UsageRecord.objects.filter(
+        payment=payment,
+        resource_type=UsageRecord.ResourceType.SMS,
+        action_type=UsageRecord.ActionType.PAYMENT_NOTIFICATION,
+        status=UsageRecord.Status.SUCCEEDED,
+    ).exists()
+    if already_sent:
+        return
+    try:
+        from accounts.models import User
+        parents = User.objects.filter(
+            linked_students=student,
+            school_id=school.id,
+            role='parent',
+            is_active=True,
+        )
+        for parent in parents:
+            if parent.phone:
+                try:
+                    usage_service.usage_service.send_sms(
+                        school=school,
+                        to=parent.phone,
+                        message=f'Payment of {amount} received for {name}. Outstanding balance: {outstanding:,.2f}.',
+                        action_type='payment_notification',
+                        student=student,
+                        user=parent,
+                        invoice=invoice,
+                        payment=payment,
+                    )
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f'SMS notification failed for payment {payment.pk}: {e}'
+                    )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            f'SMS notification failed for payment {payment.pk}: {e}'
+        )
 
 
 def payment_reversed(payment) -> None:

@@ -57,6 +57,7 @@ from .services import billing as billing_service
 from .services import enrollment as enrollment_service
 from .services import events as event_service
 from .services import parent_portal as parent_portal_service
+from .services import policy as policy_service
 from .services import promotion as promotion_service
 from .services import registration as registration_service
 from .services import report_card as report_card_service
@@ -855,8 +856,19 @@ class StaffListView(APIView):
     permission_classes = [IsAuthenticated, HasSchool]
 
     def get(self, request):
-        qs = StaffMember.objects.filter(school_id=request.user.school_id)
-        return Response(StaffMemberSerializer(qs, many=True).data)
+        # The directory itself stays readable (students must keep working per
+        # the pinned regression test), but contact details are staff
+        # administration data: callers without `staff.write` get names, roles,
+        # subjects and classes only — never emails or phone numbers.
+        rows = StaffMemberSerializer(
+            StaffMember.objects.filter(school_id=request.user.school_id), many=True,
+        ).data
+        if CanWriteStaff().has_permission(request, self):
+            return Response(rows)
+        return Response([
+            {key: value for key, value in row.items() if key not in ('email', 'phone')}
+            for row in rows
+        ])
 
     def post(self, request):
         if not CanWriteStaff().has_permission(request, self):
@@ -874,7 +886,12 @@ class StaffDetailView(APIView):
         return get_object_or_404(StaffMember, id=pk, school_id=request.user.school_id)
 
     def get(self, request, pk):
-        return Response(StaffMemberSerializer(self.get_object(request, pk)).data)
+        row = StaffMemberSerializer(self.get_object(request, pk)).data
+        if CanWriteStaff().has_permission(request, self):
+            return Response(row)
+        return Response(
+            {key: value for key, value in row.items() if key not in ('email', 'phone')}
+        )
 
     def patch(self, request, pk):
         if not CanWriteStaff().has_permission(request, self):
@@ -1060,7 +1077,11 @@ class InvoiceGenerateView(APIView):
                     is_cancelled=False,
                 ).first()
                 if invoice:
-                    if overwrite and total >= invoice.paid:
+                    if overwrite:
+                        policy_service.assert_invoice_rewritable(
+                            invoice,
+                            f'Invoice for {student.admission_number} ({term})',
+                        )
                         invoice.items = items
                         invoice.total = total
                         invoice.save(update_fields=['items', 'total'])
@@ -1370,7 +1391,11 @@ class PaymentListView(APIView):
         if amount <= 0:
             raise ValidationError({'amount': 'Amount must be greater than zero.'})
         reference = (request.data.get('reference') or '').strip()
-        if reference and Payment.objects.filter(reference=reference).exists():
+        # Scoped to this school: an unscoped check would let one school probe
+        # another school's references and force a bogus duplicate error.
+        if reference and Payment.objects.filter(
+            school_id=request.user.school_id, reference=reference,
+        ).exists():
             raise ValidationError({'reference': 'A payment with this reference already exists.'})
 
         verified = is_finance and method in (Payment.Method.CASH, Payment.Method.POS)
@@ -1381,18 +1406,29 @@ class PaymentListView(APIView):
                 raise ValidationError({
                     'amount': f'Amount exceeds the outstanding balance of {outstanding:.2f}.',
                 })
-            payment = Payment.objects.create(
-                school_id=request.user.school_id,
-                invoice_id=invoice.id,
-                amount=amount,
-                method=method,
-                status=Payment.Status.VERIFIED if verified else Payment.Status.PENDING,
-                reference=reference or f'FN-{uuid.uuid4().hex[:10].upper()}',
-                note=request.data.get('note', ''),
-                recorded_by=request.user if request.user.school_id else None,
-            )
+            try:
+                payment = Payment.objects.create(
+                    school_id=request.user.school_id,
+                    invoice_id=invoice.id,
+                    amount=amount,
+                    method=method,
+                    status=Payment.Status.VERIFIED if verified else Payment.Status.PENDING,
+                    reference=reference or f'FN-{uuid.uuid4().hex[:10].upper()}',
+                    note=request.data.get('note', ''),
+                    recorded_by=request.user if request.user.school_id else None,
+                )
+            except IntegrityError:
+                # Two submissions racing with the same reference: the pre-check
+                # above cannot see the other transaction yet, so the unique
+                # constraint arbitrates and the loser gets a readable 400.
+                raise ValidationError(
+                    {'reference': 'A payment with this reference already exists.'}
+                )
             if verified:
-                invoice.paid += amount
+                # Recomputed from the verified sum rather than incremented, so
+                # the denormalised column can never drift from the source of
+                # truth it mirrors.
+                invoice.paid = billing_service.verified_paid_total(invoice.id)
                 invoice.save(update_fields=['paid'])
             # Cash and POS are verified on the spot, so a family paying the
             # admission fee at the bursar's desk is fully settled right here.
@@ -1516,10 +1552,11 @@ class PaymentVerifyView(APIView):
                     {'detail': f'Amount exceeds the outstanding balance of {outstanding:.2f}.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            invoice.paid += payment.amount
-            invoice.save(update_fields=['paid'])
             payment.status = Payment.Status.VERIFIED
             payment.save(update_fields=['status'])
+            # Recomputed, never incremented: `paid` mirrors the verified sum.
+            invoice.paid = billing_service.verified_paid_total(invoice.id)
+            invoice.save(update_fields=['paid'])
             # Verifying the final instalment is what lets a new student start
             # classes. Only promotes PENDING_PAYMENT forward, so this can never
             # undo a suspension or a graduation.
@@ -1556,11 +1593,11 @@ class PaymentReverseView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             invoice = Invoice.objects.select_for_update().get(pk=payment.invoice_id)
-            invoice.paid -= payment.amount
-            invoice.paid = max(invoice.paid, 0)
-            invoice.save(update_fields=['paid'])
             payment.status = Payment.Status.REVERSED
             payment.save(update_fields=['status'])
+            # Recomputed, never decremented: `paid` mirrors the verified sum.
+            invoice.paid = billing_service.verified_paid_total(invoice.id)
+            invoice.save(update_fields=['paid'])
             event_service.payment_reversed(payment)
         return Response(PaymentSerializer(payment).data)
 
@@ -1780,10 +1817,7 @@ class ParentChildAttendanceView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, ParentPortalAccess]
 
     def get(self, request, student_id):
-        child = parent_portal_service.linked_child(request.user, student_id)
-        if child is None:
-            # 404, not 403: a parent may not learn that the id exists.
-            raise Http404
+        child = policy_service.require_linked_child(request.user, student_id)
         params = request.query_params
         session = parent_portal_service.current_session_for(child)
         data = parent_portal_service.attendance_for(
@@ -1808,9 +1842,7 @@ class ParentChildPromotionView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, ParentPortalAccess]
 
     def get(self, request, student_id):
-        child = parent_portal_service.linked_child(request.user, student_id)
-        if child is None:
-            raise Http404
+        child = policy_service.require_linked_child(request.user, student_id)
         return Response(parent_portal_service.promotion_for(child))
 
 
@@ -1848,10 +1880,7 @@ class ReportCardView(APIView):
         if user.role == User.Role.PARENT:
             if user.must_change_password:
                 raise PermissionDenied(ParentPortalAccess.message)
-            student = parent_portal_service.linked_child(user, student_id)
-            if student is None:
-                raise Http404
-            return student
+            return policy_service.require_linked_child(user, student_id)
         if user.role == User.Role.STUDENT:
             if str(getattr(user, 'student_profile_id', '') or '') != str(student_id):
                 raise Http404
@@ -1966,6 +1995,15 @@ class ResultSheetActionView(APIView):
             id=pk, school_id=request.user.school_id,
         )
 
+        if action in ('scores', 'submit'):
+            policy_service.require_teacher_class_scope(
+                user=request.user,
+                school=request.user.school,
+                class_obj=sheet.class_obj,
+                session=sheet.academic_session,
+                action='enter scores on' if action == 'scores' else 'submit',
+            )
+
         if action == 'scores':
             term_scores = request.data.get('termScores')
             if term_scores is not None:
@@ -2035,25 +2073,75 @@ class AssistantQueryView(APIView):
         if not ai_tools.assistant_permissions(request.user):
             raise PermissionDenied('Your role does not have access to the assistant.')
 
-        action = str(request.data.get('action') or '').strip()
-        if action == 'confirm':
-            return Response(ai_tools.confirm_write(
-                request.user,
-                str(request.data.get('writeAction') or ''),
-                str(request.data.get('confirmationToken') or ''),
-            ))
-        if action == 'propose':
-            return Response(ai_tools.propose_write(
-                request.user,
-                str(request.data.get('writeAction') or ''),
-                request.data.get('arguments') or {},
-            ))
+        # AI allowance is enforced here, before any tool runs, so an
+        # exhausted school gets a clean rejection and never reaches the
+        # tool/LLM layer. Costs are per-operation on the plan (UsageService).
+        from .services.usage import usage_service
 
+        action = str(request.data.get('action') or '').strip()
         tool = str(request.data.get('tool') or '').strip()
-        if not tool:
+        if action not in ('confirm', 'propose') and not tool:
+            # A malformed request costs nothing, so it is rejected before the
+            # allowance is even consulted.
             raise ValidationError({'tool': 'Name the assistant tool to run.'})
-        result = ai_tools.call_tool(request.user, tool, request.data.get('arguments') or {})
-        return Response({'tool': tool, 'data': result})
+        operation = {
+            'confirm': 'normal_analysis',
+            'propose': 'report_analysis',
+        }.get(action, 'simple_request')
+        try:
+            credits_needed = usage_service.check_ai_allowance(
+                request.user.school, operation,
+            )
+        except ValidationError:
+            raise ValidationError({
+                'ai': 'Insufficient AI credits for this operation. '
+                      'Your school allowance is exhausted for this billing period.',
+            })
+        try:
+            if action == 'confirm':
+                result = ai_tools.confirm_write(
+                    request.user,
+                    str(request.data.get('writeAction') or ''),
+                    str(request.data.get('confirmationToken') or ''),
+                )
+            elif action == 'propose':
+                result = ai_tools.propose_write(
+                    request.user,
+                    str(request.data.get('writeAction') or ''),
+                    request.data.get('arguments') or {},
+                )
+            else:
+                result = ai_tools.call_tool(
+                    request.user, tool, request.data.get('arguments') or {},
+                )
+        except PermissionDenied:
+            # Authorization precedes usage: a refused request spends nothing
+            # and leaves no ledger row, so roles cannot burn credits by probing.
+            raise
+        except Exception:
+            # A tool failure after the allowance was consumed still owes a
+            # ledger row, or the profit report loses the spend.
+            usage_service.record_ai_usage(
+                school=request.user.school,
+                operation_type=operation,
+                credits_used=credits_needed,
+                action_type='ai_request',
+                user=request.user,
+                status='failed',
+            )
+            raise
+
+        usage_service.record_ai_usage(
+            school=request.user.school,
+            operation_type=operation,
+            credits_used=credits_needed,
+            action_type='ai_request',
+            user=request.user,
+            status='succeeded',
+        )
+        if action in ('confirm', 'propose'):
+            return Response(result)
+        return Response({'tool': request.data.get('tool'), 'data': result})
 
 
 class ResultSheetCreateView(APIView):
@@ -2079,6 +2167,13 @@ class ResultSheetCreateView(APIView):
             raise ValidationError({
                 'fields': 'A term result sheet needs a subject and term.',
             })
+        policy_service.require_teacher_class_scope(
+            user=request.user,
+            school=school,
+            class_obj=class_obj,
+            session=session,
+            action='create a result sheet for',
+        )
         sheet = result_service.create_sheet(
             school=school,
             academic_session=session,

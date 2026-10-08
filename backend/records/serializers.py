@@ -76,6 +76,19 @@ class StudentSerializer(serializers.ModelSerializer):
                             f'"{number}" is already used by another student in this school.'
                         ),
                     })
+            instance = getattr(self, 'instance', None)
+            if (
+                instance is not None
+                and request.method in ('PUT', 'PATCH')
+                and instance.admission_number
+            ):
+                incoming = attrs.get('admission_number')
+                if incoming is not None and str(incoming).strip() != instance.admission_number:
+                    raise serializers.ValidationError({
+                        'admissionNumber': (
+                            'Admission numbers are issued once and cannot be changed.'
+                        ),
+                    })
         return attrs
 
     def get_id(self, obj):

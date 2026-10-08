@@ -9,7 +9,7 @@ from decimal import Decimal
 from threading import Barrier, Thread
 
 from django.db import connection, connections
-from django.test import skipUnlessDBFeature
+from django.test import TransactionTestCase, skipUnlessDBFeature
 
 from accounts.models import User
 from records.models import (
@@ -170,47 +170,6 @@ class AdmissionNumberTests(SchoolTestCase):
             admission.generate_admission_number(self.school, self.jss_level, 2026)
 
     @skipUnlessDBFeature('has_select_for_update')
-    def test_concurrent_generation_never_repeats_a_number(self):
-        """Real threads on separate connections, racing on the same sequence.
-
-        Skipped on SQLite, which has no row-level locking: `select_for_update`
-        is a no-op there, so the guarantee this test asserts cannot be exercised.
-        Production is PostgreSQL, so run this against a PostgreSQL DATABASE_URL
-        before release.
-        """
-        threads_count = 8
-        barrier = Barrier(threads_count)
-        results: list[str] = []
-        errors: list[Exception] = []
-
-        def worker():
-            try:
-                barrier.wait(timeout=20)
-                number = admission.generate_admission_number(
-                    self.school, self.jss_level, 2026,
-                )
-                results.append(number)
-            except Exception as exc:  # pragma: no cover - surfaced via assertion
-                errors.append(exc)
-            finally:
-                connections.close_all()
-
-        threads = [Thread(target=worker) for _ in range(threads_count)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=40)
-
-        self.assertEqual(errors, [], f'worker errors: {errors}')
-        self.assertEqual(len(results), threads_count)
-        self.assertEqual(len(set(results)), threads_count, 'duplicate admission numbers issued')
-        self.assertEqual(
-            AdmissionSequence.objects.get(
-                school=self.school, level=self.jss_level, year=2026,
-            ).last_serial,
-            threads_count,
-        )
-
     def test_admission_number_is_unique_within_a_school(self):
         from django.db import IntegrityError, transaction
 
@@ -233,6 +192,63 @@ class AdmissionNumberTests(SchoolTestCase):
         self.assertEqual(
             student.admission_number_source, Student.AdmissionNumberSource.IMPORTED,
         )
+
+
+class AdmissionNumberConcurrencyTests(TransactionTestCase):
+    """Real threads on separate connections, racing on the same sequence.
+
+    Runs as a TransactionTestCase so the fixture rows are committed and visible
+    to the worker connections' foreign-key checks. Skipped on SQLite, which has
+    no row-level locking: `select_for_update` is a no-op there, so the guarantee
+    this test asserts cannot be exercised.
+    """
+
+    @skipUnlessDBFeature('has_select_for_update')
+    def test_concurrent_generation_never_repeats_a_number(self):
+        school = School.objects.create(
+            name='Race Academy', slug='race-academy', code='RCA',
+            address='1 Race Way', state='Kano', lga='Kano Municipal',
+            phone='+2348000000011', email='race@example.com', is_active=True,
+            current_session='2026/2027', current_term='First Term',
+        )
+        level = Level.objects.create(
+            school=school, code=Level.JUNIOR_SECONDARY,
+            name='Junior Secondary', sort_order=30,
+        )
+        school_class = SchoolClass.objects.create(
+            school=school, level=level, name='JSS 1', sort_order=30,
+        )
+        threads_count = 8
+        barrier = Barrier(threads_count)
+        results: list[str] = []
+        errors: list[Exception] = []
+
+        def worker():
+            try:
+                barrier.wait(timeout=20)
+                number = admission.generate_admission_number(school, level, 2026)
+                results.append(number)
+            except Exception as exc:  # pragma: no cover - surfaced via assertion
+                errors.append(exc)
+            finally:
+                connections.close_all()
+
+        threads = [Thread(target=worker) for _ in range(threads_count)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=40)
+
+        self.assertEqual(errors, [], f'worker errors: {errors}')
+        self.assertEqual(len(results), threads_count)
+        self.assertEqual(len(set(results)), threads_count, 'duplicate admission numbers issued')
+        self.assertEqual(
+            AdmissionSequence.objects.get(
+                school=school, level=level, year=2026,
+            ).last_serial,
+            threads_count,
+        )
+        self.assertIsNotNone(school_class.pk)
 
 
 class FeeStructureResolutionTests(SchoolTestCase):
