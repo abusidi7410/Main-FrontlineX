@@ -3,15 +3,16 @@ from datetime import datetime, timedelta
 from django.core.cache import cache
 from django.db import IntegrityError, connection
 from django.utils import timezone
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import User
 from accounts.permissions import IsSuperAdmin
-from accounts.utils import DEFAULT_TEMPORARY_PASSWORD
+from accounts.utils import DEFAULT_TEMPORARY_PASSWORD, audit, paginate
 from records.models import Student
 from records.services import announcements as announcement_service
 from records.services import reporting as reporting_service
@@ -24,13 +25,23 @@ _SUPPORT_STATUSES = {'pending', 'under_review', 'verified'}
 
 
 def _plan_for_tier(tier_id):
-    if tier_id and str(tier_id).startswith('t'):
-        index = str(tier_id)[1:]
-        if index.isdigit():
+    """The plan a `t<students>` tier id refers to.
+
+    Matches the stable `code` first (the frontend sends the plan code), then
+    falls back to the smallest plan whose floor fits the number, then any plan.
+    Returns ``None`` when no plan exists rather than an unsaved stand-in that
+    could not be attached to a subscription.
+    """
+    if tier_id:
+        exact = SubscriptionPlan.objects.filter(code=str(tier_id)).first()
+        if exact is not None:
+            return exact
+        text = str(tier_id)
+        if text.startswith('t') and text[1:].isdigit():
             return SubscriptionPlan.objects.filter(
-                min_students__lte=int(index)
+                min_students__lte=int(text[1:]),
             ).order_by('-min_students').first()
-    return SubscriptionPlan.objects.first() or SubscriptionPlan(name='t100', min_students=1, max_students=100)
+    return SubscriptionPlan.objects.order_by('sort_order', 'min_students').first()
 
 
 def _client_ip(request):
@@ -38,6 +49,25 @@ def _client_ip(request):
     if forwarded:
         return forwarded.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR', '')
+
+
+def _subscription_json(subscription, plan):
+    """The subscription facts the platform screens need, in one shape."""
+    return {
+        'planId': (plan.code or plan.name) if plan else None,
+        'planName': plan.name if plan else '',
+        'monthlyPrice': float(plan.monthly_price) if plan else 0,
+        'expiresAt': (
+            subscription.expires_at.isoformat()
+            if subscription and subscription.expires_at else None
+        ),
+        'overrideActive': bool(subscription and subscription.override_active),
+        'overrideUntil': (
+            subscription.override_until.isoformat()
+            if subscription and subscription.override_until else None
+        ),
+        'overrideNote': subscription.override_note if subscription else '',
+    }
 
 
 def _platform_school_data(school):
@@ -48,9 +78,15 @@ def _platform_school_data(school):
         'name': school.name,
         'state': school.state,
         'students': Student.objects.filter(school=school, status=Student.Status.ACTIVE).count(),
-        'tierId': plan.name if plan else 't100',
+        'tierId': (plan.code or plan.name) if plan else 't100',
+        'tierLabel': plan.name if plan else '',
         'status': school_status(school, subscription),
         'mrr': float(plan.monthly_price) if plan else 0,
+        'renewalDate': (
+            subscription.expires_at.isoformat()
+            if subscription and subscription.expires_at else None
+        ),
+        'overrideActive': bool(subscription and subscription.override_active),
         'createdAt': school.created_at.isoformat(),
     }
 
@@ -75,7 +111,9 @@ def _platform_school_detail(school):
         'studentCount': Student.objects.filter(school=school, status=Student.Status.ACTIVE).count(),
         'staffCount': school.staff.count(),
         'mrr': float(plan.monthly_price) if plan else 0,
-        'tierId': plan.name if plan else 't100',
+        'tierId': (plan.code or plan.name) if plan else 't100',
+        'tierLabel': plan.name if plan else '',
+        **_subscription_json(subscription, plan),
     }
 
 
@@ -192,10 +230,13 @@ school_rollup AS (
         ss.expires_at AS renewal_date,
         COALESCE(plan.name, 't100') AS plan,
         CASE
-            WHEN s.is_active = TRUE THEN 'active'
             WHEN ss.status = 'suspended' THEN 'suspended'
+            WHEN ss.override_active = TRUE THEN 'active'
+            WHEN ss.status = 'trial' THEN 'trial'
+            WHEN s.is_active = TRUE AND ss.status = 'active' THEN 'active'
             WHEN ss.status = 'grace' THEN 'grace'
             WHEN ss.status IN ('pending', 'expired') THEN 'pending_payment'
+            WHEN s.is_active = TRUE THEN 'active'
             ELSE 'trial'
         END AS status,
         CASE
@@ -699,24 +740,205 @@ def _ticket_json(ticket):
     }
 
 
+class _AuditEventSerializer(serializers.Serializer):
+    """CamelCase view of an audit row for the platform audit screen."""
+
+    def to_representation(self, e):
+        return {
+            'id': str(e.id),
+            'actor': e.actor,
+            'action': e.action,
+            'target': e.target,
+            'ip': e.ip,
+            'createdAt': e.created_at.isoformat(),
+            'severity': e.severity,
+            'role': e.role,
+            'school': e.school.name if e.school_id else '',
+            'schoolId': str(e.school_id) if e.school_id else None,
+        }
+
+
 class PlatformAuditListView(APIView):
+    """GET /platform/audit/ — the global event log, filterable and paged."""
+
     permission_classes = [IsAuthenticated, IsSuperAdmin]
 
     def get(self, request):
-        events = AuditLog.objects.all()[:200]
-        return Response([
-            {
-                'id': str(e.id),
-                'actor': e.actor,
-                'action': e.action,
-                'target': e.target,
-                'ip': e.ip,
-                'createdAt': e.created_at.isoformat(),
-                'severity': e.severity,
-                'role': e.role,
-            }
-            for e in events
-        ])
+        events = AuditLog.objects.select_related('school')
+        action = (request.query_params.get('action') or '').strip()
+        if action:
+            events = events.filter(action__icontains=action)
+        severity = (request.query_params.get('severity') or '').strip()
+        if severity:
+            events = events.filter(severity=severity)
+        actor = (request.query_params.get('actor') or '').strip()
+        if actor:
+            events = events.filter(actor__icontains=actor)
+        school_id = (request.query_params.get('schoolId') or '').strip()
+        if school_id:
+            events = events.filter(school_id=school_id)
+        search = (request.query_params.get('search') or '').strip()
+        if search:
+            events = events.filter(target__icontains=search) | events.filter(
+                action__icontains=search,
+            )
+        events = events.order_by('-created_at', '-id')
+        return Response(paginate(events, request, _AuditEventSerializer))
+
+
+def _platform_user_json(user):
+    return {
+        'id': str(user.id),
+        'name': user.get_full_name() or user.email or '',
+        'email': user.email or '',
+        'phone': user.phone or '',
+        'role': user.role,
+        'isActive': user.is_active,
+        'isVerified': user.is_verified,
+        'mustChangePassword': user.must_change_password,
+        'lastLogin': user.last_login.isoformat() if user.last_login else None,
+    }
+
+
+class PlatformImpersonationView(APIView):
+    """POST /platform/schools/<pk>/impersonate/ — a read-only view of a school.
+
+    Mints a short-lived access token for one of the school's administrators,
+    marked ``imp`` (who is looking) and ``ro`` (read-only). The authentication
+    layer refuses any non-safe request carrying such a token, so the manager can
+    see exactly what the school sees without being able to change anything. The
+    act is audited before the token is handed back.
+    """
+
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def post(self, request, pk):
+        school = School.objects.filter(id=pk).first()
+        if school is None:
+            return Response({'detail': 'School not found.'}, status=status.HTTP_404_NOT_FOUND)
+        target = (
+            school.users.filter(role=User.Role.SCHOOL_ADMIN, is_active=True).order_by('id').first()
+            or school.users.filter(is_active=True).exclude(
+                role__in=[User.Role.STUDENT, User.Role.PARENT],
+            ).order_by('id').first()
+        )
+        if target is None:
+            return Response(
+                {'detail': 'This school has no active account to view as.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        refresh = RefreshToken.for_user(target)
+        access = refresh.access_token
+        access['imp'] = str(request.user.id)
+        access['ro'] = True
+        access['school_id'] = str(school.id)
+
+        audit(
+            request, 'platform.impersonation.started', school.name,
+            f'Read-only view as {target.get_full_name() or target.email}.',
+            severity='warning', entity='school', entity_id=str(school.id),
+        )
+        return Response({
+            'accessToken': str(access),
+            'schoolId': str(school.id),
+            'schoolName': school.name,
+            'userName': target.get_full_name() or target.email,
+            'userRole': target.role,
+            'expiresIn': int(access['exp'] - access['iat']),
+        })
+
+
+class PlatformSchoolUsersView(APIView):
+    """GET/POST /platform/schools/<pk>/users/ — every login on one school."""
+
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def get(self, request, pk):
+        school = School.objects.filter(id=pk).first()
+        if school is None:
+            return Response({'detail': 'School not found.'}, status=status.HTTP_404_NOT_FOUND)
+        users = school.users.all().order_by('-date_joined')
+        return Response([_platform_user_json(u) for u in users])
+
+    def post(self, request, pk):
+        school = School.objects.filter(id=pk).first()
+        if school is None:
+            return Response({'detail': 'School not found.'}, status=status.HTTP_404_NOT_FOUND)
+        email = (request.data.get('email') or '').strip().lower()
+        full_name = (request.data.get('name') or '').strip()
+        role = (request.data.get('role') or User.Role.SCHOOL_ADMIN).strip()
+        if not email:
+            return Response({'detail': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if role not in User.Role.values:
+            return Response({'detail': 'Unknown role.'}, status=status.HTTP_400_BAD_REQUEST)
+        if User.objects.filter(email=email).exists():
+            return Response({'detail': 'A user with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+        parts = full_name.split(' ', 1)
+        try:
+            user = User.objects.create_user(
+                email=email,
+                password=DEFAULT_TEMPORARY_PASSWORD,
+                first_name=parts[0] if parts else '',
+                last_name=parts[1] if len(parts) > 1 else '',
+                role=role,
+                school=school,
+                is_active=True,
+                must_change_password=True,
+            )
+        except IntegrityError:
+            return Response({'detail': 'A user with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+        audit(
+            request, 'platform.user.created', f'{school.name} ({user.email})',
+            'Account provisioned by platform manager.', severity='warning',
+            entity='user', entity_id=str(user.id),
+        )
+        data = _platform_user_json(user)
+        data['temporaryPassword'] = DEFAULT_TEMPORARY_PASSWORD
+        return Response(data, status=status.HTTP_201_CREATED)
+
+
+class PlatformUserDetailView(APIView):
+    """PATCH /platform/users/<pk>/ — enable/disable, re-role, reset password.
+
+    Scoped to school accounts: a platform manager can never use this to edit
+    another platform manager or a superuser.
+    """
+
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def patch(self, request, pk):
+        user = User.objects.filter(id=pk).first()
+        if user is None:
+            return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if user.role == User.Role.PLATFORM_MANAGER or user.is_superuser:
+            return Response(
+                {'detail': 'Platform staff accounts are managed outside this screen.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        before = _platform_user_json(user)
+        if 'isActive' in request.data:
+            user.is_active = bool(request.data.get('isActive'))
+        if 'role' in request.data:
+            role = str(request.data.get('role') or '').strip()
+            if role not in User.Role.values:
+                return Response({'detail': 'Unknown role.'}, status=status.HTTP_400_BAD_REQUEST)
+            user.role = role
+        temporary_password = None
+        if request.data.get('resetPassword'):
+            temporary_password = DEFAULT_TEMPORARY_PASSWORD
+            user.set_password(temporary_password)
+            user.must_change_password = True
+        user.save()
+        audit(
+            request, 'platform.user.updated', user.email,
+            'Account updated by platform manager.', severity='warning',
+            entity='user', entity_id=str(user.id), before=before,
+            after=_platform_user_json(user),
+        )
+        data = _platform_user_json(user)
+        if temporary_password:
+            data['temporaryPassword'] = temporary_password
+        return Response(data)
 
 
 class PlatformProfitView(APIView):

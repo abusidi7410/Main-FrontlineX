@@ -137,6 +137,28 @@ def resolve_section(school: School, class_obj: SchoolClass, name: str) -> Sectio
 
 # ── Roster ──────────────────────────────────────────────────────────────────
 
+def _active_enrollments(
+    school: School,
+    class_obj: SchoolClass,
+    section: Section | None,
+    session: AcademicSession | None,
+):
+    """Enrollments that make up a class register, with student/section joined.
+
+    The single source of both the roster and the public-id -> primary-key
+    mapping used when a register is submitted, so the two can never disagree on
+    who is allowed to be marked.
+    """
+    queryset = Enrollment.objects.filter(
+        school=school, status=Enrollment.Status.ACTIVE, class_obj=class_obj,
+    ).select_related('student', 'section')
+    if session is not None:
+        queryset = queryset.filter(academic_session=session)
+    if section is not None:
+        queryset = queryset.filter(section=section)
+    return queryset.filter(student__status=Student.Status.ACTIVE)
+
+
 def roster_for(
     school: School,
     class_obj: SchoolClass | None,
@@ -155,20 +177,11 @@ def roster_for(
     """
     if class_obj is None:
         return []
-    queryset = Enrollment.objects.filter(
-        school=school, status=Enrollment.Status.ACTIVE,
-    ).select_related('student', 'section')
-    if session is not None:
-        queryset = queryset.filter(academic_session=session)
-    if class_obj is not None:
-        queryset = queryset.filter(class_obj=class_obj)
-    if section is not None:
-        queryset = queryset.filter(section=section)
-    queryset = queryset.filter(student__status=Student.Status.ACTIVE)
+    queryset = _active_enrollments(school, class_obj, section, session)
 
     return [
         {
-            'id': str(item.student_id),
+            'id': str(item.student.public_id),
             'firstName': item.student.first_name,
             'lastName': item.student.last_name,
             'admissionNumber': item.student.admission_number,
@@ -196,8 +209,8 @@ def existing_marks(
         school=school, date=day,
     ).filter(
         Q(class_obj=class_obj) | Q(class_obj__isnull=True, class_name=class_obj.name)
-    )
-    return {str(record.student_id): record.status for record in queryset}
+    ).select_related('student')
+    return {str(record.student.public_id): record.status for record in queryset}
 
 
 # ── Submission ──────────────────────────────────────────────────────────────
@@ -233,9 +246,13 @@ def submit_register(
     if already:
         raise DuplicateRegister(already)
 
+    # Public id -> primary key, so a submitted `studentId` is mapped back to the
+    # real student and a crafted id for a pupil outside this class is skipped.
     roster = {
-        int(row['id'])
-        for row in roster_for(school, class_obj, section, academic_service.current_session(school))
+        str(enrollment.student.public_id): enrollment.student_id
+        for enrollment in _active_enrollments(
+            school, class_obj, section, academic_service.current_session(school),
+        )
     }
     if not roster:
         raise ValidationError({
@@ -249,12 +266,8 @@ def submit_register(
 
     for item in records:
         raw_id = item.get('studentId')
-        try:
-            student_id = int(raw_id)
-        except (TypeError, ValueError):
-            result.skipped += 1
-            continue
-        if student_id not in roster:
+        student_id = roster.get(str(raw_id)) if raw_id is not None else None
+        if student_id is None:
             result.skipped += 1
             continue
         mark = (item.get('status') or AttendanceRecord.Status.PRESENT).strip()

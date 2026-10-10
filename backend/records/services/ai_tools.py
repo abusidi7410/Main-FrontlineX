@@ -43,6 +43,7 @@ from . import announcements as announcement_service
 from . import attendance as attendance_service
 from . import billing, clearance
 from . import enrollment as enrollment_service
+from . import public_refs
 from . import timetable as timetable_service
 from ..models import (
     AttendanceRecord,
@@ -155,7 +156,7 @@ def search_students(user, *, search: str = '', limit: int = 25) -> dict:
     return {
         'students': [
             {
-                'id': str(student.id),
+                'id': str(student.public_id),
                 'name': f'{student.last_name}, {student.first_name}',
                 'admissionNumber': student.admission_number,
                 'className': student.class_name,
@@ -171,7 +172,7 @@ def get_student(user, *, student_id) -> dict:
     session = _current_session(user)
     enrollment = enrollment_service.get_active_enrollment(student, session) if session else None
     return {
-        'id': str(student.id),
+        'id': str(student.public_id),
         'name': f'{student.last_name}, {student.first_name}',
         'admissionNumber': student.admission_number,
         # Enrollment is the source of truth; class_name is only a mirror.
@@ -266,7 +267,7 @@ def get_absent_students(user, *, day: str, class_name: str | None = None) -> dic
 
     absent = [
         {
-            'studentId': str(record.student_id),
+            'studentId': str(record.student.public_id),
             'student': f'{record.student.last_name}, {record.student.first_name}',
             'admissionNumber': record.student.admission_number,
             'className': record.class_name,
@@ -310,15 +311,15 @@ def get_chronic_absence(user, *, minimum_absences: int = 5, days: int = 30) -> d
             date__gte=since,
             status=AttendanceRecord.Status.ABSENT,
         )
-        .values('student_id', 'student__first_name', 'student__last_name',
-                'student__admission_number')
+        .values('student_id', 'student__public_id', 'student__first_name',
+                'student__last_name', 'student__admission_number')
         .annotate(absences=Count('pk'))
         .filter(absences__gte=floor)
         .order_by('-absences')
     )
     students = [
         {
-            'studentId': str(row['student_id']),
+            'studentId': str(row['student__public_id']),
             'student': f'{row["student__last_name"]}, {row["student__first_name"]}',
             'admissionNumber': row['student__admission_number'],
             'absences': row['absences'],
@@ -520,7 +521,7 @@ def get_my_children(user) -> dict:
     return {
         'children': [
             {
-                'id': str(student.id),
+                'id': str(student.public_id),
                 'name': f'{student.last_name}, {student.first_name}',
                 'className': student.class_name,
                 'status': student.status,
@@ -540,7 +541,7 @@ def get_my_profile(user) -> dict:
     session = _current_session(user)
     enrollment = enrollment_service.get_active_enrollment(profile, session) if session else None
     return {
-        'id': str(profile.id),
+        'id': str(profile.public_id),
         'name': f'{profile.last_name}, {profile.first_name}',
         'admissionNumber': profile.admission_number,
         # Enrollment, not the mirror column, is the class of record.
@@ -554,7 +555,11 @@ def _today() -> date:
 
 
 def _student_or_throw(user, student_id) -> Student:
-    student = Student.objects.filter(school_id=user.school_id, id=student_id).first()
+    public_id = public_refs.parse_public_id(student_id)
+    student = (
+        Student.objects.filter(school_id=user.school_id, public_id=public_id).first()
+        if public_id is not None else None
+    )
     if student is None:
         raise ValidationError({'studentId': 'No such student in this school.'})
     return student
@@ -763,7 +768,7 @@ def _check_scope(user, tool: Tool, arguments: dict) -> None:
     arguments = arguments or {}
 
     if tool.scope == SCOPE_OWN_CHILDREN:
-        allowed = {str(student.id) for student in children_of(user)}
+        allowed = {str(student.public_id) for student in children_of(user)}
         student_id = arguments.get('student_id')
         if student_id is not None and str(student_id) not in allowed:
             raise PermissionDenied('You can only ask about your own children.')

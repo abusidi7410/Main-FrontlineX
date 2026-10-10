@@ -133,7 +133,7 @@ def record_scores(sheet: ResultSheet, scores: dict) -> int:
         })
 
     existing = {
-        str(entry.student_id): entry for entry in sheet.entries.select_related('student')
+        str(entry.student.public_id): entry for entry in sheet.entries.select_related('student')
     }
     updated = 0
     for student_id, raw_score in (scores or {}).items():
@@ -164,7 +164,7 @@ def record_term_scores(sheet: ResultSheet, scores: dict) -> int:
         })
 
     entries = {
-        str(entry.student_id): entry
+        str(entry.student.public_id): entry
         for entry in sheet.entries.select_related('student')
     }
     changed = []
@@ -340,7 +340,7 @@ def sheet_detail(sheet: ResultSheet) -> dict:
         'correctionReason': sheet.correction_reason if sheet.correction_requested_at else '',
         'rows': [
             {
-                'studentId': str(entry.student_id),
+                'studentId': str(entry.student.public_id),
                 'studentName': f'{entry.student.last_name}, {entry.student.first_name}',
                 'ca1': float(entry.ca1) if entry.ca1 is not None else None,
                 'ca2': float(entry.ca2) if entry.ca2 is not None else None,

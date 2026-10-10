@@ -70,7 +70,7 @@ class StudentListQueryCountTests(SecurityTestBase):
         self._seed(5)
         self.auth(self.admin)
         with CaptureQueriesContext(self.connection) as ctx:
-            resp = self.client.get(self.url(f'/students/{self.student.id}/'))
+            resp = self.client.get(self.url(f'/students/{self.student.public_id}/'))
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertLessEqual(
             len(ctx.captured_queries), 4,

@@ -130,7 +130,7 @@ class ResultsTeacherScopeTests(SecurityTestBase):
         self.auth(self.subject_teacher)
         resp = self.client.post(
             self.url(f'/results/{sheet.id}/action/'),
-            {'action': 'scores', 'scores': {str(self.student.id): 75}},
+            {'action': 'scores', 'scores': {str(self.student.public_id): 75}},
             format='json',
         )
         self.assertEqual(resp.status_code, 200, resp.data)
@@ -155,7 +155,7 @@ class AdmissionNumberFrozenTests(SecurityTestBase):
     def test_patch_changing_the_admission_number_is_rejected(self):
         self.auth(self.admin)
         resp = self.client.patch(
-            self.url(f'/students/{self.student.id}/'),
+            self.url(f'/students/{self.student.public_id}/'),
             {'admissionNumber': 'SUA/CHANGED/1'},
             format='json',
         )
@@ -167,7 +167,7 @@ class AdmissionNumberFrozenTests(SecurityTestBase):
     def test_patch_repeating_the_same_number_is_allowed(self):
         self.auth(self.admin)
         resp = self.client.patch(
-            self.url(f'/students/{self.student.id}/'),
+            self.url(f'/students/{self.student.public_id}/'),
             {'admissionNumber': 'SUA/JSS/2026/000100', 'firstName': 'Amina'},
             format='json',
         )
@@ -189,12 +189,12 @@ class StaffDirectoryPrivacyTests(SecurityTestBase):
         self.auth(self.admin)
         resp = self.client.get(self.url('/staff/'))
         self.assertEqual(resp.status_code, 200)
-        row = next(r for r in resp.data if r['id'] == str(self.teacher_staff.id))
+        row = next(r for r in resp.data if r['id'] == str(self.teacher_staff.public_id))
         self.assertEqual(row['email'], 'teacher@success.example')
 
     def test_parent_staff_detail_has_no_contact_details(self):
         self.auth(self.parent)
-        resp = self.client.get(self.url(f'/staff/{self.teacher_staff.id}/'))
+        resp = self.client.get(self.url(f'/staff/{self.teacher_staff.public_id}/'))
         self.assertEqual(resp.status_code, 200)
         self.assertNotIn('email', resp.data)
         self.assertNotIn('phone', resp.data)
@@ -279,7 +279,7 @@ class TamperedSessionIsRejectedTests(SecurityTestBase):
         self.auth(self.parent)
         other_session = AcademicSession.objects.get(school=self.other_school)
         resp = self.client.get(
-            self.url(f'/reports/report-cards/{self.student.id}/'),
+            self.url(f'/reports/report-cards/{self.student.public_id}/'),
             {'sessionId': str(other_session.id)},
         )
         self.assertEqual(resp.status_code, 404)

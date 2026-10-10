@@ -374,8 +374,8 @@ class ConsequenceTests(RegistrationBillingTests):
         )
         self.assertEqual(r.status_code, 200, r.content)
         ids = [row['id'] for row in r.json()['results']]
-        self.assertNotIn(str(self.latest().id), ids)
-        self.assertIn(str(self.student.id), ids)
+        self.assertNotIn(str(self.latest().public_id), ids)
+        self.assertIn(str(self.student.public_id), ids)
 
     def test_paid_student_is_listed_as_active(self):
         self.register()
@@ -384,7 +384,7 @@ class ConsequenceTests(RegistrationBillingTests):
         r = self.client.get(
             self.url('/students/'), {'status': Student.Status.ACTIVE}, format='json',
         )
-        self.assertIn(str(self.latest().id), [row['id'] for row in r.json()['results']])
+        self.assertIn(str(self.latest().public_id), [row['id'] for row in r.json()['results']])
 
     def test_pending_student_is_still_visible_in_the_unfiltered_list(self):
         """The registrar must be able to see who is waiting on payment."""
@@ -392,7 +392,7 @@ class ConsequenceTests(RegistrationBillingTests):
         self.auth(self.admin)
         r = self.client.get(self.url('/students/'), format='json')
         self.assertEqual(r.status_code, 200, r.content)
-        self.assertIn(str(self.latest().id), [row['id'] for row in r.json()['results']])
+        self.assertIn(str(self.latest().public_id), [row['id'] for row in r.json()['results']])
 
 
 class ExistingStudentsUnaffectedTests(SecurityTestBase):

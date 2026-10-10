@@ -164,7 +164,7 @@ class AttendanceRosterTests(AttendanceFinanceTests):
         )
         data = resp.json()
         self.assertTrue(data['taken'])
-        self.assertEqual(data['existing'][str(self.student.id)], 'present')
+        self.assertEqual(data['existing'][str(self.student.public_id)], 'present')
 
 
 class AttendanceSubmitTests(AttendanceFinanceTests):
@@ -174,8 +174,8 @@ class AttendanceSubmitTests(AttendanceFinanceTests):
             'className': 'JSS 1',
             'date': '2026-09-18',
             'records': [
-                {'studentId': str(self.student.id), 'status': 'present'},
-                {'studentId': str(self.student_b.id), 'status': 'absent'},
+                {'studentId': str(self.student.public_id), 'status': 'present'},
+                {'studentId': str(self.student_b.public_id), 'status': 'absent'},
             ],
         }
         first = self.client.post(self._url('/attendance/'), payload, format='json')

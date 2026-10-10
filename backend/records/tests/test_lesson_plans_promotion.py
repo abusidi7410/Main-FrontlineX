@@ -277,17 +277,17 @@ class PromotionApiTests(SecurityTestBase):
         response = self.client.get(self.url('/promotion/classes/JSS 1/'))
         self.assertEqual(response.status_code, 200, response.data)
         by_id = {candidate['studentId']: candidate for candidate in response.data['candidates']}
-        self.assertEqual(by_id[str(self.student.pk)]['suggested'], 'promote')
-        self.assertEqual(by_id[str(conditional.pk)]['suggested'], 'conditional')
-        self.assertEqual(by_id[str(repeat.pk)]['suggested'], 'repeat')
-        self.assertEqual(by_id[str(conditional.pk)]['failedSubjects'], 1)
+        self.assertEqual(by_id[str(self.student.public_id)]['suggested'], 'promote')
+        self.assertEqual(by_id[str(conditional.public_id)]['suggested'], 'conditional')
+        self.assertEqual(by_id[str(repeat.public_id)]['suggested'], 'repeat')
+        self.assertEqual(by_id[str(conditional.public_id)]['failedSubjects'], 1)
 
     def test_apply_promote_creates_next_session_enrollment_and_preserves_history(self):
         self.record_performance(self.student, self.enrollment)
         self.auth(self.admin)
         response = self.client.post(
             self.url('/promotion/classes/JSS 1/apply/'),
-            {'decisions': {str(self.student.pk): 'promote'}},
+            {'decisions': {str(self.student.public_id): 'promote'}},
             format='json',
         )
         self.assertEqual(response.status_code, 200, response.data)
@@ -311,8 +311,8 @@ class PromotionApiTests(SecurityTestBase):
         response = self.client.post(
             self.url('/promotion/classes/JSS 1/apply/'),
             {'decisions': {
-                str(self.student.pk): 'repeat',
-                str(conditional.pk): 'conditional',
+                str(self.student.public_id): 'repeat',
+                str(conditional.public_id): 'conditional',
             }},
             format='json',
         )
@@ -330,7 +330,7 @@ class PromotionApiTests(SecurityTestBase):
         )
         self.assertEqual(repeated_enrollment.class_obj, self.jss1)
         self.assertIn('Promoted with conditions', conditional_enrollment.review_note)
-        student_detail = self.client.get(self.url(f'/students/{conditional.pk}/'))
+        student_detail = self.client.get(self.url(f'/students/{conditional.public_id}/'))
         self.assertEqual(student_detail.status_code, 200)
         self.assertTrue(any(
             history['reviewNote'].startswith('Promoted with conditions')
@@ -341,7 +341,7 @@ class PromotionApiTests(SecurityTestBase):
         self.auth(self.admin)
         response = self.client.post(
             self.url('/promotion/classes/JSS 1/apply/'),
-            {'decisions': {str(self.student.pk): 'review'}},
+            {'decisions': {str(self.student.public_id): 'review'}},
             format='json',
         )
         self.assertEqual(response.status_code, 200, response.data)
@@ -355,7 +355,7 @@ class PromotionApiTests(SecurityTestBase):
         self.auth(self.admin)
         response = self.client.post(
             self.url('/promotion/classes/SSS 3/apply/'),
-            {'decisions': {str(student.pk): 'promote'}},
+            {'decisions': {str(student.public_id): 'promote'}},
             format='json',
         )
         self.assertEqual(response.status_code, 200, response.data)
@@ -379,7 +379,7 @@ class PromotionApiTests(SecurityTestBase):
         )
         invalid_choice = self.client.post(
             self.url('/promotion/classes/JSS 1/apply/'),
-            {'decisions': {str(self.student.pk): 'skip'}},
+            {'decisions': {str(self.student.public_id): 'skip'}},
             format='json',
         )
         self.assertEqual(missing_student.status_code, 400)

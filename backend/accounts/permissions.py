@@ -30,6 +30,7 @@ ROLE_PERMISSIONS = {
         'accounts.read', 'accounts.write',
         'academics.read', 'academics.write',
         'attendance.read', 'attendance.write', 'attendance.correct',
+        'attendance.staff', 'attendance.staff.manage',
         'results.read', 'results.write', 'results.approve', 'results.publish',
         'finance.read', 'finance.write', 'finance.verify',
         'finance.structure', 'finance.invoice', 'finance.payment',
@@ -46,6 +47,7 @@ ROLE_PERMISSIONS = {
         'accounts.read', 'accounts.write',
         'academics.read', 'academics.write',
         'attendance.read', 'attendance.correct',
+        'attendance.staff', 'attendance.staff.manage',
         'results.read', 'results.approve',
         'timetable.read', 'lessonplans.read',
         'communication.read', 'communication.write',
@@ -56,6 +58,7 @@ ROLE_PERMISSIONS = {
     ],
     'teacher': [
         'students.read', 'attendance.read', 'attendance.write',
+        'attendance.staff',
         'results.read', 'results.write',
         'timetable.read', 'lessonplans.read', 'lessonplans.write',
         'communication.read', 'ai.teaching', 'class.read', 'class.write'
@@ -63,12 +66,14 @@ ROLE_PERMISSIONS = {
     'accountant': [
         'students.read', 'finance.read', 'finance.write', 'finance.verify',
         'finance.structure', 'finance.invoice', 'finance.payment',
+        'attendance.staff',
         'reports.read', 'ai.finance',
     ],
     'secretary': [
         'students.read', 'students.write', 'students.register',
         'accounts.read', 'accounts.write',
-        'attendance.read', 'communication.read', 'communication.write',
+        'attendance.read', 'attendance.staff',
+        'communication.read', 'communication.write',
     ],
     'parent': ['ai.parent', 'attendance.read'],
     'student': ['ai.student', 'attendance.read'],

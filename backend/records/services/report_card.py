@@ -216,7 +216,7 @@ def build_report_card(student: Student, *, session=None, term: str = '') -> dict
     position = None
     mine = None
     for index, row in enumerate(ranked):
-        if row['studentId'] == str(student.pk):
+        if row['studentId'] == str(student.public_id):
             # Ties share a rank: two children on 78.5% are both 1st.
             rank = index + 1
             while rank > 1 and ranked[rank - 2]['average'] == row['average']:
@@ -226,7 +226,7 @@ def build_report_card(student: Student, *, session=None, term: str = '') -> dict
             break
     if mine is None:
         mine = next(
-            (row for row in standings if row['studentId'] == str(student.pk)),
+            (row for row in standings if row['studentId'] == str(student.public_id)),
             None,
         )
 
@@ -253,7 +253,7 @@ def build_report_card(student: Student, *, session=None, term: str = '') -> dict
 
     return {
         'student': {
-            'id': str(student.pk),
+            'id': str(student.public_id),
             'name': f'{student.first_name} {student.last_name}'.strip(),
             'admissionNumber': student.admission_number,
             'className': enrollment.class_obj.name,

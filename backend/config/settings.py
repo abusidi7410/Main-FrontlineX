@@ -250,6 +250,25 @@ STUDENT_IMPORT_MAX_FILE_SIZE = env.int(
 STUDENT_IMPORT_MAX_ROWS = env.int('STUDENT_IMPORT_MAX_ROWS', default=10000)
 
 
+# ── Subscriptions & payments (Paystack) ─────────────────────────────────────
+
+# A newly registered school gets a free trial before any payment is due.
+REGISTRATION_TRIAL_DAYS = env.int('REGISTRATION_TRIAL_DAYS', default=7)
+# Length of a paid billing cycle. The product bills monthly on 30-day cycles.
+SUBSCRIPTION_PERIOD_DAYS = env.int('SUBSCRIPTION_PERIOD_DAYS', default=30)
+# The school-facing reactivation/grace window after a plan lapses, before the
+# platform steps in. Purely informational today; kept next to the other
+# subscription numbers so they are decided in one place.
+SUBSCRIPTION_GRACE_DAYS = env.int('SUBSCRIPTION_GRACE_DAYS', default=0)
+
+# Paystack keys are read from the environment and never committed. When the
+# secret key is unset the payment endpoints refuse to initialise a charge rather
+# than pretending one succeeded — a school must never be marked paid by default.
+PAYSTACK_SECRET_KEY = env('PAYSTACK_SECRET_KEY', default='')
+PAYSTACK_PUBLIC_KEY = env('PAYSTACK_PUBLIC_KEY', default='')
+PAYSTACK_BASE_URL = env('PAYSTACK_BASE_URL', default='https://api.paystack.co')
+
+
 # ── Rate limiting (centralized Redis sliding-window counter) ────────────────
 
 # Redis connection for the rate limiter. Falls back to the main REDIS_URL so a

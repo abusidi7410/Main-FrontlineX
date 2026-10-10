@@ -73,8 +73,8 @@ class DailyAttendanceTests(SecurityTestBase):
             'className': 'JSS 1',
             'date': '2026-09-18',
             'records': [
-                {'studentId': str(self.student.id), 'status': 'present'},
-                {'studentId': str(self.student_b.id), 'status': 'absent'},
+                {'studentId': str(self.student.public_id), 'status': 'present'},
+                {'studentId': str(self.student_b.public_id), 'status': 'absent'},
             ],
         }
         payload.update(overrides)
@@ -99,14 +99,14 @@ class DailyAttendanceTests(SecurityTestBase):
 
         second = self.register(
             date='2026-09-18',
-            records=[{'studentId': str(self.student.id), 'status': 'absent'}],
+            records=[{'studentId': str(self.student.public_id), 'status': 'absent'}],
         )
         self.assertEqual(second.status_code, 409, second.content)
         # The 409 hands back what is already recorded, so the client can display
         # the taken register instead of starting a fresh one.
         body = second.json()
         self.assertTrue(body['taken'])
-        self.assertEqual(body['existing'][str(self.student.id)], 'present')
+        self.assertEqual(body['existing'][str(self.student.public_id)], 'present')
         self.assertEqual(AttendanceRecord.objects.count(), 2)
 
     def test_the_same_day_in_a_different_class_is_allowed(self):
@@ -119,7 +119,7 @@ class DailyAttendanceTests(SecurityTestBase):
             {
                 'className': 'JSS 2',
                 'date': '2026-09-18',
-                'records': [{'studentId': str(self.student.id), 'status': 'present'}],
+                'records': [{'studentId': str(self.student.public_id), 'status': 'present'}],
             },
             format='json',
         )
@@ -129,8 +129,8 @@ class DailyAttendanceTests(SecurityTestBase):
     def test_a_duplicated_student_in_one_payload_is_rejected(self):
         self.auth(self.admin)
         resp = self.register(records=[
-            {'studentId': str(self.student.id), 'status': 'present'},
-            {'studentId': str(self.student.id), 'status': 'absent'},
+            {'studentId': str(self.student.public_id), 'status': 'present'},
+            {'studentId': str(self.student.public_id), 'status': 'absent'},
         ])
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertFalse(AttendanceRecord.objects.exists())
@@ -138,8 +138,8 @@ class DailyAttendanceTests(SecurityTestBase):
     def test_an_invalid_status_is_rejected_and_nothing_is_written(self):
         self.auth(self.admin)
         resp = self.register(records=[
-            {'studentId': str(self.student.id), 'status': 'present'},
-            {'studentId': str(self.student_b.id), 'status': 'invented'},
+            {'studentId': str(self.student.public_id), 'status': 'present'},
+            {'studentId': str(self.student_b.public_id), 'status': 'invented'},
         ])
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertFalse(AttendanceRecord.objects.exists())
@@ -148,7 +148,7 @@ class DailyAttendanceTests(SecurityTestBase):
         self.auth(self.admin)
         resp = self.register(
             className='SSS 1',
-            records=[{'studentId': str(self.student.id), 'status': 'present'}],
+            records=[{'studentId': str(self.student.public_id), 'status': 'present'}],
         )
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertFalse(AttendanceRecord.objects.exists())
@@ -364,7 +364,7 @@ class DailyAttendanceTests(SecurityTestBase):
         self.assertEqual(
             self.register(
                 date='2026-09-21',
-                records=[{'studentId': str(self.student.id), 'status': 'absent'}],
+                records=[{'studentId': str(self.student.public_id), 'status': 'absent'}],
             ).status_code,
             201,
         )
@@ -382,10 +382,10 @@ class DailyAttendanceTests(SecurityTestBase):
         self.assertEqual(self.register().status_code, 201)
 
         body = self.client.get(
-            self.url('/attendance/history/'), {'studentId': str(self.student.id)},
+            self.url('/attendance/history/'), {'studentId': str(self.student.public_id)},
         ).json()
         self.assertEqual(len(body['records']), 1)
-        self.assertEqual(body['records'][0]['studentId'], str(self.student.id))
+        self.assertEqual(body['records'][0]['studentId'], str(self.student.public_id))
 
     def test_history_is_paginated_before_serialization(self):
         self.auth(self.admin)
@@ -393,7 +393,7 @@ class DailyAttendanceTests(SecurityTestBase):
         self.assertEqual(
             self.register(
                 date='2026-09-21',
-                records=[{'studentId': str(self.student.id), 'status': 'absent'}],
+                records=[{'studentId': str(self.student.public_id), 'status': 'absent'}],
             ).status_code,
             201,
         )
@@ -425,7 +425,7 @@ class DailyAttendanceTests(SecurityTestBase):
     def test_history_never_reaches_another_schools_student(self):
         self.auth(self.admin)
         resp = self.client.get(
-            self.url('/attendance/history/'), {'studentId': str(self.other_student.id)},
+            self.url('/attendance/history/'), {'studentId': str(self.other_student.public_id)},
         )
         self.assertEqual(resp.status_code, 404, resp.content)
 
@@ -467,7 +467,7 @@ class DailyAttendanceTests(SecurityTestBase):
 
         self.auth(self.teacher)
         body = self.client.get(
-            self.url('/attendance/history/'), {'studentId': str(self.student.id)},
+            self.url('/attendance/history/'), {'studentId': str(self.student.public_id)},
         ).json()
         self.assertEqual(len(body['records']), 1)
 
@@ -530,7 +530,7 @@ class DailyAttendanceTests(SecurityTestBase):
             self.url('/attendance/roster/'), {'className': 'JSS 1', 'date': '2026-09-18'},
         ).json()
         self.assertTrue(body['taken'])
-        self.assertEqual(body['existing'][str(self.student.id)], 'present')
+        self.assertEqual(body['existing'][str(self.student.public_id)], 'present')
 
 
 class ClassTeacherAssignmentTests(SecurityTestBase):
@@ -591,7 +591,7 @@ class ClassTeacherDesignationTests(SecurityTestBase):
             class_obj=self.jss2, academic_session=self.session,
         ).delete()
         self.auth(self.admin)
-        resp = self.designate('JSS 2', self.subject_staff.id)
+        resp = self.designate('JSS 2', self.subject_staff.public_id)
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual(resp.json()['staffName'], 'Subject Teacher')
 
@@ -620,7 +620,7 @@ class ClassTeacherDesignationTests(SecurityTestBase):
             {
                 'className': 'JSS 2',
                 'date': '2026-09-18',
-                'records': [{'studentId': str(jss2_student.id), 'status': 'present'}],
+                'records': [{'studentId': str(jss2_student.public_id), 'status': 'present'}],
             },
             format='json',
         )
@@ -633,17 +633,17 @@ class ClassTeacherDesignationTests(SecurityTestBase):
             class_obj=self.jss2, academic_session=self.session,
         ).delete()
         self.auth(self.admin)
-        self.designate('JSS 2', self.subject_staff.id)
+        self.designate('JSS 2', self.subject_staff.public_id)
 
         self.subject_staff.refresh_from_db()
         self.assertIn('JSS 2', self.subject_staff.classes)
 
     def test_reassigning_replaces_the_previous_teacher(self):
         self.auth(self.admin)
-        first = self.designate('JSS 2', self.subject_staff.id)
+        first = self.designate('JSS 2', self.subject_staff.public_id)
         self.assertEqual(first.status_code, 200, first.content)
 
-        second = self.designate('JSS 2', self.teacher_staff.id)
+        second = self.designate('JSS 2', self.teacher_staff.public_id)
         self.assertEqual(second.status_code, 200, second.content)
         self.assertEqual(
             ClassTeacherAssignment.objects.get(
@@ -660,7 +660,7 @@ class ClassTeacherDesignationTests(SecurityTestBase):
 
     def test_clearing_a_designation(self):
         self.auth(self.admin)
-        self.assertEqual(self.designate('JSS 2', self.subject_staff.id).status_code, 200)
+        self.assertEqual(self.designate('JSS 2', self.subject_staff.public_id).status_code, 200)
 
         cleared = self.designate('JSS 2', assign=False)
         self.assertEqual(cleared.status_code, 200, cleared.content)
@@ -670,7 +670,7 @@ class ClassTeacherDesignationTests(SecurityTestBase):
 
     def test_a_secretary_cannot_designate_a_class_teacher(self):
         self.auth(self.secretary)
-        resp = self.designate('JSS 2', self.subject_staff.id)
+        resp = self.designate('JSS 2', self.subject_staff.public_id)
         self.assertEqual(resp.status_code, 403, resp.content)
         self.assertFalse(
             ClassTeacherAssignment.objects.filter(class_obj=self.jss2).exists(),
@@ -678,7 +678,7 @@ class ClassTeacherDesignationTests(SecurityTestBase):
 
     def test_a_teacher_cannot_designate_themselves(self):
         self.auth(self.teacher)
-        resp = self.designate('JSS 2', self.subject_staff.id)
+        resp = self.designate('JSS 2', self.subject_staff.public_id)
         self.assertEqual(resp.status_code, 403, resp.content)
 
     def test_a_non_teacher_cannot_be_designated(self):
@@ -690,7 +690,7 @@ class ClassTeacherDesignationTests(SecurityTestBase):
             status=SM.Status.ACTIVE,
         )
         self.auth(self.admin)
-        resp = self.designate('JSS 2', accountant_staff.id)
+        resp = self.designate('JSS 2', accountant_staff.public_id)
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertFalse(
             ClassTeacherAssignment.objects.filter(class_obj=self.jss2).exists(),
@@ -703,12 +703,12 @@ class ClassTeacherDesignationTests(SecurityTestBase):
             status=StaffMember.Status.ACTIVE,
         )
         self.auth(self.admin)
-        resp = self.designate('JSS 2', other_staff.id)
+        resp = self.designate('JSS 2', other_staff.public_id)
         self.assertEqual(resp.status_code, 404, resp.content)
 
     def test_designating_an_unknown_class_is_rejected(self):
         self.auth(self.admin)
-        resp = self.designate('Nonexistent Class', self.subject_staff.id)
+        resp = self.designate('Nonexistent Class', self.subject_staff.public_id)
         self.assertEqual(resp.status_code, 400, resp.content)
 
     def test_the_assignment_list_is_scoped_to_the_school_and_session(self):

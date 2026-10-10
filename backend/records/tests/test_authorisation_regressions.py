@@ -70,24 +70,22 @@ class StaffWriteIsCapabilityGuarded(TestCase):
 
     def test_student_cannot_delete_staff(self):
         self._login('student')
-        r = self.client.delete(f'/api/v1/staff/{self.member.id}/')
+        r = self.client.delete(f'/api/v1/staff/{self.member.public_id}/')
         self.assertEqual(r.status_code, 403)
         self.assertTrue(StaffMember.objects.filter(id=self.member.id).exists())
 
     def test_teacher_cannot_delete_staff(self):
         self._login('teacher')
-        r = self.client.delete(f'/api/v1/staff/{self.member.id}/')
+        r = self.client.delete(f'/api/v1/staff/{self.member.public_id}/')
         self.assertEqual(r.status_code, 403)
         self.assertTrue(StaffMember.objects.filter(id=self.member.id).exists())
-
-    def test_school_admin_can_still_create_and_delete_staff(self):
         """The fix must not lock out the roles that legitimately own staff."""
         self._login('school_admin')
         created = self.client.post('/api/v1/staff/', {
             'fullName': 'Legit New Teacher', 'email': 'new@x.com', 'phone': '08022222222',
         }, format='json')
         self.assertEqual(created.status_code, 201)
-        removed = self.client.delete(f'/api/v1/staff/{self.member.id}/')
+        removed = self.client.delete(f'/api/v1/staff/{self.member.public_id}/')
         self.assertEqual(removed.status_code, 204)
         self.assertFalse(StaffMember.objects.filter(id=self.member.id).exists())
 

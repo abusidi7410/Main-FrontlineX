@@ -1,4 +1,5 @@
 import datetime
+import uuid
 from decimal import Decimal
 
 from django.db import models
@@ -238,6 +239,10 @@ class Student(models.Model):
         IMPORTED = 'imported', 'Imported'
 
     school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='students')
+    # Opaque, non-sequential identifier used in URLs and API responses. The
+    # internal integer PK stays the real key for FKs and joins; this is the only
+    # id any client ever sees, so sequential ids cannot be enumerated or guessed.
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
     admission_number = models.CharField(max_length=30)
     # Provenance of the identifier (spec §54). Purely informational: it never
     # changes how the number is generated or validated.
@@ -303,6 +308,8 @@ class StaffMember(models.Model):
         SUSPENDED = 'suspended', 'Suspended'
 
     school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='staff')
+    # Public, non-guessable identifier (see `Student.public_id`).
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
     full_name = models.CharField(max_length=200)
     email = models.EmailField(blank=True, default='')
     phone = models.CharField(max_length=20, blank=True, default='')
@@ -374,6 +381,68 @@ class AttendanceRecord(models.Model):
 
     def __str__(self):
         return f'{self.student_id} {self.date} {self.status}'
+
+
+class StaffAttendance(models.Model):
+    """A staff member's own check-in for one school day, with GPS evidence.
+
+    Separate from the student `AttendanceRecord` register: a teacher marks
+    pupils present/absent, while this records that the teacher themselves
+    turned up, and *where* they were when they did. One row per staff member
+    per school day (enforced by a unique constraint), so a second tap updates
+    the existing check-in rather than creating a duplicate.
+
+    `status` is derived from the distance between the check-in and the school's
+    stored coordinates, tempered by the device accuracy. It is stored rather
+    than recomputed so a later change to the school's radius does not rewrite
+    history.
+    """
+
+    class Status(models.TextChoices):
+        AT_SCHOOL = 'at_school', 'At school'
+        OUTSIDE = 'outside', 'Outside the campus'
+        UNVERIFIED = 'unverified', 'Location unavailable'
+        PENDING_REVIEW = 'pending_review', 'Pending review'
+
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='staff_attendance')
+    staff = models.ForeignKey(
+        StaffMember, on_delete=models.CASCADE, related_name='attendance',
+    )
+    # Public, non-guessable identifier (see `Student.public_id`).
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    date = models.DateField()
+    check_in_at = models.DateTimeField()
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    accuracy_meters = models.FloatField(null=True, blank=True)
+    # Straight-line distance from the school's coordinates, in metres.
+    distance_meters = models.FloatField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices)
+    notes = models.CharField(max_length=280, blank=True, default='')
+    reviewed_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.CharField(max_length=280, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date', '-check_in_at']
+        constraints = [
+            # One check-in per staff member per school day. This is what makes a
+            # duplicate tap an update, not a second row.
+            models.UniqueConstraint(
+                fields=['staff', 'date'], name='unique_staff_attendance_per_day'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['school', 'date']),
+            models.Index(fields=['school', 'status', 'date']),
+        ]
+
+    def __str__(self):
+        return f'{self.staff_id} {self.date} {self.status}'
 
 
 class ClassTeacherAssignment(models.Model):

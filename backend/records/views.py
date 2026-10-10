@@ -42,6 +42,7 @@ from .models import (
     ResultSheet,
     SchoolClass,
     Section,
+    StaffAttendance,
     StaffMember,
     Student,
     TimetableEntry,
@@ -58,11 +59,13 @@ from .services import enrollment as enrollment_service
 from .services import events as event_service
 from .services import parent_portal as parent_portal_service
 from .services import policy as policy_service
-from .services import reporting as reporting_service
 from .services import promotion as promotion_service
+from .services import public_refs
 from .services import registration as registration_service
 from .services import report_card as report_card_service
+from .services import reporting as reporting_service
 from .services import results as result_service
+from .services import staff_attendance as staff_attendance_service
 from .services import timetable as timetable_service
 from .student_import import (
     StudentImportError,
@@ -74,6 +77,8 @@ from .serializers import (
     AttendanceSubmitSerializer,
     InvoiceSerializer,
     PaymentSerializer,
+    StaffAttendanceReviewSerializer,
+    StaffCheckInSerializer,
     StaffMemberSerializer,
     StudentSerializer,
 )
@@ -99,6 +104,11 @@ CanReadAttendance = require_permissions('attendance.read')
 CanWriteAttendance = require_permissions('attendance.write')
 # Amending an already-taken register is a supervisory act, distinct from taking it.
 CanCorrectAttendance = require_permissions('attendance.correct')
+
+# Staff check-in is the "I am here" gesture, open to every staff role. Seeing
+# *everyone's* check-ins and reviewing uncertain ones is a supervisory act.
+CanCheckInStaffAttendance = require_permissions('attendance.staff')
+CanManageStaffAttendance = require_permissions('attendance.staff.manage')
 
 # Staff records and the school's class/subject configuration are writable
 # capabilities, not a consequence of merely being logged in. `HasSchool` alone
@@ -315,7 +325,9 @@ class StudentPromotionView(APIView):
 
     def post(self, request, pk):
         school = request.user.school
-        student = get_object_or_404(Student, id=pk, school_id=school.id)
+        student = get_object_or_404(
+            Student, public_id=public_refs.required_public_id(pk), school_id=school.id,
+        )
 
         to_session = get_object_or_404(
             AcademicSession.objects.filter(school_id=school.id),
@@ -353,12 +365,12 @@ class StudentPromotionView(APIView):
             log_audit(
                 request, 'student.promoted', target='Student',
                 detail=f'{from_session.name} {student.class_name} -> {to_session.name} {to_class.name}',
-                entity='student', entity_id=str(student.pk),
+                entity='student', entity_id=str(student.public_id),
                 after={'session': to_session.name, 'class': to_class.name},
             )
 
         return Response({
-            'studentId': str(student.pk),
+            'studentId': str(student.public_id),
             'enrollmentId': str(promoted.pk),
             'session': to_session.name,
             'className': to_class.name,
@@ -472,7 +484,7 @@ class StudentListCreateView(APIView):
         log_audit(
             request, 'student.register', target='Student',
             detail=f'{student.first_name} {student.last_name} ({student.admission_number}) - {student.class_name}',
-            entity='student', entity_id=str(student.pk),
+            entity='student', entity_id=str(student.public_id),
             after={
                 'class': student.class_name,
                 'status': student.status,
@@ -551,7 +563,10 @@ class StudentDetailView(APIView):
         return [IsAuthenticated(), HasSchool(), require_permissions('students.read')()]
 
     def get_object(self, request, pk):
-        return get_object_or_404(_student_queryset(request.user.school_id), id=pk)
+        return get_object_or_404(
+            _student_queryset(request.user.school_id),
+            public_id=public_refs.required_public_id(pk),
+        )
 
     def get(self, request, pk):
         student = self.get_object(request, pk)
@@ -637,7 +652,10 @@ class StudentTransferView(APIView):
     def post(self, request, pk):
         # Source: scoped to the caller's school, so "School A user → School B
         # student" is a 404, not a transfer.
-        student = get_object_or_404(Student, id=pk, school_id=request.user.school_id)
+        student = get_object_or_404(
+            Student, public_id=public_refs.required_public_id(pk),
+            school_id=request.user.school_id,
+        )
 
         if student.status == Student.Status.TRANSFERRED:
             raise ValidationError({
@@ -731,7 +749,7 @@ class StudentTransferView(APIView):
             log_audit(
                 request, 'student.transferred', target='Student',
                 detail=f'{previous.class_obj.name if previous else student.class_name} -> {target_class.name}',
-                entity='student', entity_id=str(student.pk),
+                entity='student', entity_id=str(student.public_id),
                 before={
                     'class': previous.class_obj.name if previous else student.class_name,
                     'section': previous.section.name if previous and previous.section_id else '',
@@ -884,7 +902,10 @@ class StaffDetailView(APIView):
     permission_classes = [IsAuthenticated, HasSchool]
 
     def get_object(self, request, pk):
-        return get_object_or_404(StaffMember, id=pk, school_id=request.user.school_id)
+        return get_object_or_404(
+            StaffMember, public_id=public_refs.required_public_id(pk),
+            school_id=request.user.school_id,
+        )
 
     def get(self, request, pk):
         row = StaffMemberSerializer(self.get_object(request, pk)).data
@@ -935,7 +956,7 @@ class ClassTeacherAssignmentView(APIView):
                 {
                     'className': row.class_obj.name,
                     'classId': row.class_obj_id,
-                    'staffId': row.staff_id,
+                    'staffId': str(row.staff.public_id),
                     'staffName': row.staff.full_name,
                     'session': row.academic_session.name,
                 }
@@ -965,8 +986,13 @@ class ClassTeacherAssignmentView(APIView):
             return Response({'className': class_obj.name, 'classTeacher': ''})
 
         staff_id = (request.data.get('staffId') or '').strip()
-        staff = get_object_or_404(
-            StaffMember, id=staff_id, school_id=school.id,
+        # A staff member from another school - or a staffId that is not a UUID
+        # at all - answers 404 just like a member that does not exist.
+        staff = (
+            get_object_or_404(
+                StaffMember, public_id=public_refs.required_public_id(staff_id),
+                school_id=school.id,
+            )
         ) if staff_id else None
         if staff is None:
             raise ValidationError({'staffId': 'Choose the teacher responsible for this class.'})
@@ -981,7 +1007,7 @@ class ClassTeacherAssignmentView(APIView):
         return Response({
             'className': class_obj.name,
             'classId': class_obj.id,
-            'staffId': assignment.staff_id,
+            'staffId': str(assignment.staff.public_id),
             'staffName': assignment.staff.full_name,
         })
 
@@ -990,7 +1016,10 @@ class StaffInviteView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, CanWriteRecords]
 
     def post(self, request, pk):
-        member = get_object_or_404(StaffMember, id=pk, school_id=request.user.school_id)
+        member = get_object_or_404(
+            StaffMember, public_id=public_refs.required_public_id(pk),
+            school_id=request.user.school_id,
+        )
         if member.status == StaffMember.Status.INVITED:
             return Response(StaffMemberSerializer(member).data)
         member.status = StaffMember.Status.INVITED
@@ -1017,7 +1046,10 @@ class InvoiceListView(APIView):
                 )
             student_id = request.query_params.get('studentId', '').strip()
             if student_id:
-                qs = qs.filter(student_id=student_id)
+                student_uid = public_refs.parse_public_id(student_id)
+                qs = qs.filter(
+                    student__public_id=student_uid,
+                ) if student_uid is not None else qs.none()
         else:
             # Self-service: a student sees only their own invoices.
             qs = qs.filter(student_id=request.user.student_profile_id)
@@ -1363,7 +1395,10 @@ class PaymentListView(APIView):
             if invoice_id:
                 qs = qs.filter(invoice_id=invoice_id)
             if student_id:
-                qs = qs.filter(invoice__student_id=student_id)
+                student_uid = public_refs.parse_public_id(student_id)
+                qs = qs.filter(
+                    invoice__student__public_id=student_uid,
+                ) if student_uid is not None else qs.none()
         return Response(_paginate(qs, request, PaymentSerializer, context={'request': request}))
 
     def post(self, request):
@@ -1740,7 +1775,7 @@ class _MyPublishedResultSerializer(_ResultEntryReportSerializer):
     def to_representation(self, entry):
         return {
             **super().to_representation(entry),
-            'studentId': str(entry.student_id),
+            'studentId': str(entry.student.public_id),
             'session': entry.sheet.academic_session.name,
         }
 
@@ -1848,7 +1883,7 @@ class ParentChildAttendanceView(APIView):
             date_from=_optional_date(params.get('dateFrom'), 'dateFrom'),
             date_to=_optional_date(params.get('dateTo'), 'dateTo'),
         )
-        data['studentId'] = str(child.pk)
+        data['studentId'] = str(child.public_id)
         data['studentName'] = f'{child.first_name} {child.last_name}'.strip()
         data['session'] = session.name if session is not None else ''
         return Response(data)
@@ -1904,17 +1939,18 @@ class ReportCardView(APIView):
                 raise PermissionDenied(ParentPortalAccess.message)
             return policy_service.require_linked_child(user, student_id)
         if user.role == User.Role.STUDENT:
-            if str(getattr(user, 'student_profile_id', '') or '') != str(student_id):
+            profile = getattr(user, 'student_profile', None)
+            if profile is None or str(profile.public_id) != str(student_id):
                 raise Http404
-            student = Student.objects.filter(school_id=user.school_id, pk=student_id).first()
-            if student is None:
-                raise Http404
-            return student
+            return profile
         # Staff: the report card is one of the artefacts `reports.read` exists
         # to provide; a teacher with only result-entry rights cannot reach it.
         if not has_permission(user.role, 'reports.read'):
             raise PermissionDenied('Report cards require the reports permission.')
-        student = Student.objects.filter(school_id=user.school_id, pk=student_id).first()
+        student = Student.objects.filter(
+            school_id=user.school_id,
+            public_id=public_refs.required_public_id(student_id),
+        ).first()
         if student is None:
             raise Http404
         return student
@@ -2420,7 +2456,8 @@ class AttendanceHistoryView(APIView):
         if student_id:
             # School-scoped, so a student from another school is a 404 here.
             student = get_object_or_404(
-                Student.objects.filter(school_id=school.id), pk=student_id,
+                Student.objects.filter(school_id=school.id),
+                public_id=public_refs.required_public_id(student_id),
             )
 
         raw_date_from = params.get('dateFrom', '').strip()
@@ -2461,7 +2498,7 @@ class AttendanceHistoryView(APIView):
             'records': [
                 {
                     'id': record.id,
-                    'studentId': str(record.student_id),
+                    'studentId': str(record.student.public_id),
                     'studentName': f'{record.student.first_name} {record.student.last_name}'.strip(),
                     'admissionNumber': record.student.admission_number,
                     'className': record.class_name,
@@ -2517,6 +2554,192 @@ class AttendanceCorrectView(APIView):
             after={'status': change['status']},
         )
         return Response({'changed': True, **change})
+
+
+# ── Staff (teacher) attendance ──────────────────────────────────────────────
+
+def _staff_attendance_row(record):
+    """The wire shape for one staff check-in: camelCase, human-readable."""
+    return {
+        'id': str(record.public_id),
+        'staffId': str(record.staff.public_id),
+        'staffName': record.staff.full_name,
+        'role': record.staff.role,
+        'date': record.date.isoformat(),
+        'checkInAt': record.check_in_at.isoformat(),
+        'latitude': float(record.latitude) if record.latitude is not None else None,
+        'longitude': float(record.longitude) if record.longitude is not None else None,
+        'accuracy': record.accuracy_meters,
+        'distanceMeters': record.distance_meters,
+        'status': record.status,
+        'notes': record.notes,
+        'reviewedBy': record.reviewed_by.get_full_name() if record.reviewed_by else '',
+        'reviewedAt': record.reviewed_at.isoformat() if record.reviewed_at else None,
+        'reviewNote': record.review_note,
+    }
+
+
+class StaffAttendanceCheckInView(APIView):
+    """POST /attendance/check-in/ — a staff member checks themselves in.
+
+    The staff record is taken from the caller's own account, never from the
+    payload, so nobody can check in on behalf of another member of staff. The
+    coordinates are optional (a device without a fix still records arrival) and
+    are verified against the school's stored campus location.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanCheckInStaffAttendance]
+
+    def post(self, request):
+        serializer = StaffCheckInSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        school = request.user.school
+        staff = staff_attendance_service.require_staff(request.user)
+
+        day = data.get('date')
+        if day is not None:
+            today_local = staff_attendance_service.local_day(school)
+            if day > today_local:
+                raise ValidationError({'date': 'A check-in cannot be dated in the future.'})
+            if (today_local - day).days > 14:
+                raise ValidationError({
+                    'date': 'A check-in older than two weeks cannot be recorded.',
+                })
+
+        record, created = staff_attendance_service.check_in(
+            user=request.user,
+            school=school,
+            staff=staff,
+            latitude=data.get('latitude'),
+            longitude=data.get('longitude'),
+            accuracy=data.get('accuracy'),
+            notes=data.get('notes', ''),
+            day=day,
+        )
+        log_audit(
+            request,
+            action='attendance.staff.check_in',
+            target=f'StaffAttendance {record.public_id}',
+            detail=f'{staff.full_name} checked in ({record.status})',
+            entity='StaffAttendance',
+            entity_id=str(record.public_id),
+            after={'status': record.status, 'distanceMeters': record.distance_meters},
+        )
+        return Response(
+            _staff_attendance_row(record),
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class StaffAttendanceListView(APIView):
+    """Staff check-ins for a day or a range.
+
+    An administrator (or principal) sees the whole school and may filter by
+    staff member, status or name. Everyone else only ever sees their own
+    check-ins, so a teacher cannot read a colleague's movements.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanCheckInStaffAttendance]
+
+    def get(self, request):
+        school = request.user.school
+        params = request.query_params
+        can_manage = has_permission(request.user.role, 'attendance.staff.manage')
+
+        if can_manage:
+            staff_filter = None
+            raw_staff = params.get('staffId', '').strip()
+            if raw_staff:
+                staff_filter = get_object_or_404(
+                    StaffMember.objects.filter(school_id=school.id),
+                    public_id=public_refs.required_public_id(raw_staff),
+                )
+            own_staff = None
+        else:
+            own_staff = getattr(request.user, 'staff_profile', None)
+            staff_filter = own_staff
+
+        raw_date = params.get('date', '').strip()
+        raw_from = params.get('dateFrom', '').strip()
+        raw_to = params.get('dateTo', '').strip()
+        day = parse_date(raw_date) if raw_date else None
+        day_from = parse_date(raw_from) if raw_from else None
+        day_to = parse_date(raw_to) if raw_to else None
+        if raw_date and day is None:
+            raise ValidationError({'date': 'Enter a valid date in YYYY-MM-DD format.'})
+        if raw_from and day_from is None:
+            raise ValidationError({'dateFrom': 'Enter a valid date in YYYY-MM-DD format.'})
+        if raw_to and day_to is None:
+            raise ValidationError({'dateTo': 'Enter a valid date in YYYY-MM-DD format.'})
+        if day_from and day_to and day_from > day_to:
+            raise ValidationError({'dateFrom': 'The start date cannot be after the end date.'})
+
+        statuses = []
+        for raw in params.getlist('status'):
+            for value in raw.split(','):
+                value = value.strip()
+                if value in set(StaffAttendance.Status.values):
+                    statuses.append(value)
+
+        queryset = staff_attendance_service.records_for(
+            school,
+            staff=staff_filter,
+            day=day,
+            day_from=day_from,
+            day_to=day_to,
+            statuses=statuses or None,
+            search=params.get('search', '').strip(),
+        )
+        page_records, count, page, page_size = _pagination_window(queryset, request)
+        return Response({
+            'records': [_staff_attendance_row(record) for record in page_records],
+            'count': count,
+            'page': page,
+            'pageSize': page_size,
+            'totalPages': max((count + page_size - 1) // page_size, 1),
+            'staffId': str(own_staff.public_id) if own_staff is not None else None,
+        })
+
+
+class StaffAttendanceReviewView(APIView):
+    """POST /attendance/staff-records/<public_id>/review/ — uphold or override.
+
+    Used for a check-in the distance check could not settle (``pending_review``
+    or ``unverified``): an administrator records the human decision, which is
+    audited with its before/after status.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanManageStaffAttendance]
+
+    def post(self, request, pk):
+        serializer = StaffAttendanceReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        school = request.user.school
+        record = get_object_or_404(
+            StaffAttendance.objects.filter(school_id=school.id),
+            public_id=public_refs.required_public_id(pk),
+        )
+        previous = record.status
+        staff_attendance_service.review(
+            user=request.user,
+            school=school,
+            record=record,
+            decision=data['decision'],
+            note=data.get('note', ''),
+        )
+        log_audit(
+            request,
+            action='attendance.staff.review',
+            target=f'StaffAttendance {record.public_id}',
+            detail=data.get('note', '') or f'Marked {record.status}',
+            entity='StaffAttendance',
+            entity_id=str(record.public_id),
+            before={'status': previous},
+            after={'status': record.status},
+        )
+        return Response(_staff_attendance_row(record))
 
 
 # ── Academics ──────────────────────────────────────────────────────────────
@@ -3697,7 +3920,7 @@ class PromotionApplyView(APIView):
                     student__status=Student.Status.ACTIVE,
                 ).select_related('student', 'section')
             )
-            current_ids = {str(row.student_id) for row in active_enrollments}
+            current_ids = {str(row.student.public_id) for row in active_enrollments}
             if current_ids != candidate_ids:
                 raise ValidationError({
                     'decisions': 'The class roster changed. Reload the candidates before applying decisions.',
@@ -3722,9 +3945,9 @@ class PromotionApplyView(APIView):
                     raise ValidationError({'targetSession': 'The next academic session is inactive.'})
             moving_ids = [
                 row.student_id for row in active_enrollments
-                if decisions[str(row.student_id)] != 'review'
+                if decisions[str(row.student.public_id)] != 'review'
                 and not (
-                    decisions[str(row.student_id)] == 'promote'
+                    decisions[str(row.student.public_id)] == 'promote'
                     and destination_class is None
                 )
             ]
@@ -3745,13 +3968,13 @@ class PromotionApplyView(APIView):
             candidate_by_id = {candidate['studentId']: candidate for candidate in candidates}
             for previous in active_enrollments:
                 student = previous.student
-                decision = decisions[str(student.pk)]
-                student_summary = candidate_by_id[str(student.pk)]
+                decision = decisions[str(student.public_id)]
+                student_summary = candidate_by_id[str(student.public_id)]
                 if decision == 'review':
                     result['underReview'] += 1
                     log_audit(
                         request, 'student.promotion_reviewed', target=student.admission_number,
-                        entity='student', entity_id=str(student.pk),
+                        entity='student', entity_id=str(student.public_id),
                         after={'decision': 'review', 'session': source.name},
                     )
                     continue
@@ -3767,7 +3990,7 @@ class PromotionApplyView(APIView):
                     log_audit(
                         request, 'student.graduated', target=student.admission_number,
                         detail=f'Graduated after {source.name}.',
-                        entity='student', entity_id=str(student.pk),
+                        entity='student', entity_id=str(student.public_id),
                         before={'className': school_class.name, 'session': source.name},
                         after={'status': Student.Status.GRADUATED, 'session': destination_name},
                     )
@@ -3813,7 +4036,7 @@ class PromotionApplyView(APIView):
                 log_audit(
                     request, 'student.promoted', target=student.admission_number,
                     detail=f'{source.name} {school_class.name} -> {target.name} {target_class.name}',
-                    entity='student', entity_id=str(student.pk),
+                    entity='student', entity_id=str(student.public_id),
                     before={'className': school_class.name, 'session': source.name},
                     after={
                         'decision': decision,

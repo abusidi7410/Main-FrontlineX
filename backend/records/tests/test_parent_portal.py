@@ -101,7 +101,7 @@ class ParentAccountProvisioningTests(SecurityTestBase):
         )
         self.auth(self.admin)
         response = self.client.patch(
-            self.url(f'/students/{student.id}/'),
+            self.url(f'/students/{student.public_id}/'),
             {'guardianName': 'Mrs Nwosu', 'guardianPhone': PHONE_A},
             format='json',
         )
@@ -131,7 +131,7 @@ class ParentAccountProvisioningTests(SecurityTestBase):
         first = User.objects.get(phone=PHONE_B)
         self.auth(self.admin)
         response = self.client.patch(
-            self.url(f'/students/{self.student.id}/'),
+            self.url(f'/students/{self.student.public_id}/'),
             {'guardianPhone': PHONE_C},
             format='json',
         )
@@ -217,7 +217,7 @@ class ParentChildrenTests(SecurityTestBase):
         self.assertEqual(body['count'], 2)
         self.assertEqual(
             {row['id'] for row in body['results']},
-            {str(self.student.id), str(second.id)},
+            {str(self.student.public_id), str(second.public_id)},
         )
         for key in ('page', 'pageSize', 'totalPages'):
             self.assertIn(key, body)
@@ -261,7 +261,7 @@ class ParentChildEndpointGuardTests(SecurityTestBase):
             self.assertEqual(self.client.get(path).status_code, 404)
 
     def test_a_student_of_another_school_is_a_404(self):
-        for path in self._child_urls(self.other_student.id):
+        for path in self._child_urls(self.other_student.public_id):
             self.assertEqual(self.client.get(path).status_code, 404)
 
     def test_reports_require_a_linked_child(self):
@@ -271,7 +271,7 @@ class ParentChildEndpointGuardTests(SecurityTestBase):
         )
         self.assertEqual(
             self.client.get(
-                self.url(f'/reports/report-cards/{self.other_student.id}/')
+                self.url(f'/reports/report-cards/{self.other_student.public_id}/')
             ).status_code,
             404,
         )
@@ -297,7 +297,7 @@ class ParentAttendanceTests(SecurityTestBase):
         self._attendance(self.student, 23, AttendanceRecord.Status.EXCUSED)
         self._attendance(self.other_student, 18, AttendanceRecord.Status.ABSENT)
 
-        response = self.client.get(self.url(f'/parents/me/children/{self.student.id}/attendance/'))
+        response = self.client.get(self.url(f'/parents/me/children/{self.student.public_id}/attendance/'))
         self.assertEqual(response.status_code, 200, response.content)
         summary = response.json()['summary']
         self.assertEqual(summary['recorded'], 3)
@@ -318,7 +318,7 @@ class ParentAttendanceTests(SecurityTestBase):
         self._attendance(self.student, 21, AttendanceRecord.Status.ABSENT)
 
         response = self.client.get(
-            self.url(f'/parents/me/children/{self.student.id}/attendance/'),
+            self.url(f'/parents/me/children/{self.student.public_id}/attendance/'),
             {'dateFrom': '2026-09-20', 'dateTo': '2026-09-22'},
         )
         self.assertEqual(response.status_code, 200, response.content)
@@ -326,7 +326,7 @@ class ParentAttendanceTests(SecurityTestBase):
 
     def test_invalid_dates_are_a_400(self):
         response = self.client.get(
-            self.url(f'/parents/me/children/{self.student.id}/attendance/'),
+            self.url(f'/parents/me/children/{self.student.public_id}/attendance/'),
             {'dateFrom': 'not-a-date'},
         )
         self.assertEqual(response.status_code, 400)
@@ -350,7 +350,7 @@ class ParentPromotionTests(SecurityTestBase):
             term='First Term',
         )
         results_service.record_term_scores(sheet, {
-            str(self.student.id): {'ca1': 10, 'ca2': 10, 'assignment': 20, 'exam': 60},
+            str(self.student.public_id): {'ca1': 10, 'ca2': 10, 'assignment': 20, 'exam': 60},
         })
         for to_status in list(ResultSheet.ALLOWED_TRANSITIONS.values())[:4]:
             sheet = results_service.advance(sheet, to_status, actor=self.admin)
@@ -367,7 +367,7 @@ class ParentPromotionTests(SecurityTestBase):
 
     def test_suggestion_reason_and_next_class_are_returned(self):
         self.auth(self.parent)
-        response = self.client.get(self.url(f'/parents/me/children/{self.student.id}/promotion/'))
+        response = self.client.get(self.url(f'/parents/me/children/{self.student.public_id}/promotion/'))
         self.assertEqual(response.status_code, 200, response.content)
         body = response.json()
         self.assertIs(body['enrolled'], True)
@@ -387,7 +387,7 @@ class ParentPromotionTests(SecurityTestBase):
         self.parent.linked_students.add(unenrolled)
 
         self.auth(self.parent)
-        response = self.client.get(self.url(f'/parents/me/children/{unenrolled.id}/promotion/'))
+        response = self.client.get(self.url(f'/parents/me/children/{unenrolled.public_id}/promotion/'))
         self.assertEqual(response.status_code, 200, response.content)
         body = response.json()
         self.assertIs(body['enrolled'], False)
@@ -412,7 +412,7 @@ class ParentReportCardTests(SecurityTestBase):
             term=term,
         )
         results_service.record_term_scores(sheet, {
-            str(self.student.id): {'ca1': 10, 'ca2': 10, 'assignment': 20, 'exam': 60},
+            str(self.student.public_id): {'ca1': 10, 'ca2': 10, 'assignment': 20, 'exam': 60},
         })
         for to_status in list(ResultSheet.ALLOWED_TRANSITIONS.values())[:4]:
             sheet = results_service.advance(sheet, to_status, actor=self.admin)
@@ -427,10 +427,10 @@ class ParentReportCardTests(SecurityTestBase):
         self._publish()
 
         self.auth(self.parent)
-        response = self.client.get(self.url(f'/reports/report-cards/{self.student.id}/'))
+        response = self.client.get(self.url(f'/reports/report-cards/{self.student.public_id}/'))
         self.assertEqual(response.status_code, 200, response.content)
         body = response.json()
-        self.assertEqual(body['student']['id'], str(self.student.id))
+        self.assertEqual(body['student']['id'], str(self.student.public_id))
         self.assertEqual(body['student']['name'], 'Amina Bello')
         self.assertEqual(body['student']['className'], 'JSS 1')
         self.assertEqual(body['session'], self.session.name)
@@ -461,7 +461,7 @@ class ParentReportCardTests(SecurityTestBase):
             term='First Term',
         )
         self.auth(self.parent)
-        response = self.client.get(self.url(f'/reports/report-cards/{self.student.id}/'))
+        response = self.client.get(self.url(f'/reports/report-cards/{self.student.public_id}/'))
         self.assertEqual(response.status_code, 404)
 
     def test_the_term_filter_selects_one_term(self):
@@ -470,7 +470,7 @@ class ParentReportCardTests(SecurityTestBase):
 
         self.auth(self.parent)
         response = self.client.get(
-            self.url(f'/reports/report-cards/{self.student.id}/'),
+            self.url(f'/reports/report-cards/{self.student.public_id}/'),
             {'term': 'Second Term'},
         )
         self.assertEqual(response.status_code, 200, response.content)
@@ -485,7 +485,7 @@ class ParentReportCardTests(SecurityTestBase):
 
         self.auth(self.student_user)
         self.assertEqual(
-            self.client.get(self.url(f'/reports/report-cards/{self.student.id}/')).status_code,
+            self.client.get(self.url(f'/reports/report-cards/{self.student.public_id}/')).status_code,
             200,
         )
         self.assertEqual(
@@ -497,20 +497,20 @@ class ParentReportCardTests(SecurityTestBase):
         self._publish()
         self.auth(self.admin)
         self.assertEqual(
-            self.client.get(self.url(f'/reports/report-cards/{self.student.id}/')).status_code,
+            self.client.get(self.url(f'/reports/report-cards/{self.student.public_id}/')).status_code,
             200,
         )
 
     def test_a_teacher_without_reports_permission_is_refused(self):
         self._publish()
         self.auth(self.teacher)
-        response = self.client.get(self.url(f'/reports/report-cards/{self.student.id}/'))
+        response = self.client.get(self.url(f'/reports/report-cards/{self.student.public_id}/'))
         self.assertEqual(response.status_code, 403)
 
     def test_an_admin_of_another_school_gets_a_404(self):
         self._publish()
         self.auth(self.other_admin)
-        response = self.client.get(self.url(f'/reports/report-cards/{self.student.id}/'))
+        response = self.client.get(self.url(f'/reports/report-cards/{self.student.public_id}/'))
         self.assertEqual(response.status_code, 404)
 
     def test_a_parent_before_the_password_change_is_gated_out(self):
@@ -519,5 +519,5 @@ class ParentReportCardTests(SecurityTestBase):
         self.parent.save(update_fields=['must_change_password'])
 
         self.auth(self.parent)
-        response = self.client.get(self.url(f'/reports/report-cards/{self.student.id}/'))
+        response = self.client.get(self.url(f'/reports/report-cards/{self.student.public_id}/'))
         self.assertEqual(response.status_code, 403)

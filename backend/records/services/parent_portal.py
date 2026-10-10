@@ -23,6 +23,7 @@ from ..models import (
 )
 from . import academic as academic_service
 from . import promotion as promotion_service
+from . import public_refs
 
 
 def linked_child(user, student_id) -> Student | None:
@@ -32,9 +33,12 @@ def linked_child(user, student_id) -> Student | None:
     both come back as None, so the endpoint answers 404 for each and a parent
     can never enumerate another family's children.
     """
+    public_id = public_refs.parse_public_id(student_id)
+    if public_id is None:
+        return None
     return (
         Student.objects
-        .filter(school_id=user.school_id, guardian_accounts=user, pk=student_id)
+        .filter(school_id=user.school_id, guardian_accounts=user, public_id=public_id)
         .first()
     )
 
@@ -176,7 +180,7 @@ def promotion_for(student) -> dict:
     payload['isFinalClass'] = destination is None
 
     for candidate in promotion_service.candidates_for(school, session, enrollment.class_obj, policy):
-        if candidate['studentId'] != str(student.pk):
+        if candidate['studentId'] != str(student.public_id):
             continue
         payload.update({
             'suggested': candidate['suggested'],

@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.core.cache import cache
 from django.db import connection
@@ -296,26 +297,30 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
             'tierId': 't100',
         }
 
-    def test_public_registration_creates_inactive_pending_school_and_admin(self):
+    def test_public_registration_starts_a_free_trial(self):
         response = self.client.post(
             '/api/v1/schools/register/', self._payload(), format='json',
         )
 
         self.assertEqual(response.status_code, 201, response.content)
-        school = School.objects.get(id=response.json()['schoolId'])
+        body = response.json()
+        school = School.objects.get(id=body['schoolId'])
         subscription = SchoolSubscription.objects.get(school=school)
         admin = User.objects.get(email='new-admin@example.com')
-        self.assertFalse(school.is_active)
-        self.assertEqual(subscription.status, SchoolSubscription.Status.PENDING)
+        self.assertTrue(school.is_active)
+        self.assertEqual(subscription.status, SchoolSubscription.Status.TRIAL)
         self.assertEqual(subscription.plan, self.plan)
-        self.assertFalse(admin.is_active)
-        self.assertFalse(admin.is_verified)
+        self.assertIsNotNone(subscription.expires_at)
+        self.assertTrue(admin.is_active)
+        self.assertTrue(admin.is_verified)
+        self.assertTrue(body['trial'])
+        self.assertIsNotNone(body['trialEndsAt'])
         login_response = self.client.post(
             '/api/v1/auth/login/',
             {'identifier': admin.email, 'password': 'Strong-Pass-1!'},
             format='json',
         )
-        self.assertEqual(login_response.status_code, 401)
+        self.assertEqual(login_response.status_code, 200, login_response.content)
 
     def test_payment_verification_never_trusts_a_public_reference(self):
         response = self.client.post(
@@ -333,8 +338,126 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
         self.assertEqual(valid_reference_response.json(), {'status': 'pending'})
         self.assertEqual(fake_reference_response.json(), {'status': 'pending'})
         school = School.objects.get(id=response.json()['schoolId'])
-        self.assertFalse(school.is_active)
         self.assertEqual(
             school.subscription.status,
-            SchoolSubscription.Status.PENDING,
+            SchoolSubscription.Status.TRIAL,
         )
+
+
+class SchoolLocationRegistrationTests(TestCase):
+    """The school's GPS location is captured at registration and editable later."""
+
+    def setUp(self):
+        self.client = APIClient()
+        SubscriptionPlan.objects.create(
+            name='t100', min_students=1, max_students=100, monthly_price=100.00,
+        )
+
+    def _payload(self, **school_overrides):
+        school = {
+            'name': 'Located Academy',
+            'type': 'primary',
+            'address': '1 Located Road',
+            'state': 'Lagos',
+            'lga': 'Ikeja',
+            'phone': '+2348000000200',
+            'email': 'located@example.com',
+        }
+        school.update(school_overrides)
+        return {
+            'school': school,
+            'admin': {
+                'fullName': 'Located Admin',
+                'phone': '+2348000000201',
+                'email': 'located-admin@example.com',
+                'password': 'Strong-Pass-1!',
+            },
+            'tierId': 't100',
+        }
+
+    def test_registration_stores_coordinates_and_timezone(self):
+        response = self.client.post(
+            '/api/v1/schools/register/',
+            self._payload(latitude=6.5244, longitude=3.3792, gpsAccuracy=12.5),
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        school = School.objects.get(id=response.json()['schoolId'])
+        self.assertAlmostEqual(float(school.latitude), 6.5244, places=4)
+        self.assertAlmostEqual(float(school.longitude), 3.3792, places=4)
+        self.assertEqual(school.gps_accuracy, 12.5)
+        self.assertEqual(school.timezone, 'Africa/Lagos')
+        self.assertIsNotNone(school.location_set_at)
+
+    def test_registration_can_omit_location(self):
+        response = self.client.post(
+            '/api/v1/schools/register/', self._payload(), format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        school = School.objects.get(id=response.json()['schoolId'])
+        self.assertIsNone(school.latitude)
+        self.assertIsNone(school.longitude)
+        self.assertIsNone(school.location_set_at)
+
+    def test_registration_rejects_a_lone_coordinate(self):
+        response = self.client.post(
+            '/api/v1/schools/register/',
+            self._payload(latitude=6.5244),
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_profile_patch_updates_location_and_confirms_it(self):
+        response = self.client.post(
+            '/api/v1/schools/register/', self._payload(), format='json',
+        )
+        school = School.objects.get(id=response.json()['schoolId'])
+        admin = User.objects.get(email='located-admin@example.com')
+        self.client.force_authenticate(admin)
+
+        patch = self.client.patch(
+            '/api/v1/schools/profile/',
+            {'latitude': 6.5, 'longitude': 3.4, 'attendance_radius': 250},
+            format='json',
+        )
+        self.assertEqual(patch.status_code, 200, patch.content)
+        school.refresh_from_db()
+        self.assertAlmostEqual(float(school.latitude), 6.5, places=4)
+        self.assertEqual(school.attendance_radius, 250)
+        self.assertIsNotNone(school.location_set_at)
+        self.assertIsNotNone(school.location_confirmed_at)
+        # The session shape the Settings screen merges back in.
+        self.assertEqual(patch.json()['latitude'], 6.5)
+        self.assertEqual(patch.json()['attendanceRadius'], 250)
+
+    def test_reverse_geocode_is_proxied_and_validated(self):
+        school = School.objects.create(
+            name='Geo School', slug='geo-school', address='1 Geo Way',
+            state='Lagos', lga='Ikeja', phone='+2348000000300',
+            email='geo@example.com', is_active=True,
+        )
+        admin = User.objects.create_user(
+            email='geo-admin@example.com', password='Strong-Pass-1!',
+            first_name='Geo', last_name='Admin',
+            role=User.Role.SCHOOL_ADMIN, school=school, is_active=True,
+        )
+        self.client.force_authenticate(admin)
+
+        bad = self.client.get('/api/v1/schools/reverse-geocode/?lat=abc&lng=3.4')
+        self.assertEqual(bad.status_code, 400, bad.content)
+
+        with patch('schools.views.reverse_geocode') as geocoder:
+            geocoder.return_value = {
+                'label': '1 Geo Way, Ikeja, Lagos',
+                'address': {'road': '1 Geo Way'},
+                'latitude': 6.5,
+                'longitude': 3.4,
+            }
+            ok = self.client.get('/api/v1/schools/reverse-geocode/?lat=6.5&lng=3.4')
+        self.assertEqual(ok.status_code, 200, ok.content)
+        self.assertEqual(ok.json()['location']['label'], '1 Geo Way, Ikeja, Lagos')
+        geocoder.assert_called_once()
+
+    def test_anonymous_cannot_reverse_geocode(self):
+        response = self.client.get('/api/v1/schools/reverse-geocode/?lat=6.5&lng=3.4')
+        self.assertIn(response.status_code, (401, 403))

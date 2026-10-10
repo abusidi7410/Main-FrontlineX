@@ -160,10 +160,10 @@ class AuthUserSerializer(serializers.ModelSerializer):
     def get_staffId(self, obj):
         # The attendance page needs to know which class-teacher assignment is
         # "mine" so a teacher's register defaults to their own class instead of
-        # the first class in the school. A string id (or None) keeps the
-        # frontend shape stable across integer PK backends.
-        staff_id = getattr(obj, 'staff_profile_id', None)
-        return str(staff_id) if staff_id is not None else None
+        # the first class in the school. This is the public id, matching the
+        # `staffId` the class-teacher assignment endpoint returns.
+        staff = getattr(obj, 'staff_profile', None)
+        return str(staff.public_id) if staff is not None else None
 
 
 class ProfilePhotoUploadSerializer(serializers.Serializer):
@@ -298,7 +298,7 @@ class AccountSerializer(serializers.ModelSerializer):
         if student is None:
             return None
         return {
-            'id': str(student.id),
+            'id': str(student.public_id),
             'name': f'{student.first_name} {student.last_name}',
             'admissionNumber': student.admission_number,
             'className': student.class_name,
@@ -309,7 +309,7 @@ class AccountSerializer(serializers.ModelSerializer):
         if staff is None:
             return None
         return {
-            'id': str(staff.id),
+            'id': str(staff.public_id),
             'fullName': staff.full_name,
             'role': staff.role,
         }
@@ -376,9 +376,14 @@ class AccountCreateSerializer(serializers.Serializer):
 
         if student_id:
             from records.models import Student
-            student = Student.objects.filter(
-                id=student_id, school_id=self._school_id,
-            ).first()
+            from records.services import public_refs
+            parsed = public_refs.parse_public_id(student_id)
+            student = (
+                Student.objects.filter(
+                    public_id=parsed, school_id=self._school_id,
+                ).first()
+                if parsed is not None else None
+            )
             if student is None:
                 raise serializers.ValidationError(
                     {'studentId': 'Student not found in your school.'},
@@ -404,9 +409,14 @@ class AccountCreateSerializer(serializers.Serializer):
 
         if staff_id:
             from records.models import StaffMember
-            staff = StaffMember.objects.filter(
-                id=staff_id, school_id=self._school_id,
-            ).first()
+            from records.services import public_refs
+            parsed = public_refs.parse_public_id(staff_id)
+            staff = (
+                StaffMember.objects.filter(
+                    public_id=parsed, school_id=self._school_id,
+                ).first()
+                if parsed is not None else None
+            )
             if staff is None:
                 raise serializers.ValidationError(
                     {'staffId': 'Staff member not found in your school.'},

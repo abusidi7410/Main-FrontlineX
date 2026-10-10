@@ -92,7 +92,7 @@ class StudentSerializer(serializers.ModelSerializer):
         return attrs
 
     def get_id(self, obj):
-        return str(obj.id)
+        return str(obj.public_id)
 
     def get_photoUrl(self, obj):
         if not obj.photo:
@@ -166,12 +166,12 @@ class StaffMemberSerializer(serializers.ModelSerializer):
         fields = ['id', 'fullName', 'email', 'phone', 'role', 'subjects', 'classes', 'status']
 
     def get_id(self, obj):
-        return str(obj.id)
+        return str(obj.public_id)
 
 
 class InvoiceSerializer(serializers.ModelSerializer):
     id = serializers.SerializerMethodField()
-    studentId = serializers.CharField(source='student_id')
+    studentId = serializers.SerializerMethodField()
     studentName = serializers.SerializerMethodField()
     className = serializers.SerializerMethodField()
     source = serializers.CharField(read_only=True)
@@ -186,6 +186,9 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
     def get_id(self, obj):
         return str(obj.id)
+
+    def get_studentId(self, obj):
+        return str(obj.student.public_id)
 
     def get_studentName(self, obj):
         return f'{obj.student.first_name} {obj.student.last_name}'
@@ -263,3 +266,38 @@ class AttendanceSubmitSerializer(serializers.Serializer):
                 'records': 'The same student appears more than once in this register.',
             })
         return data
+
+
+class StaffCheckInSerializer(serializers.Serializer):
+    """A staff member's own check-in for a school day.
+
+    Coordinates are optional so a device that cannot get a fix still records
+    that the person arrived; the service marks such a check-in unverified
+    rather than dropping it.
+    """
+
+    latitude = serializers.FloatField(required=False, allow_null=True, min_value=-90, max_value=90)
+    longitude = serializers.FloatField(
+        required=False, allow_null=True, min_value=-180, max_value=180,
+    )
+    accuracy = serializers.FloatField(required=False, allow_null=True, min_value=0)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=280, default='')
+    # Only used by the offline queue: the day the check-in was captured on the
+    # device. Omitted for a normal live check-in (the server uses today).
+    date = serializers.DateField(required=False)
+
+    def validate(self, data):
+        has_lat = data.get('latitude') is not None
+        has_lng = data.get('longitude') is not None
+        if has_lat != has_lng:
+            raise serializers.ValidationError({
+                'latitude': 'Provide both latitude and longitude, or neither.',
+            })
+        return data
+
+
+class StaffAttendanceReviewSerializer(serializers.Serializer):
+    """An administrator's decision on an uncertain staff check-in."""
+
+    decision = serializers.ChoiceField(choices=['approve', 'reject'])
+    note = serializers.CharField(required=False, allow_blank=True, max_length=280, default='')

@@ -170,7 +170,7 @@ def candidates_for(school, session: AcademicSession, school_class: SchoolClass,
         else:
             reason = 'Below the minimum average or attendance, or above the failed-subject limit.'
         candidates.append({
-            'studentId': str(student.pk),
+            'studentId': str(student.public_id),
             'studentName': f'{student.first_name} {student.last_name}'.strip(),
             'admissionNumber': student.admission_number,
             'className': school_class.name,

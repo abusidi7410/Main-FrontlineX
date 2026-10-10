@@ -23,18 +23,28 @@ SUSPENDED_CODE = 'school_suspended'
 
 
 def school_status(school, subscription):
-    """Platform-facing status for a school: active | trial | pending_payment | suspended."""
-    if school.is_active:
-        return 'active'
+    """Platform-facing status for a school: active | trial | pending_payment | suspended.
+
+    Precedence matters. An explicit suspension always wins, because that is a
+    deliberate platform decision. A live override then wins over a lapsed plan:
+    the platform manager has decided the school keeps running. Only after those
+    does the subscription's own state decide.
+    """
     if subscription:
         if subscription.status == SchoolSubscription.Status.SUSPENDED:
             return 'suspended'
+        if subscription.override_current:
+            return 'active'
+        if subscription.status == SchoolSubscription.Status.TRIAL:
+            return 'trial'
+        if subscription.status == SchoolSubscription.Status.ACTIVE:
+            return 'active'
         if subscription.status in (
             SchoolSubscription.Status.PENDING,
             SchoolSubscription.Status.EXPIRED,
         ):
             return 'pending_payment'
-    return 'trial'
+    return 'active' if school.is_active else 'trial'
 
 
 def is_suspended_school(school_id) -> bool:

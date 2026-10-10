@@ -64,19 +64,19 @@ class ResultSheetLifecycleTests(SecurityTestBase):
 
     def test_student_not_on_the_roster_cannot_be_scored(self):
         self.auth(self.teacher)
-        resp = self.act('scores', scores={str(self.other_student.id): 40})
+        resp = self.act('scores', scores={str(self.other_student.public_id): 40})
         self.assertEqual(resp.status_code, 400)
         self.assertIn('roster', str(resp.data))
 
     def test_score_above_the_assessment_maximum_is_rejected(self):
         self.auth(self.teacher)
-        resp = self.act('scores', scores={str(self.student.id): 150})
+        resp = self.act('scores', scores={str(self.student.public_id): 150})
         self.assertEqual(resp.status_code, 400)
         self.assertIn('maximum', str(resp.data))
 
     def test_score_is_graded_and_saved(self):
         self.auth(self.teacher)
-        resp = self.act('scores', scores={str(self.student.id): 75})
+        resp = self.act('scores', scores={str(self.student.public_id): 75})
         self.assertEqual(resp.status_code, 200)
         entry = self.sheet.entries.first()
         entry.refresh_from_db()
@@ -113,7 +113,7 @@ class ResultSheetLifecycleTests(SecurityTestBase):
         self.sheet.refresh_from_db()
         self.assertTrue(self.sheet.is_locked)
         self.auth(self.teacher)
-        resp = self.act('scores', scores={str(self.student.id): 10})
+        resp = self.act('scores', scores={str(self.student.public_id): 10})
         self.assertEqual(resp.status_code, 400)
         self.assertIn('locked', str(resp.data).lower())
 
@@ -229,14 +229,14 @@ class TermResultSheetTests(SecurityTestBase):
 
     def test_term_sheet_is_created_with_component_rows(self):
         self.assertEqual(self.create_response.data['assessment'], 'Term Results')
-        self.assertEqual(self.create_response.data['rows'][0]['studentId'], str(self.student.id))
+        self.assertEqual(self.create_response.data['rows'][0]['studentId'], str(self.student.public_id))
         self.assertIsNone(self.create_response.data['rows'][0]['ca1'])
 
     def test_component_scores_are_saved_and_totaled(self):
         response = self.action(
             'scores',
             termScores={
-                str(self.student.id): {
+                str(self.student.public_id): {
                     'ca1': 9,
                     'ca2': 8,
                     'assignment': 18,
@@ -252,7 +252,7 @@ class TermResultSheetTests(SecurityTestBase):
     def test_component_scores_cannot_exceed_component_maximum(self):
         response = self.action(
             'scores',
-            termScores={str(self.student.id): {'ca1': 11}},
+            termScores={str(self.student.public_id): {'ca1': 11}},
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn('between 0 and 10', str(response.data))
@@ -265,7 +265,7 @@ class TermResultSheetTests(SecurityTestBase):
         save_response = self.action(
             'scores',
             termScores={
-                str(self.student.id): {
+                str(self.student.public_id): {
                     'ca1': 10,
                     'ca2': 10,
                     'assignment': 20,
@@ -292,7 +292,7 @@ class PublishedResultsAccessTests(SecurityTestBase):
         results_service.record_term_scores(
             self.sheet,
             {
-                str(self.student.id): {
+                str(self.student.public_id): {
                     'ca1': 10,
                     'ca2': 10,
                     'assignment': 20,
@@ -320,7 +320,7 @@ class PublishedResultsAccessTests(SecurityTestBase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data['count'], 1)
         row = response.data['results'][0]
-        self.assertEqual(row['studentId'], str(self.student.id))
+        self.assertEqual(row['studentId'], str(self.student.public_id))
         self.assertEqual(row['score'], 100.0)
         self.assertEqual(row['grade'], 'A')
 
@@ -391,7 +391,7 @@ class AssistantPermissionInheritanceTests(SecurityTestBase):
     def test_parent_cannot_read_another_familys_child(self):
         self.parent.linked_students.add(self.student)
         self.auth(self.parent)
-        resp = self.ask('get_my_child_attendance', student_id=str(self.other_student.id))
+        resp = self.ask('get_my_child_attendance', student_id=str(self.other_student.public_id))
         self.assertEqual(resp.status_code, 403)
 
     def test_parent_cannot_read_another_familys_child_even_within_the_same_school(self):
@@ -402,7 +402,7 @@ class AssistantPermissionInheritanceTests(SecurityTestBase):
         )
         self.parent.linked_students.add(self.student)
         self.auth(self.parent)
-        resp = self.ask('get_my_child_attendance', student_id=str(second.id))
+        resp = self.ask('get_my_child_attendance', student_id=str(second.public_id))
         self.assertEqual(resp.status_code, 403)
 
     def test_parent_is_never_shown_financial_data(self):
@@ -410,7 +410,7 @@ class AssistantPermissionInheritanceTests(SecurityTestBase):
         them a balance even about their own child."""
         self.parent.linked_students.add(self.student)
         self.auth(self.parent)
-        self.assertEqual(self.ask('get_fee_balance', student_id=str(self.student.id)).status_code, 403)
+        self.assertEqual(self.ask('get_fee_balance', student_id=str(self.student.public_id)).status_code, 403)
         self.assertEqual(self.ask('get_financial_summary').status_code, 403)
 
     def test_student_sees_only_themselves(self):
@@ -419,7 +419,7 @@ class AssistantPermissionInheritanceTests(SecurityTestBase):
         self.auth(self.student_user)
         resp = self.ask('get_my_profile')
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.data['data']['id'], str(self.student.id))
+        self.assertEqual(resp.data['data']['id'], str(self.student.public_id))
         # The student role has no school-wide tools at all.
         self.assertEqual(self.ask('search_students').status_code, 403)
         self.assertEqual(self.ask('get_financial_summary').status_code, 403)
@@ -429,14 +429,14 @@ class AssistantPermissionInheritanceTests(SecurityTestBase):
         self.student_user.save(update_fields=['student_profile'])
         self.auth(self.student_user)
         self.assertEqual(
-            self.ask('get_my_child_attendance', student_id=str(self.other_student.id)).status_code,
+            self.ask('get_my_child_attendance', student_id=str(self.other_student.public_id)).status_code,
             403,
         )
 
     def test_teacher_cannot_read_finance(self):
         self.auth(self.teacher)
         self.assertEqual(self.ask('get_financial_summary').status_code, 403)
-        self.assertEqual(self.ask('get_fee_balance', student_id=str(self.student.id)).status_code, 403)
+        self.assertEqual(self.ask('get_fee_balance', student_id=str(self.student.public_id)).status_code, 403)
 
     def test_teacher_is_confined_to_assigned_classes(self):
         StaffMember.objects.create(
@@ -660,7 +660,7 @@ class AssistantPermissionInheritanceTests(SecurityTestBase):
 
     def test_another_schools_student_is_not_found(self):
         self.auth(self.admin)
-        resp = self.ask('get_student', student_id=str(self.other_student.id))
+        resp = self.ask('get_student', student_id=str(self.other_student.public_id))
         self.assertEqual(resp.status_code, 400)
         self.assertIn('No such student', str(resp.data))
 

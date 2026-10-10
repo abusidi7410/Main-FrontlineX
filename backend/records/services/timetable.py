@@ -29,6 +29,7 @@ from records.models import (
     TimetableEntry,
     TimetablePeriod,
 )
+from . import public_refs
 
 WEEKDAY_NAMES = TimetableEntry.WEEKDAY_NAMES
 WEEKDAY_SHORT = TimetableEntry.WEEKDAY_SHORT
@@ -112,10 +113,10 @@ def reference_payload(school) -> dict:
         'classIds': {row['name']: str(row['id']) for row in classes},
         'subjects': list(school.subjects or DEFAULT_SUBJECTS),
         'teachers': [
-            {'id': str(row['id']), 'name': row['full_name']}
+            {'id': str(row['public_id']), 'name': row['full_name']}
             for row in school.staff.filter(
                 status=StaffMember.Status.ACTIVE,
-            ).order_by('full_name').values('id', 'full_name')
+            ).order_by('full_name').values('public_id', 'full_name')
         ],
         'rooms': known_rooms(school),
     }
@@ -169,7 +170,7 @@ def staff_for_user(user) -> StaffMember | None:
 
 def teacher_id_for_user(user) -> str | None:
     staff = staff_for_user(user)
-    return str(staff.pk) if staff else None
+    return str(staff.public_id) if staff else None
 
 
 def resolve_scope(user, params) -> dict:
@@ -205,6 +206,10 @@ def resolve_scope(user, params) -> dict:
     if requested_class:
         scope['classId'] = requested_class
     elif requested_teacher:
+        if public_refs.parse_public_id(requested_teacher) is None:
+            raise ValidationError({
+                'teacherId': 'That teacher does not exist in this school.',
+            })
         scope['teacherId'] = requested_teacher
     elif scope['role'] == 'teacher':
         own = teacher_id_for_user(user)
@@ -228,7 +233,7 @@ def scoped_entries(school, scope: dict) -> list[TimetableEntry]:
     if scope.get('classIds') is not None:
         queryset = queryset.filter(class_obj_id__in=scope['classIds'])
     if scope.get('teacherId'):
-        queryset = queryset.filter(teacher_id=scope['teacherId'])
+        queryset = queryset.filter(teacher__public_id=scope['teacherId'])
     if scope.get('weekday') is not None:
         queryset = queryset.filter(weekday=scope['weekday'])
     return list(queryset.order_by('weekday', 'period__sort_order', 'class_obj__sort_order'))
@@ -257,7 +262,7 @@ def entry_payload(entry: TimetableEntry) -> dict:
         'subject': entry.subject,
         # A lesson can exist with no teacher yet, which is why this is text.
         'teacher': entry.teacher.full_name if entry.teacher else '',
-        'teacherId': str(entry.teacher_id) if entry.teacher_id else '',
+        'teacherId': str(entry.teacher.public_id) if entry.teacher_id else '',
         'room': entry.room,
     }
 
@@ -308,7 +313,11 @@ def _resolve_teacher(school, teacher_id):
     teacher_id = (str(teacher_id or '')).strip()
     if not teacher_id:
         return None
-    teacher = StaffMember.objects.filter(school=school, pk=teacher_id).first()
+    public_id = public_refs.parse_public_id(teacher_id)
+    teacher = (
+        StaffMember.objects.filter(school=school, public_id=public_id).first()
+        if public_id is not None else None
+    )
     if teacher is None:
         raise ValidationError({'teacherId': 'That teacher does not exist in this school.'})
     return teacher

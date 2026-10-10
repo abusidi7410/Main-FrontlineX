@@ -36,6 +36,12 @@ urlpatterns = [
     path('attendance/overview/', views.AttendanceOverviewView.as_view()),
     path('attendance/history/', views.AttendanceHistoryView.as_view()),
     path('attendance/correct/', views.AttendanceCorrectView.as_view()),
+    path('attendance/check-in/', views.StaffAttendanceCheckInView.as_view()),
+    path('attendance/staff-records/', views.StaffAttendanceListView.as_view()),
+    path(
+        'attendance/staff-records/<str:pk>/review/',
+        views.StaffAttendanceReviewView.as_view(),
+    ),
     path('attendance/', views.AttendanceSubmitView.as_view()),
     path('academics/', views.AcademicsView.as_view()),
     path('academics/subjects/<str:name>/', views.AcademicSubjectDetailView.as_view()),

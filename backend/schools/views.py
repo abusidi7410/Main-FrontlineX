@@ -8,8 +8,11 @@ from rest_framework.views import APIView
 
 from accounts.permissions import HasSchool, IsSuperAdmin, require_permissions
 from accounts.utils import audit
+from .geocoding import reverse_geocode
 from .models import School, SubscriptionPlan
 from .serializers import (
+    PlatformPlanSerializer,
+    PublicPlanSerializer,
     SchoolRegistrationSerializer,
     SchoolSerializer,
     SchoolSessionSerializer,
@@ -44,6 +47,19 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
         if self.action in ('list', 'retrieve'):
             return [AllowAny()]
         return [IsSuperAdmin()]
+
+    def get_serializer_class(self):
+        # Reads are the pricing catalogue (camelCase, stable plan codes); writes
+        # are the platform manager's plan editor.
+        if self.action in ('list', 'retrieve'):
+            return PublicPlanSerializer
+        return PlatformPlanSerializer
+
+    def get_queryset(self):
+        base = SubscriptionPlan.objects.all()
+        if self.action in ('list', 'retrieve'):
+            return base.filter(is_active=True).order_by('sort_order', 'min_students')
+        return base.order_by('sort_order', 'min_students')
 
 
 class SchoolProfileView(APIView):
@@ -91,6 +107,33 @@ class SchoolProfileView(APIView):
         # The session shape, not the raw model serializer: the frontend merges
         # this straight back into its stored school.
         return Response(SchoolSessionSerializer(updated).data)
+
+
+class ReverseGeocodeView(APIView):
+    """GET /schools/reverse-geocode/?lat=&lng= → a human-readable place.
+
+    Proxied through the backend so the browser never calls a third-party
+    geocoder directly (no third-party script, no vendor keys, one place to add
+    caching). Any authenticated member of a school may use it: a teacher
+    checking in needs to see the campus label. It reads and writes no tenant
+    data, so it does not require a granular permission.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request):
+        raw_lat = (request.query_params.get('lat') or '').strip()
+        raw_lng = (request.query_params.get('lng') or '').strip()
+        try:
+            latitude = float(raw_lat)
+            longitude = float(raw_lng)
+        except (TypeError, ValueError):
+            raise ValidationError({
+                'lat': 'Provide numeric lat and lng query parameters.',
+            })
+        if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+            raise ValidationError({'lat': 'Coordinates are out of range.'})
+        return Response({'location': reverse_geocode(latitude, longitude)})
 
 
 class SchoolRegisterView(APIView):

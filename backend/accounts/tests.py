@@ -97,7 +97,7 @@ class AccountManagementAPITests(TestCase):
             format='json',
         )
         self.assertEqual(teacher_login.status_code, 200, teacher_login.content)
-        self.assertEqual(teacher_login.json()['user']['staffId'], str(staff.id))
+        self.assertEqual(teacher_login.json()['user']['staffId'], str(staff.public_id))
 
         admin_login = APIClient().post(
             '/api/v1/auth/login/',
@@ -197,7 +197,7 @@ class AccountManagementAPITests(TestCase):
                 'fullName': 'Maryam Yusuf',
                 'email': 'maryam@alpha.example',
                 'role': 'student',
-                'studentId': str(student.id),
+                'studentId': str(student.public_id),
             },
             format='json',
         )
@@ -217,7 +217,7 @@ class AccountManagementAPITests(TestCase):
                 'fullName': 'Nope Nope',
                 'email': 'nope@alpha.example',
                 'role': 'student',
-                'studentId': str(student.id),
+                'studentId': str(student.public_id),
             },
             format='json',
         )

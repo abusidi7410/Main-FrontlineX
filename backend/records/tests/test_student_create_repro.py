@@ -163,7 +163,7 @@ class StudentCreateReproTests(SecurityTestBase):
         }
         r = self._post(payload)
         self.assertEqual(r.status_code, 201, r.content)
-        student = Student.objects.get(pk=r.json()['id'])
+        student = Student.objects.get(public_id=r.json()['id'])
         self.assertEqual(
             student.admission_number_source, Student.AdmissionNumberSource.SYSTEM_GENERATED,
         )
@@ -234,7 +234,7 @@ class StudentCreateReproTests(SecurityTestBase):
         r = self._post(payload)
         self.assertEqual(r.status_code, 201, r.content)
         self.assertIn('/2019/', r.json()['admissionNumber'])
-        student = Student.objects.get(pk=r.json()['id'])
+        student = Student.objects.get(public_id=r.json()['id'])
         self.assertEqual(student.admission_year, 2019)
 
     def test_generation_is_scoped_per_school(self):

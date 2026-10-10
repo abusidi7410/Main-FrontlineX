@@ -398,17 +398,29 @@ def _capacity(school_id: int, valid_count: int) -> dict[str, int | bool]:
     ).count()
     subscription = (
         SchoolSubscription.objects
-        .filter(school_id=school_id, status__in=[SchoolSubscription.Status.ACTIVE, SchoolSubscription.Status.PENDING])
+        .filter(
+            school_id=school_id,
+            status__in=[
+                SchoolSubscription.Status.ACTIVE,
+                SchoolSubscription.Status.TRIAL,
+                SchoolSubscription.Status.PENDING,
+            ],
+        )
         .select_related('plan')
         .first()
     )
-    allowed = subscription.plan.max_students if subscription and subscription.plan else DEFAULT_CAPACITY
+    allowed = (
+        subscription.plan.max_students
+        if subscription and subscription.plan
+        else DEFAULT_CAPACITY
+    )
     after_import = active_students + valid_count
     return {
         'activeStudents': active_students,
         'allowed': allowed,
         'afterImport': after_import,
-        'exceeds': after_import > allowed,
+        # `allowed is None` means the plan has no ceiling, so importing is fine.
+        'exceeds': allowed is not None and after_import > allowed,
     }
 
 

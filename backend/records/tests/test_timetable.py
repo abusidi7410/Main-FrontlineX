@@ -47,7 +47,7 @@ class TimetableTestCase(SchoolTestCase):
             'periodId': str(self.p1.pk),
             'classId': str(self.jss1.pk),
             'subject': 'Mathematics',
-            'teacherId': str(self.teacher_a.pk),
+            'teacherId': str(self.teacher_a.public_id),
             'room': 'Room 1',
         }
         payload.update(overrides)
@@ -138,7 +138,7 @@ class TimetableTestCase(SchoolTestCase):
     def test_class_conflict_refused_with_a_readable_message(self):
         self.create_entry()
         with self.assertRaises(Exception) as caught:
-            self.create_entry(subject='English Language', teacherId=str(self.teacher_b.pk))
+            self.create_entry(subject='English Language', teacherId=str(self.teacher_b.public_id))
         message = str(caught.exception.detail['classId'])
         self.assertIn('JSS 1', message)
         self.assertIn('P1', message)
@@ -157,7 +157,7 @@ class TimetableTestCase(SchoolTestCase):
         self.create_entry()
         with self.assertRaises(Exception) as caught:
             self.create_entry(
-                classId=str(self.jss2.pk), teacherId=str(self.teacher_b.pk),
+classId=str(self.jss2.pk), teacherId=str(self.teacher_b.public_id),
                 subject='English',
             )
         message = str(caught.exception.detail['room'])
@@ -186,7 +186,7 @@ class TimetableTestCase(SchoolTestCase):
         self.assertEqual(entry.room, 'Lab 1')
         # Room 1 is now free in P1 on Monday.
         replacement = self.create_entry(
-            classId=str(self.jss2.pk), teacherId=str(self.teacher_b.pk), subject='English',
+            classId=str(self.jss2.pk), teacherId=str(self.teacher_b.public_id), subject='English',
         )
         self.assertEqual(replacement.room, 'Room 1')
 
@@ -217,7 +217,7 @@ class TimetableTestCase(SchoolTestCase):
         # With the teacher gone, the slot is free for someone else.
         taken = self.create_entry(
             classId=str(self.jss2.pk), weekday=0, periodId=str(self.p1.pk),
-            subject='English Language', teacherId=str(self.teacher_a.pk), room='Room 5',
+            subject='English Language', teacherId=str(self.teacher_a.public_id), room='Room 5',
         )
         self.assertEqual(taken.teacher_id, self.teacher_a.pk)
         # The original lesson kept its slot; it just has nobody assigned now.
@@ -312,7 +312,7 @@ class TimetableApiTests(SchoolTestCase):
             'periodId': str(self.p1.pk),
             'classId': str(self.jss1.pk),
             'subject': 'Mathematics',
-            'teacherId': str(self.teacher_staff.pk),
+            'teacherId': str(self.teacher_staff.public_id),
             'room': 'Room 1',
         }
         payload.update(overrides)
@@ -338,7 +338,7 @@ class TimetableApiTests(SchoolTestCase):
     def test_grid_returns_periods_entries_and_reference_data(self):
         timetable_service.create_entry(self.school, {
             'weekday': 0, 'periodId': str(self.p1.pk), 'classId': str(self.jss1.pk),
-            'subject': 'Mathematics', 'teacherId': str(self.teacher_staff.pk),
+            'subject': 'Mathematics', 'teacherId': str(self.teacher_staff.public_id),
             'room': 'Room 1',
         })
         self.auth(self.admin)
@@ -357,7 +357,7 @@ class TimetableApiTests(SchoolTestCase):
         self.assertEqual(entry['period'], 'P1')
         # Editor keys.
         self.assertEqual(entry['weekday'], 0)
-        self.assertEqual(entry['teacherId'], str(self.teacher_staff.pk))
+        self.assertEqual(entry['teacherId'], str(self.teacher_staff.public_id))
         self.assertIn('JSS 1', body['classIds'])
         self.assertIn('Mathematics', body['subjects'])
         self.assertIn('Amoah Grace', [t['name'] for t in body['teachers']])
@@ -389,7 +389,7 @@ class TimetableApiTests(SchoolTestCase):
     def test_teacher_sees_their_own_week_by_default(self):
         timetable_service.create_entry(self.school, {
             'weekday': 0, 'periodId': str(self.p1.pk), 'classId': str(self.jss1.pk),
-            'subject': 'Mathematics', 'teacherId': str(self.teacher_staff.pk),
+            'subject': 'Mathematics', 'teacherId': str(self.teacher_staff.public_id),
         })
         timetable_service.create_entry(self.school, {
             'weekday': 1, 'periodId': str(self.p2.pk), 'classId': str(self.jss2.pk),
@@ -574,7 +574,7 @@ class TimetableQueryBudgetTests(SchoolTestCase):
                     'periodId': str(period.pk),
                     'classId': str(self.jss1.pk),
                     'subject': 'Mathematics',
-                    'teacherId': str(self.teachers[index % len(self.teachers)].pk),
+                    'teacherId': str(self.teachers[index % len(self.teachers)].public_id),
                     'room': 'Room %s' % index,
                 })
         # Two more classes sharing Monday morning, so the school is not
@@ -635,7 +635,7 @@ class TimetableAssistantTests(SchoolTestCase):
         )
         timetable_service.create_entry(self.school, {
             'weekday': 2, 'periodId': str(self.p1.pk), 'classId': str(self.jss1.pk),
-            'subject': 'Mathematics', 'teacherId': str(self.staff.pk), 'room': 'Room 1',
+            'subject': 'Mathematics', 'teacherId': str(self.staff.public_id), 'room': 'Room 1',
         })
 
     def test_teacher_schedule_reports_the_real_week(self):

@@ -119,7 +119,7 @@ class SecurityTestBase(SchoolTestCase):
             'className': class_name,
             'date': date,
             'records': records if records is not None else [
-                {'studentId': str(self.student.id), 'status': 'present'},
+                {'studentId': str(self.student.public_id), 'status': 'present'},
             ],
         }
         return self.client.post(self.url('/attendance/'), payload, format='json')
@@ -195,7 +195,7 @@ class StudentPatchAuthorizationTests(SecurityTestBase):
     def test_teacher_cannot_modify_a_student(self):
         self.auth(self.teacher)
         resp = self.client.patch(
-            self.url(f'/students/{self.student.id}/'), {'firstName': 'Hacked'}, format='json',
+            self.url(f'/students/{self.student.public_id}/'), {'firstName': 'Hacked'}, format='json',
         )
         self.assertEqual(resp.status_code, 403)
         self.student.refresh_from_db()
@@ -204,7 +204,7 @@ class StudentPatchAuthorizationTests(SecurityTestBase):
     def test_accountant_cannot_modify_a_student(self):
         self.auth(self.accountant)
         resp = self.client.patch(
-            self.url(f'/students/{self.student.id}/'), {'firstName': 'Hacked'}, format='json',
+            self.url(f'/students/{self.student.public_id}/'), {'firstName': 'Hacked'}, format='json',
         )
         self.assertEqual(resp.status_code, 403)
         self.student.refresh_from_db()
@@ -213,7 +213,7 @@ class StudentPatchAuthorizationTests(SecurityTestBase):
     def test_authorized_role_can_still_modify_a_student(self):
         self.auth(self.admin)
         resp = self.client.patch(
-            self.url(f'/students/{self.student.id}/'), {'guardianPhone': '+234999'}, format='json',
+            self.url(f'/students/{self.student.public_id}/'), {'guardianPhone': '+234999'}, format='json',
         )
         self.assertEqual(resp.status_code, 200, resp.content)
         self.student.refresh_from_db()
@@ -224,7 +224,7 @@ class StudentPatchAuthorizationTests(SecurityTestBase):
             with self.subTest(role=user.role):
                 self.auth(user)
                 resp = self.client.patch(
-                    self.url(f'/students/{self.student.id}/'),
+                    self.url(f'/students/{self.student.public_id}/'),
                     {'firstName': 'Hacked'}, format='json',
                 )
                 self.assertIn(resp.status_code, (403, 404))
@@ -238,7 +238,7 @@ class StudentPatchCrossSchoolTests(SecurityTestBase):
     def test_school_a_user_cannot_patch_a_school_b_student(self):
         self.auth(self.admin)
         resp = self.client.patch(
-            self.url(f'/students/{self.other_student.id}/'),
+            self.url(f'/students/{self.other_student.public_id}/'),
             {'firstName': 'Hacked'}, format='json',
         )
         self.assertEqual(resp.status_code, 404)
@@ -248,7 +248,7 @@ class StudentPatchCrossSchoolTests(SecurityTestBase):
     def test_school_a_user_cannot_patch_a_school_b_student_by_uuid(self):
         self.auth(self.principal)
         resp = self.client.patch(
-            self.url(f'/students/{self.other_student.id}/'),
+            self.url(f'/students/{self.other_student.public_id}/'),
             {'status': 'suspended'}, format='json',
         )
         self.assertEqual(resp.status_code, 404)
@@ -258,7 +258,7 @@ class StudentPatchCrossSchoolTests(SecurityTestBase):
     def test_school_b_admin_cannot_patch_a_school_a_student(self):
         self.auth(self.other_admin)
         resp = self.client.patch(
-            self.url(f'/students/{self.student.id}/'), {'firstName': 'Hacked'}, format='json',
+            self.url(f'/students/{self.student.public_id}/'), {'firstName': 'Hacked'}, format='json',
         )
         self.assertEqual(resp.status_code, 404)
         self.student.refresh_from_db()
@@ -266,7 +266,7 @@ class StudentPatchCrossSchoolTests(SecurityTestBase):
 
     def test_cross_school_read_is_also_blocked(self):
         self.auth(self.admin)
-        resp = self.client.get(self.url(f'/students/{self.other_student.id}/'))
+        resp = self.client.get(self.url(f'/students/{self.other_student.public_id}/'))
         self.assertEqual(resp.status_code, 404)
 
 
@@ -276,7 +276,7 @@ class StudentSchoolReassignmentTests(SecurityTestBase):
     def test_patch_cannot_move_a_student_to_another_school(self):
         self.auth(self.admin)
         resp = self.client.patch(
-            self.url(f'/students/{self.student.id}/'),
+            self.url(f'/students/{self.student.public_id}/'),
             {'schoolId': str(self.other_school.id)}, format='json',
         )
         self.assertIn(resp.status_code, (400, 403), resp.content)
@@ -287,7 +287,7 @@ class StudentSchoolReassignmentTests(SecurityTestBase):
         """A crafted `className` pointing at another school's class must not stick."""
         self.auth(self.admin)
         resp = self.client.patch(
-            self.url(f'/students/{self.student.id}/'),
+            self.url(f'/students/{self.student.public_id}/'),
             {'className': self.other_jss1.name}, format='json',
         )
         # `className` is a free-text mirror, so the value is accepted as text but
@@ -338,7 +338,7 @@ class AttendanceRosterEnrollmentTests(SecurityTestBase):
             # A Friday. Submitting on a weekend is rejected as a non-school day
             # before enrollment is ever checked, so this has to stay a school day.
             date='2026-09-18',
-            records=[{'studentId': str(self.other_student.id), 'status': 'present'}],
+            records=[{'studentId': str(self.other_student.public_id), 'status': 'present'}],
         )
         self.assertEqual(resp.status_code, 201, resp.content)
         self.assertEqual(resp.json()['saved'], 0)
@@ -357,7 +357,7 @@ class AttendanceRosterEnrollmentTests(SecurityTestBase):
         self.auth(self.teacher)
         resp = self.submit_attendance(
             class_name=self.other_jss1.name,
-            records=[{'studentId': str(self.student.id), 'status': 'present'}],
+            records=[{'studentId': str(self.student.public_id), 'status': 'present'}],
         )
         self.assertEqual(resp.status_code, 201, resp.content)
 
@@ -376,7 +376,7 @@ class AttendanceRosterEnrollmentTests(SecurityTestBase):
         self.auth(self.teacher)
         resp = self.submit_attendance(
             class_name=rival_only.name,
-            records=[{'studentId': str(self.student.id), 'status': 'present'}],
+            records=[{'studentId': str(self.student.public_id), 'status': 'present'}],
         )
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertFalse(AttendanceRecord.objects.exists())
@@ -482,7 +482,7 @@ class AttendanceIsolationTests(SecurityTestBase):
             {
                 'className': 'JSS 1',
                 'date': '2026-09-21',
-                'records': [{'studentId': str(self.other_student.id), 'status': 'present'}],
+                'records': [{'studentId': str(self.other_student.public_id), 'status': 'present'}],
             },
             format='json',
         )
@@ -497,7 +497,7 @@ class TransferSecurityTests(SecurityTestBase):
     def test_cannot_transfer_another_schools_student(self):
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.other_student.id}/transfer/'),
+            self.url(f'/students/{self.other_student.public_id}/transfer/'),
             {'toSchoolId': str(self.other_school.id)}, format='json',
         )
         self.assertEqual(resp.status_code, 404)
@@ -507,7 +507,7 @@ class TransferSecurityTests(SecurityTestBase):
     def test_cannot_move_a_student_into_another_schools_class(self):
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'),
+            self.url(f'/students/{self.student.public_id}/transfer/'),
             {'toClassId': str(self.other_jss1.pk)}, format='json',
         )
         self.assertEqual(resp.status_code, 404)
@@ -518,7 +518,7 @@ class TransferSecurityTests(SecurityTestBase):
     def test_cannot_move_a_student_into_another_schools_section(self):
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'),
+            self.url(f'/students/{self.student.public_id}/transfer/'),
             {'toClassId': str(self.jss1.pk), 'toSectionId': str(self.other_section.pk)},
             format='json',
         )
@@ -529,7 +529,7 @@ class TransferSecurityTests(SecurityTestBase):
     def test_cannot_move_a_student_into_another_schools_session(self):
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'),
+            self.url(f'/students/{self.student.public_id}/transfer/'),
             {'toClassId': str(self.jss1.pk), 'sessionId': str(self.other_session.pk)},
             format='json',
         )
@@ -538,7 +538,7 @@ class TransferSecurityTests(SecurityTestBase):
     def test_teacher_cannot_transfer_a_student(self):
         self.auth(self.teacher)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'),
+            self.url(f'/students/{self.student.public_id}/transfer/'),
             {'toClassId': str(self.jss2.pk)}, format='json',
         )
         self.assertEqual(resp.status_code, 403)
@@ -550,7 +550,7 @@ class TransferHappyPathTests(SecurityTestBase):
     def test_school_to_school_transfer_still_works(self):
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'),
+            self.url(f'/students/{self.student.public_id}/transfer/'),
             {'toSchoolId': str(self.other_school.id)}, format='json',
         )
         self.assertEqual(resp.status_code, 200, resp.content)
@@ -561,7 +561,7 @@ class TransferHappyPathTests(SecurityTestBase):
     def test_cannot_transfer_to_own_school(self):
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'),
+            self.url(f'/students/{self.student.public_id}/transfer/'),
             {'toSchoolId': str(self.school.id)}, format='json',
         )
         self.assertEqual(resp.status_code, 400)
@@ -574,7 +574,7 @@ class TransferHappyPathTests(SecurityTestBase):
         )
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'),
+            self.url(f'/students/{self.student.public_id}/transfer/'),
             {'toSchoolId': str(inactive.id)}, format='json',
         )
         self.assertEqual(resp.status_code, 404)
@@ -582,14 +582,14 @@ class TransferHappyPathTests(SecurityTestBase):
     def test_missing_destination_is_a_validation_error(self):
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'), {}, format='json',
+            self.url(f'/students/{self.student.public_id}/transfer/'), {}, format='json',
         )
         self.assertEqual(resp.status_code, 400)
 
     def test_valid_within_school_class_transfer_still_works(self):
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'),
+            self.url(f'/students/{self.student.public_id}/transfer/'),
             {'toClassId': str(self.jss2.pk)}, format='json',
         )
         self.assertEqual(resp.status_code, 200, resp.content)
@@ -607,7 +607,7 @@ class TransferHappyPathTests(SecurityTestBase):
         )
         self.auth(self.admin)
         resp = self.client.post(
-            self.url(f'/students/{self.student.id}/transfer/'),
+            self.url(f'/students/{self.student.public_id}/transfer/'),
             {'toSectionId': str(section_b.pk)}, format='json',
         )
         self.assertEqual(resp.status_code, 200, resp.content)

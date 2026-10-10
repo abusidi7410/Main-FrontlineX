@@ -526,7 +526,7 @@ class AIAllowanceTests(SchoolTestCase):
         self.parent.linked_students.add(child)
         self.auth(self.parent)
         response = self.ask(
-            'get_my_child_attendance', student_id=str(other.id),
+            'get_my_child_attendance', student_id=str(other.public_id),
         )
         self.assertEqual(response.status_code, 403)
 
