@@ -14,6 +14,7 @@ import type {
   NotificationPage,
   NotificationPreference,
   NotificationType,
+  ReverseGeocodeResult,
   School,
   StaffMember,
   SubscriptionState,
@@ -35,6 +36,10 @@ export interface OnboardingPayload {
     phone: string;
     email: string;
     website?: string | undefined;
+    latitude?: number | undefined;
+    longitude?: number | undefined;
+    gpsAccuracy?: number | undefined;
+    timezone?: string | undefined;
   };
   admin: { fullName: string; phone: string; email: string; password: string };
   tierId: string;
@@ -68,6 +73,13 @@ export type SchoolProfile = Pick<
   | "branding"
   | "studentCount"
   | "staffCount"
+  | "latitude"
+  | "longitude"
+  | "gpsAccuracy"
+  | "attendanceRadius"
+  | "timezone"
+  | "locationSetAt"
+  | "locationConfirmedAt"
 >;
 
 export interface SchoolProfileInput {
@@ -75,6 +87,12 @@ export interface SchoolProfileInput {
   phone?: string;
   email?: string;
   address?: string;
+  /** Writes go through the model serializer, so these are snake_case. */
+  latitude?: number | null;
+  longitude?: number | null;
+  gps_accuracy?: number | null;
+  attendance_radius?: number;
+  timezone?: string;
 }
 
 /**
@@ -415,4 +433,21 @@ export async function getSchoolAuditLogs(): Promise<AuditEvent[]> {
 export async function getUssdConfig(): Promise<UssdConfig> {
   // SECURITY: Backend must verify permission settings.read and schoolId match.
   return apiFetch("/ussd-config");
+}
+
+/**
+ * A human-readable place for a coordinate pair, proxied through the backend so
+ * the browser never calls a third-party geocoder directly. Returns `null` when
+ * the upstream service cannot answer — callers fall back to raw coordinates.
+ */
+export async function reverseGeocode(
+  latitude: number,
+  longitude: number,
+): Promise<ReverseGeocodeResult | null> {
+  // SECURITY: Authenticated school member; reads no tenant data.
+  const result = await apiFetch<{ location: ReverseGeocodeResult | null }>(
+    "/schools/reverse-geocode",
+    { query: { lat: latitude, lng: longitude } },
+  );
+  return result.location;
 }

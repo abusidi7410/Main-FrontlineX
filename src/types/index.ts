@@ -25,6 +25,10 @@ export type Permission =
   | "attendance.write"
   /** Amending an already-taken register; distinct from taking it. */
   | "attendance.correct"
+  /** Staff check-in: the caller's own GPS check-in and their own records. */
+  | "attendance.staff"
+  /** See every staff check-in and resolve uncertain ones. */
+  | "attendance.staff.manage"
   | "results.read"
   | "results.write"
   | "results.approve"
@@ -88,6 +92,15 @@ export interface School {
   branding: { primary: string; secondary: string };
   studentCount: number;
   staffCount: number;
+  /** Campus coordinates captured at registration or in Settings; null until set. */
+  latitude: number | null;
+  longitude: number | null;
+  gpsAccuracy: number | null;
+  /** How far (metres) a staff check-in may be from the campus. */
+  attendanceRadius: number;
+  timezone: string;
+  locationSetAt: string | null;
+  locationConfirmedAt: string | null;
 }
 
 export interface SubscriptionTier {
@@ -219,6 +232,55 @@ export interface AttendanceSubmission {
   records: AttendanceRecord[];
   syncState: "pending" | "synced" | "failed";
   updatedAt: number;
+}
+
+export type StaffAttendanceStatus =
+  | "at_school"
+  | "outside"
+  | "unverified"
+  | "pending_review";
+
+export interface StaffAttendanceCheckInInput {
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracy?: number | null;
+  notes?: string;
+  /** Only used by the offline queue: the day the check-in was captured. */
+  date?: string;
+}
+
+export interface StaffAttendanceRecord {
+  id: string;
+  staffId: string;
+  staffName: string;
+  role: string;
+  date: string;
+  checkInAt: string;
+  latitude: number | null;
+  longitude: number | null;
+  accuracy: number | null;
+  distanceMeters: number | null;
+  status: StaffAttendanceStatus;
+  notes: string;
+  reviewedBy: string;
+  reviewedAt: string | null;
+  reviewNote: string;
+}
+
+export interface StaffAttendancePage {
+  records: StaffAttendanceRecord[];
+  count: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  staffId: string | null;
+}
+
+export interface ReverseGeocodeResult {
+  label: string;
+  address: Record<string, string>;
+  latitude: number;
+  longitude: number;
 }
 
 export interface Invoice {

@@ -1,5 +1,13 @@
 import { apiFetch } from "@/api/client";
-import type { AttendanceStatus, AttendanceSubmission, Student } from "@/types";
+import type {
+  AttendanceStatus,
+  AttendanceSubmission,
+  StaffAttendanceCheckInInput,
+  StaffAttendancePage,
+  StaffAttendanceRecord,
+  StaffAttendanceStatus,
+  Student,
+} from "@/types";
 
 export type RosterParams = {
   className: string;
@@ -136,6 +144,59 @@ export async function assignClassTeacher(params: {
   // SECURITY: Backend requires staff.write, so only an administrator can change
   // who is responsible for a register. Reads are attendance.read.
   return apiFetch("/attendance/class-teachers", { method: "POST", body: params });
+}
+
+/**
+ * The caller checks themselves in. The staff record is taken from the session
+ * on the server, so no staff id is sent — nobody can check in for anyone else.
+ */
+export async function checkInStaff(
+  input: StaffAttendanceCheckInInput,
+): Promise<StaffAttendanceRecord> {
+  // SECURITY: Backend requires attendance.staff and resolves the staff record
+  // from the caller's own account.
+  return apiFetch("/attendance/check-in", { method: "POST", body: input });
+}
+
+/**
+ * Staff check-ins. An administrator/principal sees the whole school; everyone
+ * else receives only their own rows, scoped by the server.
+ */
+export async function getStaffAttendance(params: {
+  date?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  staffId?: string;
+  status?: StaffAttendanceStatus[];
+  search?: string;
+  page?: number;
+  pageSize?: number;
+} = {}): Promise<StaffAttendancePage> {
+  // SECURITY: Backend requires attendance.staff and scopes non-managers to
+  // their own records.
+  const query: Record<string, string | number | undefined> = {};
+  if (params.date) query["date"] = params.date;
+  if (params.dateFrom) query["dateFrom"] = params.dateFrom;
+  if (params.dateTo) query["dateTo"] = params.dateTo;
+  if (params.staffId) query["staffId"] = params.staffId;
+  if (params.status?.length) query["status"] = params.status.join(",");
+  if (params.search) query["search"] = params.search;
+  if (params.page) query["page"] = params.page;
+  if (params.pageSize) query["pageSize"] = params.pageSize;
+  return apiFetch("/attendance/staff-records", { query });
+}
+
+export async function reviewStaffAttendance(params: {
+  id: string;
+  decision: "approve" | "reject";
+  note?: string;
+}): Promise<StaffAttendanceRecord> {
+  // SECURITY: Backend requires attendance.staff.manage and scopes the record to
+  // the caller's own school.
+  return apiFetch(`/attendance/staff-records/${params.id}/review`, {
+    method: "POST",
+    body: { decision: params.decision, ...(params.note ? { note: params.note } : {}) },
+  });
 }
 
 /**

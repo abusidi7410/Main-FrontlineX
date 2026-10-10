@@ -30,8 +30,18 @@ import {
   correctAttendance,
   getAttendanceHistory,
   getAttendanceOverview,
+  getStaffAttendance,
+  reviewStaffAttendance,
 } from "@/services/attendance.service";
-import type { AttendanceStatus } from "@/types";
+import { reverseGeocode } from "@/services/school.service";
+import { useAuthenticatedSession } from "@/auth/session";
+import { LocationMap } from "@/components/common/location-map";
+import type {
+  AttendanceStatus,
+  School,
+  StaffAttendanceRecord,
+  StaffAttendanceStatus,
+} from "@/types";
 import { cn } from "@/lib/utils";
 import { schoolToday } from "@/lib/format";
 import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
@@ -156,6 +166,10 @@ function AttendanceOverviewPage() {
         )}
 
         <AttendanceHistory date={date} />
+
+        <IfAllowed permission="attendance.staff.manage">
+          <StaffAttendanceRecords initialDate={date} />
+        </IfAllowed>
       </div>
     </PermissionGate>
   );
@@ -366,5 +380,291 @@ function AttendanceHistory({ date }: { date: string }) {
         </div>
       ) : null}
     </section>
+  );
+}
+
+const STAFF_STATUS_META: Record<
+  StaffAttendanceStatus,
+  { label: string; className: string; dot: string }
+> = {
+  at_school: {
+    label: "On campus",
+    className: "bg-success-soft text-success",
+    dot: "bg-success",
+  },
+  outside: {
+    label: "Outside campus",
+    className: "bg-destructive-soft text-destructive",
+    dot: "bg-destructive",
+  },
+  pending_review: {
+    label: "Needs review",
+    className: "bg-warning-soft text-warning",
+    dot: "bg-warning",
+  },
+  unverified: {
+    label: "Unverified",
+    className: "bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground",
+  },
+};
+
+/**
+ * Every staff GPS check-in for a day, with the derived status. Managers can
+ * settle the ambiguous "needs review" rows, and open any row on a map beside
+ * the campus radius to see exactly where the person was.
+ */
+function StaffAttendanceRecords({ initialDate }: { initialDate: string }) {
+  const { school } = useAuthenticatedSession();
+  const [date, setDate] = useState(initialDate);
+  const [status, setStatus] = useState<StaffAttendanceStatus | "all">("all");
+  const [search, setSearch] = useState("");
+  useEffect(() => setDate(initialDate), [initialDate]);
+
+  const query = useQuery({
+    queryKey: ["staff-attendance", "records", date, status, search],
+    queryFn: () =>
+      getStaffAttendance({
+        date,
+        ...(status === "all" ? {} : { status: [status] }),
+        ...(search.trim() ? { search: search.trim() } : {}),
+        pageSize: 100,
+      }),
+  });
+
+  const records = query.data?.records ?? [];
+  const counts = records.reduce<Record<string, number>>((acc, record) => {
+    acc[record.status] = (acc[record.status] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Teacher attendance records</h2>
+          <p className="text-sm text-muted-foreground">
+            GPS check-ins verified against the campus location on {date}.
+          </p>
+        </div>
+        <div className="flex w-full flex-wrap gap-3 sm:w-auto">
+          <div className="w-full space-y-1.5 sm:w-40">
+            <Label htmlFor="staff-records-date">Date</Label>
+            <Input
+              id="staff-records-date"
+              type="date"
+              className="h-11"
+              value={date}
+              onChange={(event) => setDate(event.target.value)}
+            />
+          </div>
+          <div className="w-full space-y-1.5 sm:w-44">
+            <Label htmlFor="staff-records-status">Status</Label>
+            <Select
+              value={status}
+              onValueChange={(value) => setStatus(value as StaffAttendanceStatus | "all")}
+            >
+              <SelectTrigger id="staff-records-status" className="h-11">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {(Object.keys(STAFF_STATUS_META) as StaffAttendanceStatus[]).map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {STAFF_STATUS_META[value].label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-full space-y-1.5 sm:w-48">
+            <Label htmlFor="staff-records-search">Find staff</Label>
+            <Input
+              id="staff-records-search"
+              className="h-11"
+              placeholder="Name"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+
+      {records.length > 0 ? (
+        <div className="flex flex-wrap gap-2" aria-live="polite">
+          <p className="rounded-full border bg-surface px-3 py-1.5 text-sm font-medium">
+            Total: <span className="tabular-nums">{records.length}</span>
+          </p>
+          {(Object.keys(STAFF_STATUS_META) as StaffAttendanceStatus[]).map((value) =>
+            counts[value] ? (
+              <p
+                key={value}
+                className="rounded-full border bg-surface px-3 py-1.5 text-sm font-medium"
+              >
+                {STAFF_STATUS_META[value].label}:{" "}
+                <span className="tabular-nums">{counts[value]}</span>
+              </p>
+            ) : null,
+          )}
+        </div>
+      ) : null}
+
+      {query.isError ? (
+        <ErrorState onRetry={() => void query.refetch()} />
+      ) : query.isPending ? (
+        <ListSkeleton rows={5} />
+      ) : records.length === 0 ? (
+        <div className="fn-panel p-6 text-center text-muted-foreground">
+          No staff check-ins recorded for this day.
+        </div>
+      ) : (
+        <ul className="fn-panel divide-y">
+          {records.map((record) => (
+            <StaffRecordRow key={record.id} record={record} school={school} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function StaffRecordRow({ record, school }: { record: StaffAttendanceRecord; school: School | null }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const queryClient = useQueryClient();
+  const meta = STAFF_STATUS_META[record.status];
+  const hasPoint = record.latitude != null && record.longitude != null;
+
+  const place = useQuery({
+    queryKey: ["reverse-geocode", record.latitude, record.longitude],
+    queryFn: () => reverseGeocode(record.latitude as number, record.longitude as number),
+    enabled: open && hasPoint,
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  const review = useMutation({
+    mutationFn: (decision: "approve" | "reject") =>
+      reviewStaffAttendance({ id: record.id, decision, ...(note.trim() ? { note: note.trim() } : {}) }),
+    onSuccess: () => {
+      toast.success("Check-in reviewed");
+      setOpen(false);
+      setNote("");
+      void queryClient.invalidateQueries({ queryKey: ["staff-attendance"] });
+    },
+    onError: () => toast.error("We couldn't save that review. Please try again."),
+  });
+
+  return (
+    <li className="flex flex-wrap items-center gap-3 p-3 sm:p-4">
+      <span className={cn("size-2.5 shrink-0 rounded-full", meta.dot)} aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium">{record.staffName}</p>
+        <p className="truncate text-sm text-muted-foreground">
+          {record.role}
+          {record.checkInAt
+            ? ` · ${new Date(record.checkInAt).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}`
+            : ""}
+          {record.distanceMeters != null
+            ? ` · ${Math.round(record.distanceMeters)} m from campus`
+            : ""}
+        </p>
+      </div>
+      <span className={cn("rounded-full px-3 py-1 text-xs font-medium", meta.className)}>
+        {meta.label}
+      </span>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogTrigger asChild>
+          <Button variant="ghost" size="sm" className="h-9">
+            {record.status === "pending_review" ? "Review" : "Location"}
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{record.staffName}</DialogTitle>
+            <DialogDescription>
+              {record.date} · {meta.label}
+              {record.distanceMeters != null
+                ? ` · ${Math.round(record.distanceMeters)} m from campus`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {hasPoint ? (
+            <LocationMap
+              latitude={school?.latitude ?? null}
+              longitude={school?.longitude ?? null}
+              markers={[
+                {
+                  latitude: record.latitude as number,
+                  longitude: record.longitude as number,
+                  status: record.status,
+                  label: record.staffName,
+                },
+              ]}
+              radiusMeters={school?.attendanceRadius ?? 150}
+              height={240}
+              zoom={16}
+            />
+          ) : (
+            <p className="rounded-lg border border-border bg-muted px-3 py-4 text-sm text-muted-foreground">
+              This check-in carried no coordinates, so there is nothing to place on the map.
+            </p>
+          )}
+
+          {hasPoint ? (
+            <p className="text-sm text-muted-foreground">
+              {place.isFetching
+                ? "Looking up the nearest place…"
+                : place.data?.label
+                  ? place.data.label
+                  : `Near ${Number(record.latitude).toFixed(5)}, ${Number(record.longitude).toFixed(5)}`}
+            </p>
+          ) : null}
+
+          {record.reviewedBy ? (
+            <p className="text-sm text-muted-foreground">
+              Reviewed by {record.reviewedBy}
+              {record.reviewNote ? ` — ${record.reviewNote}` : ""}
+            </p>
+          ) : null}
+
+          {record.status === "pending_review" ? (
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor={`review-note-${record.id}`}>Note (optional)</Label>
+                <Input
+                  id={`review-note-${record.id}`}
+                  value={note}
+                  placeholder="e.g. Confirmed at the gate"
+                  onChange={(event) => setNote(event.target.value)}
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  disabled={review.isPending}
+                  onClick={() => review.mutate("reject")}
+                >
+                  Mark outside
+                </Button>
+                <Button disabled={review.isPending} onClick={() => review.mutate("approve")}>
+                  {review.isPending ? "Saving…" : "Confirm on campus"}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setOpen(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
+    </li>
   );
 }

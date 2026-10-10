@@ -16,6 +16,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { LocationMap } from "@/components/common/location-map";
 import {
   Select,
   SelectContent,
@@ -26,8 +27,9 @@ import {
 import { useSession } from "@/auth/session";
 import { HOME_BY_ROLE } from "@/permissions/navigation";
 import { SUBSCRIPTION_TIERS, tierById } from "@/constants/plans";
-import { STATES } from "@/constants/reference";
+import { NIGERIAN_STATES, lgasForState } from "@/constants/nigeria";
 import { emailField, ngPhone, passwordField, requiredText } from "@/lib/validation";
+import { getCurrentPosition, geolocationSupported } from "@/lib/geolocation";
 import { naira } from "@/lib/format";
 import { registerSchool, verifySchoolPayment } from "@/services/school.service";
 import { cn } from "@/lib/utils";
@@ -57,6 +59,9 @@ const schoolSchema = z.object({
   phone: ngPhone,
   email: emailField,
   website: z.string().trim().max(120).optional().or(z.literal("")),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  gpsAccuracy: z.number().nonnegative().optional(),
 });
 
 const adminSchema = z.object({
@@ -392,7 +397,6 @@ function RegisterContent({
 }) {
   const { field: nameField } = useController({ control: schoolForm.control, name: "name" });
   const { field: addressField } = useController({ control: schoolForm.control, name: "address" });
-  const { field: lgaField } = useController({ control: schoolForm.control, name: "lga" });
   const { field: phoneField } = useController({ control: schoolForm.control, name: "phone" });
   const { field: emailField } = useController({ control: schoolForm.control, name: "email" });
   const { field: websiteField } = useController({ control: schoolForm.control, name: "website" });
@@ -403,6 +407,37 @@ function RegisterContent({
     control: adminForm.control,
     name: "password",
   });
+
+  const [geoBusy, setGeoBusy] = useState(false);
+  const [geoMessage, setGeoMessage] = useState<string | null>(null);
+  const schoolLatitude = schoolForm.watch("latitude");
+  const schoolLongitude = schoolForm.watch("longitude");
+  const schoolHasLocation = schoolLatitude != null && schoolLongitude != null;
+  const selectedState = schoolForm.watch("state");
+  const lgaOptions = lgasForState(selectedState);
+
+  const captureLocation = async () => {
+    setGeoBusy(true);
+    setGeoMessage(null);
+    try {
+      const fix = await getCurrentPosition();
+      schoolForm.setValue("latitude", Number(fix.latitude.toFixed(6)), { shouldValidate: true });
+      schoolForm.setValue("longitude", Number(fix.longitude.toFixed(6)), { shouldValidate: true });
+      schoolForm.setValue("gpsAccuracy", Math.round(fix.accuracy), { shouldValidate: true });
+      setGeoMessage(`Location captured (accurate to about ${Math.round(fix.accuracy)} m).`);
+    } catch (error) {
+      setGeoMessage(error instanceof Error ? error.message : "We could not get your location.");
+    } finally {
+      setGeoBusy(false);
+    }
+  };
+
+  const clearLocation = () => {
+    schoolForm.setValue("latitude", undefined, { shouldValidate: true });
+    schoolForm.setValue("longitude", undefined, { shouldValidate: true });
+    schoolForm.setValue("gpsAccuracy", undefined, { shouldValidate: true });
+    setGeoMessage(null);
+  };
 
   return (
     <div className="space-y-6">
@@ -514,9 +549,10 @@ function RegisterContent({
               State <span style={{ color: TERRACOTTA }}>*</span>
             </label>
             <Select
-              onValueChange={(value) =>
-                schoolForm.setValue("state", value, { shouldValidate: true })
-              }
+              onValueChange={(value) => {
+                schoolForm.setValue("state", value, { shouldValidate: true });
+                schoolForm.setValue("lga", "", { shouldValidate: true });
+              }}
               value={schoolForm.watch("state")}
             >
               <SelectTrigger
@@ -526,7 +562,7 @@ function RegisterContent({
                 <SelectValue placeholder="Select state" />
               </SelectTrigger>
               <SelectContent>
-                {STATES.map((option) => (
+                {NIGERIAN_STATES.map((option) => (
                   <SelectItem key={option} value={option}>
                     {option}
                   </SelectItem>
@@ -547,13 +583,31 @@ function RegisterContent({
             >
               Local government area <span style={{ color: TERRACOTTA }}>*</span>
             </label>
-            <input
-              id="lga"
-              className={cn("auth-input", schoolForm.formState.errors.lga && "auth-input-err")}
-              aria-invalid={!!schoolForm.formState.errors.lga}
-              aria-describedby={schoolForm.formState.errors.lga ? "lga-error" : undefined}
-              {...lgaField}
-            />
+            <Select
+              disabled={!selectedState}
+              onValueChange={(value) =>
+                schoolForm.setValue("lga", value, { shouldValidate: true })
+              }
+              value={schoolForm.watch("lga")}
+            >
+              <SelectTrigger
+                id="lga"
+                className={cn(
+                  "auth-input cursor-pointer px-4 text-[13px] text-foreground",
+                  schoolForm.formState.errors.lga && "auth-input-err",
+                )}
+                aria-invalid={!!schoolForm.formState.errors.lga}
+              >
+                <SelectValue placeholder={selectedState ? "Select LGA" : "Select a state first"} />
+              </SelectTrigger>
+              <SelectContent>
+                {lgaOptions.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <FieldError id="lga-error" message={schoolForm.formState.errors.lga?.message ?? ""} />
           </div>
 
@@ -624,6 +678,70 @@ function RegisterContent({
               className="auth-input"
               {...websiteField}
             />
+          </div>
+
+          <div className="space-y-2 rounded-xl border border-[#E2DCCE] p-3">
+            <div>
+              <p className="text-[12px] font-medium tracking-[0.02em]" style={{ color: MUTED }}>
+                School location{" "}
+                <span className="font-normal" style={{ color: SOFT }}>
+                  (optional, but recommended)
+                </span>
+              </p>
+              <p className="mt-0.5 text-[11.5px] leading-snug" style={{ color: SOFT }}>
+                Captured once, it lets us confirm staff check-ins are on campus. You can add or
+                change it later in Settings.
+              </p>
+            </div>
+            {schoolHasLocation ? (
+              <LocationMap
+                latitude={schoolLatitude ?? null}
+                longitude={schoolLongitude ?? null}
+                interactive
+                height={180}
+                radiusMeters={150}
+                onChange={(lat, lng) => {
+                  schoolForm.setValue("latitude", Number(lat.toFixed(6)), { shouldValidate: true });
+                  schoolForm.setValue("longitude", Number(lng.toFixed(6)), {
+                    shouldValidate: true,
+                  });
+                }}
+              />
+            ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void captureLocation()}
+                disabled={geoBusy || !geolocationSupported()}
+                className="auth-btn auth-btn-form !mt-0 disabled:opacity-60"
+              >
+                {geoBusy
+                  ? "Getting location…"
+                  : schoolHasLocation
+                    ? "Re-capture location"
+                    : "Use my current location"}
+              </button>
+              {schoolHasLocation ? (
+                <button
+                  type="button"
+                  onClick={clearLocation}
+                  className="text-[12px] font-medium"
+                  style={{ color: MUTED }}
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+            {geoMessage ? (
+              <p className="text-[11.5px]" style={{ color: SOFT }}>
+                {geoMessage}
+              </p>
+            ) : null}
+            {schoolHasLocation ? (
+              <p className="text-[11.5px]" style={{ color: SOFT }}>
+                Drag the pin or tap the map to fine-tune the exact campus point.
+              </p>
+            ) : null}
           </div>
 
           <div className="flex justify-center pt-2">
@@ -1002,6 +1120,9 @@ export function AuthScreens({
       phone: "",
       email: "",
       website: "",
+      latitude: undefined,
+      longitude: undefined,
+      gpsAccuracy: undefined,
     },
   });
   const adminForm = useForm<AdminValues>({

@@ -106,6 +106,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           school: { ...prev.school, ...patch },
         };
         authService.persistSession(next);
+        setSession(next);
         return next;
       });
     },

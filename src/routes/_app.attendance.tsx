@@ -18,18 +18,22 @@ import {
 import { ApiRequestError } from "@/api/client";
 import { useAuthenticatedSession } from "@/auth/session";
 import { useOnlineStatus } from "@/hooks/use-online-status";
+import { getCurrentPosition, geolocationSupported } from "@/lib/geolocation";
 import { queueAttendance } from "@/offline/store";
 import {
   assignedClassNames,
   getClassTeachers,
   getRoster,
   submitAttendance,
+  checkInStaff,
+  getStaffAttendance,
 } from "@/services/attendance.service";
 import { getAcademicStructure } from "@/services/academics.service";
 import { schoolToday } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
-import type { AttendanceStatus } from "@/types";
+import { LocationMap } from "@/components/common/location-map";
+import type { AttendanceStatus, School, StaffAttendanceStatus } from "@/types";
 
 export const Route = createFileRoute("/_app/attendance")({
   head: () => ({
@@ -85,9 +89,168 @@ function today() {
   return schoolToday();
 }
 
+const CHECK_IN_STATUS: Record<StaffAttendanceStatus, { label: string; className: string }> = {
+  at_school: { label: "On campus", className: "border-success/40 text-success" },
+  outside: { label: "Outside campus", className: "border-destructive/40 text-destructive" },
+  pending_review: { label: "Needs review", className: "border-warning/40 text-warning" },
+  unverified: { label: "Location unavailable", className: "border-border text-muted-foreground" },
+};
+
+/**
+ * A staff member's own check-in. It sends only a coordinate and an accuracy
+ * reading — the staff record and school are resolved from the caller's session
+ * on the server, so this card cannot check anyone else in.
+ */
+function StaffCheckInCard({
+  staffId,
+  school,
+}: {
+  staffId: string | null;
+  school: School | null;
+}) {
+  const online = useOnlineStatus();
+  const queryClient = useQueryClient();
+  const date = today();
+
+  const mine = useQuery({
+    queryKey: ["staff-attendance", "mine", date],
+    queryFn: () => getStaffAttendance({ date, ...(staffId ? { staffId } : {}), pageSize: 5 }),
+    enabled: staffId != null,
+  });
+  const record = mine.data?.records[0] ?? null;
+  const schoolPoint =
+    school?.latitude != null && school?.longitude != null
+      ? { latitude: school.latitude, longitude: school.longitude }
+      : null;
+
+  const checkIn = useMutation({
+    mutationFn: async () => {
+      if (!online) {
+        throw new Error("You're offline. Check in again once your connection returns.");
+      }
+      const fix = await getCurrentPosition();
+      return checkInStaff({
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+        accuracy: fix.accuracy,
+      });
+    },
+    onSuccess: (saved) => {
+      void queryClient.invalidateQueries({ queryKey: ["staff-attendance"] });
+      const status = CHECK_IN_STATUS[saved.status].label;
+      toast.success(
+        saved.status === "at_school"
+          ? `Checked in — you're on campus.`
+          : `Checked in — ${status.toLowerCase()}. An administrator will review it.`,
+      );
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "We couldn't record your check-in.");
+    },
+  });
+
+  if (staffId == null) {
+    return (
+      <div className="fn-panel p-4 text-sm text-muted-foreground">
+        Your account has no linked staff record, so check-in is not available here.
+      </div>
+    );
+  }
+
+  return (
+    <div className="fn-panel space-y-4 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-medium">My check-in</h2>
+          <p className="text-xs text-muted-foreground">
+            Confirm you're on campus today{school?.attendanceRadius ? ` (within ${school.attendanceRadius} m)` : ""}.
+          </p>
+        </div>
+        <Button
+          type="button"
+          className="h-11"
+          disabled={checkIn.isPending || !geolocationSupported()}
+          onClick={() => checkIn.mutate()}
+        >
+          {checkIn.isPending ? "Checking in…" : record ? "Check in again" : "Check in now"}
+        </Button>
+      </div>
+
+      {record ? (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span
+            className={cn(
+              "rounded-full border px-3 py-1 text-xs font-medium",
+              CHECK_IN_STATUS[record.status].className,
+            )}
+          >
+            {CHECK_IN_STATUS[record.status].label}
+          </span>
+          <span className="text-muted-foreground">
+            {record.checkInAt
+              ? new Date(record.checkInAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : "—"}
+          </span>
+          {record.distanceMeters != null ? (
+            <span className="text-muted-foreground">
+              {Math.round(record.distanceMeters)} m from campus
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          You haven't checked in yet today. Your check-in time is recorded as {date}.
+        </p>
+      )}
+
+      {mine.data?.records.length ? (
+        <ul className="divide-y divide-border rounded-xl border border-border text-sm">
+          {mine.data.records.map((item) => (
+            <li key={item.id} className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-muted-foreground">{item.date}</span>
+              <span className="font-medium">{CHECK_IN_STATUS[item.status].label}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {schoolPoint ? (
+        <LocationMap
+          latitude={schoolPoint.latitude}
+          longitude={schoolPoint.longitude}
+          markers={
+            record?.latitude != null && record?.longitude != null
+              ? [
+                  {
+                    latitude: record.latitude,
+                    longitude: record.longitude,
+                    status: record.status,
+                    label: "Your check-in",
+                  },
+                ]
+              : []
+          }
+          radiusMeters={school?.attendanceRadius ?? 150}
+          height={170}
+          zoom={16}
+          className="border"
+        />
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          No campus location is set yet, so check-ins are recorded but not yet verified against a
+          radius. An administrator can set it under Settings → School profile.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function AttendancePage() {
   const online = useOnlineStatus();
-  const { user } = useAuthenticatedSession();
+  const { user, can, school } = useAuthenticatedSession();
   const queryClient = useQueryClient();
   const academics = useQuery({ queryKey: ["academics"], queryFn: () => getAcademicStructure() });
   const teachers = useQuery({ queryKey: ["class-teachers"], queryFn: getClassTeachers });
@@ -246,6 +409,10 @@ function AttendancePage() {
         />
 
         {!online ? <OfflineNotice /> : null}
+
+        {can("attendance.staff") ? (
+          <StaffCheckInCard staffId={user.staffId} school={school} />
+        ) : null}
 
         {classes.length === 0 && !academics.isPending ? (
           <div className="fn-panel p-6 text-center text-muted-foreground">

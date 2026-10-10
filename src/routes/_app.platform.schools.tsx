@@ -27,6 +27,7 @@ import {
 import { useDebounced } from "@/hooks/use-debounced";
 import { dateFmt, naira, numberFmt } from "@/lib/format";
 import { tierById, SUBSCRIPTION_TIERS } from "@/constants/plans";
+import { NIGERIAN_STATES, lgasForState } from "@/constants/nigeria";
 import type { PlatformSchool } from "@/types";
 import {
   createPlatformSchool,
@@ -278,6 +279,8 @@ function RegisterSchoolDialog({
   const set = (key: keyof typeof form) => (value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
 
+  const lgaOptions = lgasForState(form.state);
+
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     createMutation.mutate(form);
@@ -388,25 +391,43 @@ function RegisterSchoolDialog({
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="reg-state">State</Label>
-                <Input
-                  id="reg-state"
-                  className="h-11"
-                  required
-                  placeholder="e.g. Kano"
+                <Select
                   value={form.state}
-                  onChange={(e) => set("state")(e.target.value)}
-                />
+                  onValueChange={(value) => {
+                    set("state")(value);
+                    set("lga")("");
+                  }}
+                >
+                  <SelectTrigger id="reg-state" className="h-11">
+                    <SelectValue placeholder="Select state" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {NIGERIAN_STATES.map((state) => (
+                      <SelectItem key={state} value={state}>
+                        {state}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="reg-lga">LGA</Label>
-                <Input
-                  id="reg-lga"
-                  className="h-11"
-                  required
-                  placeholder="e.g. Kano Municipal"
+                <Select
                   value={form.lga}
-                  onChange={(e) => set("lga")(e.target.value)}
-                />
+                  onValueChange={set("lga")}
+                  disabled={!form.state}
+                >
+                  <SelectTrigger id="reg-lga" className="h-11">
+                    <SelectValue placeholder={form.state ? "Select LGA" : "Select a state first"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {lgaOptions.map((lga) => (
+                      <SelectItem key={lga} value={lga}>
+                        {lga}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div className="space-y-2">
@@ -647,6 +668,8 @@ function ManageSchoolDialog({
   const set = (key: keyof EditableSchool) => (value: string) =>
     setForm((f) => (f ? { ...f, [key]: value } : f));
 
+  const lgaOptions = lgasForState(form?.state ?? "");
+
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!schoolId || !form) return;
@@ -718,21 +741,41 @@ function ManageSchoolDialog({
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="mng-state">State</Label>
-                  <Input
-                    id="mng-state"
-                    className="h-11"
+                  <Select
                     value={form.state}
-                    onChange={(e) => set("state")(e.target.value)}
-                  />
+                    onValueChange={(value) => {
+                      set("state")(value);
+                      set("lga")("");
+                    }}
+                  >
+                    <SelectTrigger id="mng-state" className="h-11">
+                      <SelectValue placeholder="Select state" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {NIGERIAN_STATES.map((state) => (
+                        <SelectItem key={state} value={state}>
+                          {state}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="mng-lga">LGA</Label>
-                  <Input
-                    id="mng-lga"
-                    className="h-11"
-                    value={form.lga}
-                    onChange={(e) => set("lga")(e.target.value)}
-                  />
+                  <Select value={form.lga} onValueChange={set("lga")} disabled={!form.state}>
+                    <SelectTrigger id="mng-lga" className="h-11">
+                      <SelectValue
+                        placeholder={form.state ? "Select LGA" : "Select a state first"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {lgaOptions.map((lga) => (
+                        <SelectItem key={lga} value={lga}>
+                          {lga}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
               <div className="space-y-2">

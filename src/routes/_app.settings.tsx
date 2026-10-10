@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
+import { LocationMap } from "@/components/common/location-map";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/auth/session";
 import { ApiRequestError } from "@/api/client";
+import { getCurrentPosition, geolocationSupported } from "@/lib/geolocation";
 import { PaymentStructurePanel } from "@/features/finance/payment-structure-panel";
 import { NotificationPreferencesPanel } from "@/features/notifications/notification-preferences-panel";
 import { ROLE_LABELS } from "@/permissions";
@@ -45,6 +47,12 @@ function SettingsPage() {
   const [address, setAddress] = useState(school?.address ?? "");
   const [currentSession, setCurrentSession] = useState(school?.currentSession ?? "");
   const [currentTerm, setCurrentTerm] = useState(school?.currentTerm ?? "");
+  const [latitude, setLatitude] = useState<number | null>(school?.latitude ?? null);
+  const [longitude, setLongitude] = useState<number | null>(school?.longitude ?? null);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(school?.gpsAccuracy ?? null);
+  const [attendanceRadius, setAttendanceRadius] = useState<number>(school?.attendanceRadius ?? 150);
+  const [timezone, setTimezone] = useState<string>(school?.timezone ?? "Africa/Lagos");
+  const [geoBusy, setGeoBusy] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoUrl, setLogoUrl] = useState(school?.logoUrl ?? "");
@@ -94,7 +102,17 @@ function SettingsPage() {
                 try {
                   // The server always writes to the school on the caller's own
                   // account, so this cannot touch another tenant's profile.
-                  const profile = await updateSchoolProfile({ name, phone, email, address });
+                  const profile = await updateSchoolProfile({
+                    name,
+                    phone,
+                    email,
+                    address,
+                    latitude,
+                    longitude,
+                    gps_accuracy: gpsAccuracy,
+                    attendance_radius: attendanceRadius,
+                    timezone,
+                  });
                   updateSchool(profile);
                   toast.success("School profile saved");
                 } catch (error) {
@@ -200,6 +218,107 @@ function SettingsPage() {
                   disabled={readOnly}
                   onChange={(e) => setAddress(e.target.value)}
                 />
+              </div>
+              <div className="space-y-3 rounded-xl border border-border p-4 sm:col-span-2">
+                <div>
+                  <h2 className="font-medium">Campus location</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Staff check-ins are compared against this point. Set it once from the school gate
+                    and adjust the radius to match your campus. Time zone decides which calendar day
+                    a check-in belongs to.
+                  </p>
+                </div>
+                {latitude != null && longitude != null ? (
+                  <LocationMap
+                    latitude={latitude}
+                    longitude={longitude}
+                    interactive={!readOnly}
+                    radiusMeters={attendanceRadius}
+                    onChange={(lat, lng) => {
+                      setLatitude(Number(lat.toFixed(6)));
+                      setLongitude(Number(lng.toFixed(6)));
+                      setGpsAccuracy(null);
+                    }}
+                  />
+                ) : (
+                  <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+                    No campus location set yet.
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={readOnly || geoBusy || !geolocationSupported()}
+                    onClick={async () => {
+                      setGeoBusy(true);
+                      try {
+                        const fix = await getCurrentPosition();
+                        setLatitude(Number(fix.latitude.toFixed(6)));
+                        setLongitude(Number(fix.longitude.toFixed(6)));
+                        setGpsAccuracy(Math.round(fix.accuracy));
+                        toast.success("Location captured — remember to save changes");
+                      } catch (error) {
+                        toast.error(
+                          error instanceof Error ? error.message : "We could not get your location.",
+                        );
+                      } finally {
+                        setGeoBusy(false);
+                      }
+                    }}
+                  >
+                    {geoBusy ? "Getting location…" : "Use my current location"}
+                  </Button>
+                  {latitude != null || longitude != null ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={readOnly}
+                      onClick={() => {
+                        setLatitude(null);
+                        setLongitude(null);
+                        setGpsAccuracy(null);
+                      }}
+                    >
+                      Clear
+                    </Button>
+                  ) : null}
+                  {gpsAccuracy != null ? (
+                    <span className="text-xs text-muted-foreground">
+                      Accurate to about {gpsAccuracy} m.
+                    </span>
+                  ) : null}
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="attendance-radius">Check-in radius (metres)</Label>
+                    <Input
+                      id="attendance-radius"
+                      type="number"
+                      min={25}
+                      max={5000}
+                      step={5}
+                      className="h-11"
+                      value={attendanceRadius}
+                      disabled={readOnly}
+                      onChange={(e) => {
+                        const value = Number(e.target.value);
+                        setAttendanceRadius(Number.isFinite(value) ? value : 150);
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="school-timezone">Time zone</Label>
+                    <Input
+                      id="school-timezone"
+                      className="h-11"
+                      placeholder="Africa/Lagos"
+                      value={timezone}
+                      disabled={readOnly}
+                      onChange={(e) => setTimezone(e.target.value)}
+                    />
+                  </div>
+                </div>
               </div>
               <div className="sm:col-span-2">
                 <Button type="submit" disabled={readOnly || savingProfile}>
