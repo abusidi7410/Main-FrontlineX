@@ -2943,3 +2943,14 @@ The backend requires `CLOUDINARY_URL` to upload user profile photos. Configure i
 in `backend/.env` for local development or as a secret environment variable on
 Render. Photo bytes are stored in Cloudinary; the database stores only the
 Cloudinary asset ID. Uploads accept JPG, PNG, or WebP images up to 5 MB.
+
+### Paystack live subscription payments
+
+Set `PAYSTACK_SECRET_KEY` and `PAYSTACK_PUBLIC_KEY` as backend-only production
+secrets (for example, in Railway's backend service Variables). Set
+`PAYSTACK_CALLBACK_URL` to the deployed frontend subscription page; it defaults
+to `https://abusidi7410-main-frontlinex.2027frontline.workers.dev/subscription`.
+In Paystack's Live API Keys & Webhooks settings, configure the webhook URL as
+`https://main-frontlinex-production.up.railway.app/api/v1/schools/subscriptions/webhook/`.
+The callback returns the payer to the app for server-side transaction
+verification; the signed webhook independently confirms successful payments.

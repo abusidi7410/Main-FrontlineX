@@ -49,6 +49,13 @@ def _amount_kobo(plan: SubscriptionPlan) -> int:
     return int((plan.monthly_price or 0) * 100)
 
 
+def _amount_matches(data: dict, expected_kobo: int) -> bool:
+    try:
+        return int(data.get('amount') or 0) == expected_kobo
+    except (TypeError, ValueError):
+        return False
+
+
 def _new_reference(school: School) -> str:
     return f'SUB-{school.slug[:16].upper()}-{secrets.token_hex(4).upper()}'
 
@@ -81,10 +88,13 @@ def activate_subscription(payment: SubscriptionPayment, *, occurred_at=None) -> 
     """
     now = occurred_at or timezone.now()
     with transaction.atomic():
+        payment = SubscriptionPayment.objects.select_for_update().get(pk=payment.pk)
         subscription, _ = (
             SchoolSubscription.objects.select_for_update()
             .get_or_create(school=payment.school)
         )
+        if payment.status == SubscriptionPayment.Status.SUCCESS:
+            return subscription
         if payment.plan_id:
             subscription.plan = payment.plan
         base = subscription.expires_at if (
@@ -148,12 +158,15 @@ def _start_checkout(school, plan, *, purpose, user=None) -> Response:
             email=email,
             amount_kobo=payment.amount_kobo,
             reference=payment.reference,
+            callback_url=settings.PAYSTACK_CALLBACK_URL,
             metadata={
                 'schoolId': str(school.id),
                 'schoolName': school.name,
                 'plan': plan.code or plan.name,
             },
         )
+        if not data.get('authorization_url'):
+            raise paystack.PaystackError('Paystack did not return a checkout URL.')
     except paystack.PaystackConfigError as exc:
         payment.status = SubscriptionPayment.Status.FAILED
         payment.save(update_fields=['status', 'updated_at'])
@@ -180,25 +193,45 @@ def _verify_and_confirm(payment: SubscriptionPayment, request) -> Response:
 
     if data.get('status') != 'success':
         if payment.status == SubscriptionPayment.Status.PENDING:
-            payment.status = SubscriptionPayment.Status.ABANDONED
+            payment.status = (
+                SubscriptionPayment.Status.ABANDONED
+                if data.get('status') == 'abandoned'
+                else (
+                    SubscriptionPayment.Status.PENDING
+                    if data.get('status') in ('ongoing', 'pending')
+                    else SubscriptionPayment.Status.FAILED
+                )
+            )
             payment.raw = data
             payment.save(update_fields=['status', 'raw', 'updated_at'])
-        return Response({'status': 'pending', 'reference': payment.reference})
+        result_status = (
+            'pending'
+            if data.get('status') in ('ongoing', 'pending')
+            else 'failed'
+        )
+        return Response({'status': result_status, 'reference': payment.reference})
 
-    if int(data.get('amount') or 0) != payment.amount_kobo:
-        # The gateway confirmed a payment, but not for the amount we asked for.
-        # Never switch the school on from a mismatched amount.
+    gateway_reference = data.get('reference')
+    amount_matches = _amount_matches(data, payment.amount_kobo)
+    currency_matches = data.get('currency') == payment.currency
+    reference_matches = gateway_reference in {
+        payment.reference, payment.paystack_reference,
+    }
+    if not (amount_matches and currency_matches and reference_matches):
         payment.status = SubscriptionPayment.Status.FAILED
         payment.raw = data
         payment.save(update_fields=['status', 'raw', 'updated_at'])
         audit(
-            request, 'subscription.payment.amount_mismatch', payment.school.name,
-            f'Expected {payment.amount_kobo} kobo, gateway reported {data.get("amount")}.',
+            request, 'subscription.payment.verification_mismatch', payment.school.name,
+            'Gateway verification did not match the expected reference, amount, and currency.',
             severity='critical', entity='school', entity_id=str(payment.school_id),
         )
         return Response({'status': 'failed', 'reference': payment.reference})
 
     subscription = activate_subscription(payment)
+    payment.raw = data
+    payment.channel = str(data.get('channel') or '')[:40]
+    payment.save(update_fields=['raw', 'channel', 'updated_at'])
     audit(
         request, 'subscription.payment.verified', payment.school.name,
         f'{payment.purpose} payment confirmed for {(payment.plan.name if payment.plan_id else "plan")}.',
@@ -232,7 +265,13 @@ class SubscriptionCheckoutView(APIView):
 
     def post(self, request):
         school = request.user.school
-        plan = _resolve_plan(request.data.get('planId'))
+        plan_id = request.data.get('planId')
+        plan = _resolve_plan(plan_id) if plan_id else None
+        if plan_id and (plan is None or not plan.is_active):
+            return Response(
+                {'detail': 'The selected subscription plan is unavailable.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if plan is None:
             subscription = SchoolSubscription.objects.filter(school=school).first()
             plan = subscription.plan if subscription and subscription.plan_id else None
@@ -246,7 +285,14 @@ class SubscriptionCheckoutView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return _start_checkout(
-            school, plan, purpose=SubscriptionPayment.Purpose.RENEWAL, user=request.user,
+            school,
+            plan,
+            purpose=(
+                SubscriptionPayment.Purpose.PLAN_CHANGE
+                if SchoolSubscription.objects.filter(school=school).exclude(plan=plan).exists()
+                else SubscriptionPayment.Purpose.RENEWAL
+            ),
+            user=request.user,
         )
 
 
@@ -288,11 +334,20 @@ class SubscriptionWebhookView(APIView):
         if payload.get('event') == 'charge.success':
             data = payload.get('data') or {}
             reference = data.get('reference')
-            payment = SubscriptionPayment.objects.filter(reference=reference).first()
+            payment = SubscriptionPayment.objects.filter(
+                reference=reference,
+            ).first() or SubscriptionPayment.objects.filter(
+                paystack_reference=reference,
+            ).first()
             if payment is not None and payment.status != SubscriptionPayment.Status.SUCCESS:
-                if int(data.get('amount') or 0) == payment.amount_kobo:
-                    activate_subscription(payment)
-        # Always 200 so Paystack does not retry an event we have handled.
+                if (
+                    data.get('status') == 'success'
+                    and _amount_matches(data, payment.amount_kobo)
+                    and data.get('currency') == payment.currency
+                ):
+                    # Verify independently with Paystack before granting access.
+                    return _verify_and_confirm(payment, request)
+        # A valid event for an unknown or non-successful attempt needs no retry.
         return Response({'received': True})
 
 

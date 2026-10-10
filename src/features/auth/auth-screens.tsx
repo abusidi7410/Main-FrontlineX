@@ -3,11 +3,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState, type Dispatch, type SetStateAction, type ReactNode } from "react";
 import { useController, useForm, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
+import { toast } from "sonner";
 import {
   AlertCircle,
   Check,
   CheckCircle2,
-  CreditCard,
   Eye,
   EyeOff,
   Loader2,
@@ -30,8 +30,8 @@ import { SUBSCRIPTION_TIERS, tierById } from "@/constants/plans";
 import { NIGERIAN_STATES, lgasForState } from "@/constants/nigeria";
 import { emailField, ngPhone, passwordField, requiredText } from "@/lib/validation";
 import { getCurrentPosition, geolocationSupported } from "@/lib/geolocation";
-import { naira } from "@/lib/format";
-import { registerSchool, verifySchoolPayment } from "@/services/school.service";
+import { dateFmt, naira } from "@/lib/format";
+import { registerSchool } from "@/services/school.service";
 import { cn } from "@/lib/utils";
 import type { SubscriptionTier } from "@/types";
 
@@ -373,9 +373,8 @@ function RegisterContent({
   onSchoolSubmit,
   onAdminSubmit,
   submitting,
-  startPayment,
-  verifying,
-  paymentRef,
+  createSchool,
+  trialEndsAt,
   onShowLogin,
 }: {
   schoolForm: UseFormReturn<SchoolValues>;
@@ -390,9 +389,8 @@ function RegisterContent({
   onSchoolSubmit: (values: SchoolValues) => void;
   onAdminSubmit: (values: AdminValues) => void;
   submitting: boolean;
-  startPayment: () => void;
-  verifying: boolean;
-  paymentRef: string | null;
+  createSchool: () => void;
+  trialEndsAt: string | null;
   onShowLogin: () => void;
 }) {
   const { field: nameField } = useController({ control: schoolForm.control, name: "name" });
@@ -585,9 +583,7 @@ function RegisterContent({
             </label>
             <Select
               disabled={!selectedState}
-              onValueChange={(value) =>
-                schoolForm.setValue("lga", value, { shouldValidate: true })
-              }
+              onValueChange={(value) => schoolForm.setValue("lga", value, { shouldValidate: true })}
               value={schoolForm.watch("lga")}
             >
               <SelectTrigger
@@ -900,7 +896,7 @@ function RegisterContent({
           </ul>
           <div className="flex flex-col items-center gap-2.5 pt-1">
             <button type="button" className="auth-btn auth-btn-form" onClick={() => setStep(3)}>
-              Continue to payment
+              Continue to trial
             </button>
             <button
               type="button"
@@ -943,10 +939,10 @@ function RegisterContent({
               </div>
               <div className="flex justify-between gap-3 border-t border-border pt-2">
                 <dt className="font-medium" style={{ color: INK }}>
-                  Due today
+                  Trial
                 </dt>
                 <dd className="font-display text-base font-semibold" style={{ color: NAVY }}>
-                  {naira(tier.monthlyPrice)}
+                  Free trial
                 </dd>
               </div>
             </dl>
@@ -958,26 +954,27 @@ function RegisterContent({
               aria-hidden="true"
             />
             <p>
-              Payment is handled by our payment provider. Your school activates automatically the
-              moment the payment is confirmed — no manual approval needed.
+              Your school and administrator account are created now. You can use the selected plan
+              free during its trial period; no payment details are required to start the trial. The
+              end date will be shown after your school is created.
             </p>
           </div>
           <div className="flex flex-col items-center gap-2.5">
             <button
               type="button"
               className="auth-btn auth-btn-form"
-              onClick={startPayment}
+              onClick={createSchool}
               disabled={submitting}
               aria-busy={submitting}
             >
               {submitting ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Starting payment…
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  Creating your school…
                 </>
               ) : (
                 <>
-                  <CreditCard className="size-4" aria-hidden="true" /> Pay{" "}
-                  {naira(tier.monthlyPrice)}
+                  <CheckCircle2 className="size-4" aria-hidden="true" /> Start free trial
                 </>
               )}
             </button>
@@ -992,37 +989,19 @@ function RegisterContent({
         </div>
       ) : null}
 
-      {step === 4 ? (
-        <div className="flex flex-col items-center gap-3 px-2 py-10 text-center">
-          <Loader2 className="size-7 animate-spin" style={{ color: NAVY }} aria-hidden="true" />
-          <h3 className="text-[15px] font-semibold" style={{ color: INK }}>
-            {verifying ? "Verifying your payment…" : "Payment pending"}
-          </h3>
-          <p className="max-w-[300px] text-[13px] leading-relaxed" style={{ color: MUTED }}>
-            {verifying
-              ? "We're confirming your payment with the provider. This usually takes a few seconds — you can keep this page open."
-              : "Payment verification is not available yet. Your school will stay inactive until payment is confirmed. Save this reference and contact support for next steps."}
-          </p>
-          {paymentRef ? (
-            <p className="text-[12px]" style={{ color: MUTED }}>
-              Reference: {paymentRef}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
       {step === 5 ? (
         <div className="px-2 py-8 text-center">
           <CheckCircle2 className="mx-auto size-11" style={{ color: NAVY }} aria-hidden="true" />
           <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
-            {schoolData?.name} is activated
+            {schoolData?.name} trial is active
           </h3>
           <p
             className="mx-auto mt-2 max-w-[320px] text-[13px] leading-relaxed"
             style={{ color: MUTED }}
           >
-            Your payment was confirmed and your school is live on the {tier.label} plan. Sign in to
-            finish setting up classes, subjects, students and fees.
+            {`Your ${tier.label} plan trial is active until ${
+              trialEndsAt ? dateFmt(trialEndsAt) : "the end of the trial period"
+            }. No payment was taken. Sign in to finish setting up your school.`}
           </p>
           <div className="mt-6 flex flex-col items-center gap-2.5">
             <Link to="/login" className="auth-btn auth-btn-form">
@@ -1105,8 +1084,7 @@ export function AuthScreens({
   const [schoolData, setSchoolData] = useState<SchoolValues | null>(null);
   const [adminData, setAdminData] = useState<AdminValues | null>(null);
   const [tierId, setTierId] = useState(initialTier ?? "t400");
-  const [paymentRef, setPaymentRef] = useState<string | null>(null);
-  const [verifying, setVerifying] = useState(false);
+  const [trialEndsAt, setTrialEndsAt] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const schoolForm = useForm<SchoolValues>({
@@ -1132,7 +1110,7 @@ export function AuthScreens({
 
   const tier = tierById(tierId) ?? SUBSCRIPTION_TIERS[0]!;
 
-  const startPayment = async () => {
+  const createSchool = async () => {
     if (!schoolData || !adminData) return;
     setSubmitting(true);
     try {
@@ -1141,12 +1119,19 @@ export function AuthScreens({
         admin: adminData,
         tierId,
       });
-      setPaymentRef(result.paymentRef);
-      setStep(4);
-      setVerifying(true);
-      const verification = await verifySchoolPayment(result.paymentRef);
-      setVerifying(false);
-      if (verification.status === "verified") setStep(5);
+      if (!result.trial) {
+        throw new Error(
+          "The server did not start a trial for this school. Please contact support.",
+        );
+      }
+      setTrialEndsAt(result.trialEndsAt);
+      setStep(5);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "We couldn't create your school. Please try again.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -1204,9 +1189,8 @@ export function AuthScreens({
                       setStep(2);
                     }}
                     submitting={submitting}
-                    startPayment={() => void startPayment()}
-                    verifying={verifying}
-                    paymentRef={paymentRef}
+                    createSchool={() => void createSchool()}
+                    trialEndsAt={trialEndsAt}
                     onShowLogin={toggle}
                   />
                 </section>
@@ -1302,9 +1286,8 @@ export function AuthScreens({
                     setStep(2);
                   }}
                   submitting={submitting}
-                  startPayment={() => void startPayment()}
-                  verifying={verifying}
-                  paymentRef={paymentRef}
+                  createSchool={() => void createSchool()}
+                  trialEndsAt={trialEndsAt}
                   onShowLogin={toggle}
                 />
               </div>

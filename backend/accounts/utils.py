@@ -47,6 +47,8 @@ def audit(
     entry is reviewable without diffing every table.
     """
     user = getattr(request, 'user', None)
+    if not getattr(user, 'is_authenticated', False):
+        user = None
     actor = (user.get_full_name() or user.email) if user else 'system'
     AuditLog.objects.create(
         actor=f'{actor} ({user.email})' if user else actor,
@@ -57,7 +59,7 @@ def audit(
         ip=_client_ip(request),
         severity=severity,
         school=getattr(user, 'school', None),
-        user=user if getattr(user, 'is_authenticated', False) else None,
+        user=user,
         entity=entity or '',
         entity_id=str(entity_id or '')[:40],
         before=before or {},

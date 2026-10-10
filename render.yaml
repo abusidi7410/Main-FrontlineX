@@ -53,6 +53,12 @@ services:
       # bytes are stored by Cloudinary; Django persists only each asset ID.
       - key: CLOUDINARY_URL
         sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: PAYSTACK_CALLBACK_URL
+        value: https://abusidi7410-main-frontlinex.2027frontline.workers.dev/subscription
       - key: JWT_ACCESS_TOKEN_MINUTES
         value: 30
       - key: JWT_REFRESH_TOKEN_DAYS
