@@ -29,18 +29,9 @@ export interface NavItem {
 
 const SCHOOL_ADMIN: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Overview", mobile: true },
-  {
-    label: "Students",
-    to: "/students",
-    icon: "users",
-    group: "People",
-    mobile: true,
-    children: [
-      { label: "All Students", to: "/students" },
-      { label: "Admit Student", to: "/students/new" },
-      { label: "Import Students", to: "/students/import" },
-    ],
-  },
+  // One entry: the list, Admit and Import all live on the Students page
+  // itself (header buttons), so the menu does not split them.
+  { label: "Students", to: "/students", icon: "users", group: "People", mobile: true },
   // One entry, not three: staff records and login accounts are the same
   // people, so they live on one module and cross-link inside the pages
   // instead of splitting the sidebar.
