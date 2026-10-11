@@ -31,7 +31,7 @@ import { NIGERIAN_STATES, lgasForState } from "@/constants/nigeria";
 import { emailField, ngPhone, passwordField, requiredText } from "@/lib/validation";
 import { getCurrentPosition, geolocationSupported } from "@/lib/geolocation";
 import { dateFmt, naira } from "@/lib/format";
-import { registerSchool } from "@/services/school.service";
+import { registerSchool, startSubscriptionCheckout } from "@/services/school.service";
 import { cn } from "@/lib/utils";
 import type { SubscriptionTier } from "@/types";
 
@@ -1120,13 +1120,32 @@ export function AuthScreens({
         admin: adminData,
         tierId,
       });
-      if (!result.requiresPayment) {
-        throw new Error(
-          "The server did not set up payment for this school. Please contact support.",
-        );
+      // New backend answers {requiresPayment, payBy}; a backend from before
+      // the card-first change answers {trial, trialEndsAt}. Accept both so
+      // registration never dead-ends on a mixed deployment.
+      if (result.requiresPayment) {
+        setPayBy(result.payBy);
+      } else if (result.trial) {
+        setPayBy(result.trialEndsAt ?? null);
+      } else {
+        throw new Error("The server did not set up this school. Please contact support.");
       }
-      setPayBy(result.payBy);
-      setStep(5);
+      // The admin account was just created with these credentials, so sign in
+      // immediately and open Paystack checkout at once — the payment prompt
+      // appears right away instead of after a manual login. Anything failing
+      // here falls through to the sign-in-and-pay screen (step 5).
+      try {
+        await signIn(adminData.email, adminData.password);
+        const checkout = await startSubscriptionCheckout(tierId);
+        const destination = new URL(checkout.authorizationUrl);
+        if (destination.protocol !== "https:" || destination.hostname !== "checkout.paystack.com") {
+          throw new Error("Paystack returned an invalid checkout address.");
+        }
+        window.location.assign(destination.href);
+        return;
+      } catch {
+        setStep(5);
+      }
     } catch (error) {
       toast.error(
         error instanceof Error

@@ -54,6 +54,7 @@ export async function registerSchool(payload: OnboardingPayload) {
     trial: boolean;
     requiresPayment: boolean;
     payBy: string | null;
+    trialEndsAt?: string | null | undefined;
     trialDays: number;
     planName: string;
   }>("/schools/register", { method: "POST", body: payload });
