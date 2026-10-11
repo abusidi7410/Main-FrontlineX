@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/select";
 import { useSession } from "@/auth/session";
 import { HOME_BY_ROLE } from "@/permissions/navigation";
-import { SUBSCRIPTION_TIERS, tierById } from "@/constants/plans";
+import { SUBSCRIPTION_TIERS } from "@/constants/plans";
 import { NIGERIAN_STATES, lgasForState } from "@/constants/nigeria";
 import { emailField, ngPhone, passwordField, requiredText } from "@/lib/validation";
 import { getCurrentPosition, geolocationSupported } from "@/lib/geolocation";
@@ -98,7 +98,7 @@ function toPickerTier(row: unknown): SubscriptionTier | null {
   if (!id) return null;
   const label =
     (typeof record["label"] === "string" && record["label"]) ||
-    tierById(id)?.label ||
+    SUBSCRIPTION_TIERS.find((t) => t.id === id)?.label ||
     (typeof name === "string" && name) ||
     id;
   const num = (value: unknown, fallback = 0) => {
@@ -448,6 +448,7 @@ function RegisterContent({
   submitting,
   createSchool,
   payBy,
+  pendingActivation,
   onShowLogin,
 }: {
   schoolForm: UseFormReturn<SchoolValues>;
@@ -465,6 +466,7 @@ function RegisterContent({
   submitting: boolean;
   createSchool: () => void;
   payBy: string | null;
+  pendingActivation: boolean;
   onShowLogin: () => void;
 }) {
   const { field: nameField } = useController({ control: schoolForm.control, name: "name" });
@@ -1067,17 +1069,34 @@ function RegisterContent({
       {step === 5 ? (
         <div className="px-2 py-8 text-center">
           <CheckCircle2 className="mx-auto size-11" style={{ color: NAVY }} aria-hidden="true" />
-          <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
-            {schoolData?.name} is ready
-          </h3>
-          <p
-            className="mx-auto mt-2 max-w-[320px] text-[13px] leading-relaxed"
-            style={{ color: MUTED }}
-          >
-            {`Your ${tier.label} plan includes a free trial. Sign in and add a payment method to start it${
-              payBy ? ` before ${dateFmt(payBy)}` : ""
-            } — checkout covers your first month and the trial days are added free on top.`}
-          </p>
+          {pendingActivation ? (
+            <>
+              <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
+                {schoolData?.name} registration received
+              </h3>
+              <p
+                className="mx-auto mt-2 max-w-[320px] text-[13px] leading-relaxed"
+                style={{ color: MUTED }}
+              >
+                Your school is registered and awaiting activation. Sign-in opens as soon as it is
+                activated — contact support if that takes longer than a day.
+              </p>
+            </>
+          ) : (
+            <>
+              <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
+                {schoolData?.name} is ready
+              </h3>
+              <p
+                className="mx-auto mt-2 max-w-[320px] text-[13px] leading-relaxed"
+                style={{ color: MUTED }}
+              >
+                {`Your ${tier.label} plan includes a free trial. Sign in and add a payment method to start it${
+                  payBy ? ` before ${dateFmt(payBy)}` : ""
+                } — checkout covers your first month and the trial days are added free on top.`}
+              </p>
+            </>
+          )}
           <div className="mt-6 flex flex-col items-center gap-2.5">
             <Link to="/login" className="auth-btn auth-btn-form">
               Sign in to your school
@@ -1160,6 +1179,10 @@ export function AuthScreens({
   const [adminData, setAdminData] = useState<AdminValues | null>(null);
   const [tierId, setTierId] = useState(initialTier ?? "t400");
   const [payBy, setPayBy] = useState<string | null>(null);
+  // True when the server registered the school but runs a backend from
+  // before self-serve checkout existed: the school waits on manual
+  // activation instead of a payment screen.
+  const [pendingActivation, setPendingActivation] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Prices come from the Platform Manager's catalogue, not from a hardcoded
@@ -1206,7 +1229,10 @@ export function AuthScreens({
     defaultValues: { fullName: "", phone: "", email: "", password: "" },
   });
 
-  const tier = tiers.find((t) => t.id === tierId) ?? tierById(tierId) ?? tiers[0]!;
+  const tier =
+    tiers.find((t) => t.id === tierId) ??
+    SUBSCRIPTION_TIERS.find((t) => t.id === tierId) ??
+    tiers[0]!;
 
   const createSchool = async () => {
     if (!schoolData || !adminData) return;
@@ -1222,12 +1248,21 @@ export function AuthScreens({
         tierId,
       });
       // New backend answers {requiresPayment, payBy}; a backend from before
-      // the card-first change answers {trial, trialEndsAt}. Accept both so
+      // the card-first change answers {trial, trialEndsAt}; the oldest
+      // backends answer only {schoolId} — registered, pending manual
+      // activation, with no self-serve checkout to open. Accept all three so
       // registration never dead-ends on a mixed deployment.
       if (result.requiresPayment) {
         setPayBy(result.payBy);
+        setPendingActivation(false);
       } else if (result.trial) {
         setPayBy(result.trialEndsAt ?? null);
+        setPendingActivation(false);
+      } else if (result.schoolId) {
+        setPayBy(null);
+        setPendingActivation(true);
+        setStep(5);
+        return;
       } else {
         throw new Error("The server did not set up this school. Please contact support.");
       }
@@ -1327,6 +1362,7 @@ export function AuthScreens({
                     submitting={submitting}
                     createSchool={() => void createSchool()}
                     payBy={payBy}
+                    pendingActivation={pendingActivation}
                     onShowLogin={toggle}
                   />
                 </section>
@@ -1425,6 +1461,7 @@ export function AuthScreens({
                   submitting={submitting}
                   createSchool={() => void createSchool()}
                   payBy={payBy}
+                  pendingActivation={pendingActivation}
                   onShowLogin={toggle}
                 />
               </div>

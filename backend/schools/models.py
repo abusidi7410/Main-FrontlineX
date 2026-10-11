@@ -166,7 +166,7 @@ class SubscriptionPlan(models.Model):
     is_active = models.BooleanField(default=True)
     # ── Platform plan management (plan editor) ──
     # Human-readable summary shown on the pricing table and plan editor.
-    description = models.TextField(blank=True, default='')
+    description = models.TextField(blank=True, default='', db_default='')
     # Billing cadence for new subscribers (existing subscribers keep the price
     # they signed up at until an explicit, confirmed change moves them).
     billing_interval = models.CharField(max_length=20, default='monthly', db_default='monthly')
@@ -215,12 +215,12 @@ class SchoolSubscription(models.Model):
     # override does not become permanent. Every change is audited with the note.
     override_active = models.BooleanField(default=False, db_default=False)
     override_until = models.DateTimeField(null=True, blank=True)
-    override_note = models.CharField(max_length=200, blank=True, default='')
+    override_note = models.CharField(max_length=200, blank=True, default='', db_default='')
     # Required reason for granting/extending/revoking complimentary access
     # (promo, partnership, testing, goodwill). Stored separately from the free
     # -form note so audit history keeps the justification even when the note
     # changes. Never a payment: no payment row is written for a grant.
-    override_reason = models.CharField(max_length=280, blank=True, default='')
+    override_reason = models.CharField(max_length=280, blank=True, default='', db_default='')
     override_by = models.ForeignKey(
         'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='subscription_overrides',
