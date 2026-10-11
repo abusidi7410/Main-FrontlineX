@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -266,11 +266,20 @@ function AccountsPage() {
           title="Accounts"
           description="Login accounts for students, teachers, admins and finance staff."
           actions={
-            <IfAllowed permission="accounts.write">
-              <Button className="h-11" onClick={() => setCreateOpen(true)}>
-                <Plus className="size-4" aria-hidden="true" /> Add account
-              </Button>
-            </IfAllowed>
+            <>
+              <IfAllowed permission="staff.read">
+                <Button asChild variant="outline" className="h-11">
+                  <Link to="/staff">
+                    <Users className="size-4" aria-hidden="true" /> Staff directory
+                  </Link>
+                </Button>
+              </IfAllowed>
+              <IfAllowed permission="accounts.write">
+                <Button className="h-11" onClick={() => setCreateOpen(true)}>
+                  <Plus className="size-4" aria-hidden="true" /> Add account
+                </Button>
+              </IfAllowed>
+            </>
           }
         />
 

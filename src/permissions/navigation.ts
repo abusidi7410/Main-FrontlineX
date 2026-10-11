@@ -41,18 +41,10 @@ const SCHOOL_ADMIN: NavItem[] = [
       { label: "Import Students", to: "/students/import" },
     ],
   },
-  {
-    label: "Staff & Accounts",
-    to: "/staff",
-    icon: "userKey",
-    group: "People",
-    mobile: true,
-    children: [
-      { label: "Staff Directory", to: "/staff" },
-      { label: "Add Staff", to: "/staff/new" },
-      { label: "Login Accounts", to: "/accounts" },
-    ],
-  },
+  // One entry, not three: staff records and login accounts are the same
+  // people, so they live on one module and cross-link inside the pages
+  // instead of splitting the sidebar.
+  { label: "Staff & Accounts", to: "/staff", icon: "userKey", group: "People", mobile: true },
   {
     label: "Academics",
     to: "/academics",

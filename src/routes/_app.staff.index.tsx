@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import {
   GraduationCap,
+  KeyRound,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -128,13 +129,22 @@ function StaffPage() {
           title="Staff"
           description="Who works at your school, what they teach and which classes they handle."
           actions={
-            <IfAllowed permission="staff.write">
-              <Button asChild className="h-11">
-                <Link to="/staff/new">
-                  <Plus className="size-4" aria-hidden="true" /> Add staff
-                </Link>
-              </Button>
-            </IfAllowed>
+            <>
+              <IfAllowed permission="accounts.read">
+                <Button asChild variant="outline" className="h-11">
+                  <Link to="/accounts">
+                    <KeyRound className="size-4" aria-hidden="true" /> Login accounts
+                  </Link>
+                </Button>
+              </IfAllowed>
+              <IfAllowed permission="staff.write">
+                <Button asChild className="h-11">
+                  <Link to="/staff/new">
+                    <Plus className="size-4" aria-hidden="true" /> Add staff
+                  </Link>
+                </Button>
+              </IfAllowed>
+            </>
           }
         />
 
