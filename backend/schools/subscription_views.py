@@ -159,6 +159,7 @@ def _start_checkout(school, plan, *, purpose, user=None) -> Response:
             amount_kobo=payment.amount_kobo,
             reference=payment.reference,
             callback_url=settings.PAYSTACK_CALLBACK_URL,
+            currency=payment.currency,
             metadata={
                 'schoolId': str(school.id),
                 'schoolName': school.name,

@@ -67,13 +67,14 @@ def _call(method: str, path: str, payload: dict | None = None, timeout: int = 20
 def initialize_transaction(
     *, email: str, amount_kobo: int, reference: str,
     callback_url: str = '', metadata: dict | None = None,
+    currency: str = 'NGN',
 ) -> dict:
     """Start a charge. Returns Paystack's checkout handles (access_code, url)."""
     payload = {
         'email': email,
         'amount': int(amount_kobo),
         'reference': reference,
-        'currency': 'NGN',
+        'currency': (currency or 'NGN').upper(),
     }
     if callback_url:
         payload['callback_url'] = callback_url
