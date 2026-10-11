@@ -57,6 +57,31 @@ describe("hierarchical navigation", () => {
     );
   });
 
+  it("never repeats a module name as its own sub-module label", () => {
+    for (const [role, items] of Object.entries(NAV_BY_ROLE)) {
+      for (const item of items) {
+        for (const child of item.children ?? []) {
+          expect(
+            child.label.toLowerCase() !== item.label.toLowerCase(),
+            `${role}: "${item.label}" echoes as its own child`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("reaches every parent target through one of its children (headers toggle, not link)", () => {
+    for (const [role, items] of Object.entries(NAV_BY_ROLE)) {
+      for (const item of items) {
+        if (!item.children?.length) continue;
+        expect(
+          item.children.some((c) => c.to === item.to),
+          `${role}: "${item.label}" header target ${item.to} has no child entry`,
+        ).toBe(true);
+      }
+    }
+  });
+
   it("gives the platform manager exactly the 8 SaaS control sections", () => {
     const platform = NAV_BY_ROLE.platform_manager.map((i) => i.to);
     expect(platform).toEqual([

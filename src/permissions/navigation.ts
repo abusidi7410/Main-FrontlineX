@@ -5,7 +5,12 @@ import type { Role } from "@/types";
  *
  * Every `to` below is a pre-existing route — this file only groups them, it
  * never invents screens. A main module with `children` renders as one
- * expandable sidebar section; a main module without children is a direct link.
+ * expandable sidebar section whose header only expands/collapses; the
+ * children are the actual destinations, each labelled distinctly from the
+ * parent (no "Students → Student List" echo). The parent's own `to` always
+ * matches one of its children and is used only as the fallback target for
+ * the collapsed icon rail and the mobile bottom bar. A main module without
+ * children is a direct link.
  * `mobile` marks the entries that fit the 5-slot bottom bar on phones.
  */
 export interface NavChild {
@@ -31,7 +36,7 @@ const SCHOOL_ADMIN: NavItem[] = [
     group: "People",
     mobile: true,
     children: [
-      { label: "Student List", to: "/students" },
+      { label: "All Students", to: "/students" },
       { label: "Admit Student", to: "/students/new" },
       { label: "Import Students", to: "/students/import" },
     ],
@@ -68,8 +73,8 @@ const SCHOOL_ADMIN: NavItem[] = [
     group: "Academics",
     mobile: true,
     children: [
-      { label: "Take Attendance", to: "/attendance" },
-      { label: "Attendance Records", to: "/attendance-overview" },
+      { label: "Take Register", to: "/attendance" },
+      { label: "Records & History", to: "/attendance-overview" },
     ],
   },
   {
@@ -79,7 +84,7 @@ const SCHOOL_ADMIN: NavItem[] = [
     group: "Finance",
     mobile: true,
     children: [
-      { label: "Payment Overview", to: "/finance" },
+      { label: "Overview", to: "/finance" },
       { label: "Invoices", to: "/finance/invoices" },
     ],
   },
@@ -94,7 +99,7 @@ const SCHOOL_ADMIN: NavItem[] = [
     ],
   },
   {
-    label: "Reports & AI",
+    label: "Insights",
     to: "/reports",
     icon: "chart",
     group: "Engagement",
@@ -109,7 +114,7 @@ const SCHOOL_ADMIN: NavItem[] = [
     icon: "settings",
     group: "Manage",
     children: [
-      { label: "Settings", to: "/settings" },
+      { label: "School Settings", to: "/settings" },
       { label: "Subscription", to: "/subscription" },
       { label: "Audit Logs", to: "/audit-logs" },
       { label: "USSD", to: "/ussd" },
@@ -126,7 +131,7 @@ const PRINCIPAL: NavItem[] = [
     group: "People",
     mobile: true,
     children: [
-      { label: "Student List", to: "/students" },
+      { label: "All Students", to: "/students" },
       { label: "Login Accounts", to: "/accounts" },
     ],
   },
@@ -137,23 +142,16 @@ const PRINCIPAL: NavItem[] = [
     group: "Academics",
     mobile: true,
     children: [
-      { label: "Take Attendance", to: "/attendance" },
+      { label: "Take Register", to: "/attendance" },
       // A principal is read-only on attendance, so the overview (who has
       // taken their register) is the more useful screen for them.
-      { label: "Attendance Records", to: "/attendance-overview" },
+      { label: "Records & History", to: "/attendance-overview" },
       { label: "Results", to: "/results" },
       { label: "Timetable", to: "/timetable" },
       { label: "Promotion Centre", to: "/promotion" },
     ],
   },
-  {
-    label: "Finance",
-    to: "/finance/invoices",
-    icon: "wallet",
-    group: "Finance",
-    mobile: true,
-    children: [{ label: "Invoices", to: "/finance/invoices" }],
-  },
+  { label: "Invoices", to: "/finance/invoices", icon: "wallet", group: "Finance", mobile: true },
   {
     label: "Communication",
     to: "/communication",
@@ -176,7 +174,7 @@ const PRINCIPAL: NavItem[] = [
       // Settings is where the Payment Structure lives, so a principal needs
       // it in order to see prices. It renders read-only without
       // `finance.structure`.
-      { label: "Settings", to: "/settings" },
+      { label: "School Settings", to: "/settings" },
     ],
   },
 ];
@@ -191,10 +189,10 @@ const TEACHER: NavItem[] = [
     group: "Teaching",
     mobile: true,
     children: [
-      { label: "Take Attendance", to: "/attendance" },
+      { label: "Take Register", to: "/attendance" },
       // Scoped to the teacher's own classes by the API, so this is their own
       // "did everyone take the register" board rather than the school's.
-      { label: "Attendance Records", to: "/attendance-overview" },
+      { label: "Records & History", to: "/attendance-overview" },
       { label: "Results", to: "/results" },
       { label: "Lesson Plans", to: "/lesson-plans" },
       { label: "Timetable", to: "/timetable" },
@@ -238,7 +236,7 @@ const ACCOUNTANT: NavItem[] = [
     children: [
       { label: "Notifications", to: "/notifications" },
       { label: "AI Assistant", to: "/ai" },
-      { label: "Settings", to: "/settings" },
+      { label: "School Settings", to: "/settings" },
     ],
   },
 ];
@@ -252,9 +250,9 @@ const SECRETARY: NavItem[] = [
     group: "People",
     mobile: true,
     children: [
-      { label: "Students", to: "/students" },
+      { label: "All Students", to: "/students" },
       { label: "Login Accounts", to: "/accounts" },
-      { label: "Take Attendance", to: "/attendance" },
+      { label: "Take Register", to: "/attendance" },
     ],
   },
   {

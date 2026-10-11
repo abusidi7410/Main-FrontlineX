@@ -103,11 +103,18 @@ function NavEntry({
   }
 
   const activeChild = (item.children ?? []).find((child) => isActive(pathname, child.to));
+  // An expandable module header only expands/collapses — it is not a second
+  // link to the first child, so the menu never reads "Students → Students".
+  // The header's `to` survives only as the collapsed-rail/mobile fallback.
   return (
     <li>
-      <div
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label={`${open ? "Collapse" : "Expand"} ${item.label}`}
         className={cn(
-          "group relative flex min-h-[2.5rem] items-center gap-2.5 rounded-lg px-3 text-[13px] font-medium transition-colors duration-150",
+          "group relative flex min-h-[2.5rem] w-full items-center gap-2.5 rounded-lg px-3 text-[13px] font-medium transition-colors duration-150",
           active
             ? "bg-sidebar-accent text-sidebar-accent-foreground"
             : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
@@ -119,36 +126,27 @@ function NavEntry({
             className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-primary"
           />
         ) : null}
-        <Link
-          to={item.to}
-          onClick={onNavigate}
-          aria-current={active && !activeChild ? "page" : undefined}
-          aria-label={item.label}
-          className="flex min-w-0 flex-1 items-center gap-2.5"
-        >
-          <NavIcon
-            name={item.icon}
-            className={cn(
-              "size-4 shrink-0",
-              active
-                ? "text-sidebar-primary"
-                : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/90",
-            )}
-          />
-          <span className="truncate">{item.label}</span>
-        </Link>
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          aria-label={`${open ? "Collapse" : "Expand"} ${item.label}`}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-sidebar-accent"
-        >
-          <ChevronDown
-            className={cn("size-4 transition-transform duration-150", open && "rotate-180")}
-          />
-        </button>
-      </div>
+        <NavIcon
+          name={item.icon}
+          className={cn(
+            "size-4 shrink-0",
+            active
+              ? "text-sidebar-primary"
+              : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/90",
+          )}
+        />
+        <span className="min-w-0 flex-1 truncate text-left">
+          {item.label}
+          {activeChild ? (
+            <span className="block truncate text-[11px] font-normal text-sidebar-foreground/55">
+              {activeChild.label}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown
+          className={cn("size-4 shrink-0 transition-transform duration-150", open && "rotate-180")}
+        />
+      </button>
       {open ? (
         <ul className="ml-6 mt-1 space-y-0.5 border-l border-sidebar-border pl-2">
           {(item.children ?? []).map((child) => {
