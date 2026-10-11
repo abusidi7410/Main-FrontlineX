@@ -16,7 +16,7 @@ from accounts.utils import DEFAULT_TEMPORARY_PASSWORD, audit, paginate
 from records.models import Student
 from records.services import announcements as announcement_service
 from records.services import reporting as reporting_service
-from .models import Announcement, AuditLog, School, SchoolSubscription, SubscriptionPlan, SupportTicket
+from .models import Announcement, AuditLog, PlatformSettings, School, SchoolSubscription, SubscriptionPlan, SupportTicket
 from .status import school_status
 
 PLATFORM_STATUSES = {'active', 'trial', 'grace', 'pending_payment', 'suspended'}
@@ -67,6 +67,15 @@ def _subscription_json(subscription, plan):
             if subscription and subscription.override_until else None
         ),
         'overrideNote': subscription.override_note if subscription else '',
+        'overrideReason': subscription.override_reason if subscription else '',
+        'overrideBy': (
+            subscription.override_by.email
+            if subscription and subscription.override_by_id else None
+        ),
+        'overrideAt': (
+            subscription.override_at.isoformat()
+            if subscription and subscription.override_at else None
+        ),
     }
 
 
@@ -526,7 +535,7 @@ class PlatformSchoolStatusView(APIView):
             role=request.user.role,
             action='school.status.changed',
             target=school.name,
-            detail=f'{current} → {next_status}',
+            detail=f'{current} → {next_status}. Reason: {(request.data.get("reason") or "").strip() or "—"}.',
             ip=_client_ip(request),
             severity='critical' if next_status == 'suspended' else 'info',
             school=school,
@@ -960,3 +969,67 @@ class PlatformProfitView(APIView):
         start, end = reporting_service.month_window(year, month)
         report = reporting_service.platform_profit_report(start, end)
         return Response({'month': f'{year:04d}-{month:02d}', **report})
+
+
+def _platform_settings_json(row):
+    return {
+        'trialDays': row.trial_days,
+        'subscriptionPeriodDays': row.subscription_period_days,
+        'gracePeriodDays': row.grace_period_days,
+        'supportEmail': row.support_email,
+        'maintenanceMessage': row.maintenance_message,
+        'updatedAt': row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+class PlatformSettingsView(APIView):
+    """GET/PATCH /platform/settings/ — platform-wide SaaS controls.
+
+    The row is a singleton (pk=1), created on first read. Every write is
+    audited with before/after values and requires IsSuperAdmin.
+    """
+
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def _get_row(self):
+        row, _ = PlatformSettings.objects.get_or_create(pk=1)
+        return row
+
+    def get(self, request):
+        return Response(_platform_settings_json(self._get_row()))
+
+    def patch(self, request):
+        row = self._get_row()
+        before = _platform_settings_json(row)
+        for attr, key in (
+            ('trial_days', 'trialDays'),
+            ('subscription_period_days', 'subscriptionPeriodDays'),
+            ('grace_period_days', 'gracePeriodDays'),
+        ):
+            if key in request.data:
+                try:
+                    value = int(request.data.get(key))
+                except (TypeError, ValueError):
+                    return Response(
+                        {'detail': f'{key} must be a number.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if value < 0 or value > 3650:
+                    return Response(
+                        {'detail': f'{key} looks out of range.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                setattr(row, attr, value)
+        if 'supportEmail' in request.data:
+            row.support_email = str(request.data.get('supportEmail') or '').strip()[:254]
+        if 'maintenanceMessage' in request.data:
+            row.maintenance_message = str(request.data.get('maintenanceMessage') or '')[:280]
+        row.save()
+        from accounts.utils import audit as audit_event
+        audit_event(
+            request, 'platform.settings.updated', 'Platform settings',
+            'Platform-wide settings updated.', severity='warning',
+            entity='platform_settings', entity_id='1',
+            before=before, after=_platform_settings_json(row),
+        )
+        return Response(_platform_settings_json(row))

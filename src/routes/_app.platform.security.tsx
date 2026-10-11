@@ -31,7 +31,7 @@ export const Route = createFileRoute("/_app/platform/security")({
 
 function PlatformSecurityPage() {
   const [search, setSearch] = useState("");
-  const query = useQuery({ queryKey: ["platform", "audit"], queryFn: listAuditEvents });
+  const query = useQuery({ queryKey: ["platform", "audit"], queryFn: () => listAuditEvents() });
 
   const term = search.trim().toLowerCase();
   const events = (query.data ?? []).filter(

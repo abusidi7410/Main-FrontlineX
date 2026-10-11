@@ -453,8 +453,33 @@ class PlatformSchoolSubscriptionView(APIView):
             'expiresAt': subscription.expires_at.isoformat() if subscription.expires_at else None,
             'overrideActive': subscription.override_active,
             'overrideUntil': subscription.override_until.isoformat() if subscription.override_until else None,
+            'overrideNote': subscription.override_note,
+            'overrideReason': subscription.override_reason,
         }
         now = timezone.now()
+
+        def _reason():
+            return (
+                str(request.data.get('reason') or request.data.get('note') or '').strip()
+            )
+
+        # Sensitive operations require a written reason so the audit trail can
+        # answer "who did what, and why". Ordinary date/plan housekeeping does
+        # not, to keep renewals usable.
+        sensitive = (
+            'status' in request.data
+            or 'overrideActive' in request.data
+            or 'overrideUntil' in request.data
+            or 'reason' in request.data
+        )
+        if sensitive and not _reason() and request.data.get('status') in (
+            SchoolSubscription.Status.SUSPENDED, 'suspended',
+            SchoolSubscription.Status.EXPIRED, 'expired',
+        ):
+            return Response(
+                {'detail': 'A reason is required to suspend or expire a subscription.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if 'planId' in request.data:
             plan = _resolve_plan(request.data.get('planId'))
@@ -483,13 +508,18 @@ class PlatformSchoolSubscriptionView(APIView):
             ) else now
             subscription.expires_at = base + timedelta(days=days)
 
-        if 'overrideActive' in request.data or 'overrideUntil' in request.data or 'note' in request.data:
+        if 'overrideActive' in request.data or 'overrideUntil' in request.data or 'note' in request.data or 'reason' in request.data:
             if 'overrideActive' in request.data:
                 subscription.override_active = bool(request.data.get('overrideActive'))
             if 'overrideUntil' in request.data:
                 subscription.override_until = _parse_datetime(request.data.get('overrideUntil'))
             if 'note' in request.data:
                 subscription.override_note = str(request.data.get('note') or '')[:200]
+            if 'reason' in request.data:
+                subscription.override_reason = str(request.data.get('reason') or '')[:280]
+            elif 'note' in request.data and not subscription.override_reason:
+                # Backwards-compatible: older clients send only `note`.
+                subscription.override_reason = str(request.data.get('note') or '')[:280]
             if subscription.override_active:
                 subscription.override_by = request.user
                 subscription.override_at = now
@@ -502,6 +532,7 @@ class PlatformSchoolSubscriptionView(APIView):
         subscription.refresh_from_db()
         granted = subscription.status in (
             SchoolSubscription.Status.ACTIVE, SchoolSubscription.Status.TRIAL,
+            SchoolSubscription.Status.GRACE,
         ) or subscription.override_current
         if subscription.status == SchoolSubscription.Status.SUSPENDED:
             granted = False
@@ -509,14 +540,45 @@ class PlatformSchoolSubscriptionView(APIView):
             school.is_active = granted
             school.save(update_fields=['is_active'])
 
+        action = 'subscription.updated'
+        detail = 'Subscription updated by platform manager.'
+        if 'overrideActive' in request.data or 'overrideUntil' in request.data:
+            action = (
+                'subscription.complimentary.granted'
+                if subscription.override_active else 'subscription.complimentary.revoked'
+            )
+            detail = (
+                f'Complimentary access {"granted" if subscription.override_active else "revoked"} '
+                f'by platform manager. Reason: {_reason() or subscription.override_reason or "—"}. '
+                f'No payment was recorded for this entitlement.'
+            )
+        elif status_value in (SchoolSubscription.Status.SUSPENDED, 'suspended'):
+            action = 'subscription.suspended'
+            detail = f'Subscription suspended. Reason: {_reason() or "—"}.'
+        elif status_value:
+            action = 'subscription.status_changed'
+            detail = f'Status → {status_value}. Reason: {_reason() or "—"}.'
         audit(
-            request, 'subscription.updated', school.name,
-            'Subscription updated by platform manager.', severity='warning',
+            request, action, school.name,
+            detail, severity='warning',
             entity='school', entity_id=str(school.pk), before=before,
             after={
                 'plan': subscription.plan.name if subscription.plan_id else '',
                 'status': subscription.status,
                 'expiresAt': subscription.expires_at.isoformat() if subscription.expires_at else None,
+                'overrideActive': subscription.override_active,
+                'overrideUntil': (
+                    subscription.override_until.isoformat()
+                    if subscription.override_until else None
+                ),
+                'overrideReason': subscription.override_reason,
+                'overrideBy': (
+                    subscription.override_by.email if subscription.override_by_id else None
+                ),
+                'overrideAt': (
+                    subscription.override_at.isoformat()
+                    if subscription.override_at else None
+                ),
             },
         )
         # The overview rollup embeds subscription state and is cached for a few

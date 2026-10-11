@@ -4,6 +4,7 @@ from . import platform_views, subscription_views
 
 urlpatterns = [
     path('overview/', platform_views.PlatformOverviewView.as_view()),
+    path('settings/', platform_views.PlatformSettingsView.as_view()),
     path('schools/', platform_views.PlatformSchoolListView.as_view()),
     path('profit/', platform_views.PlatformProfitView.as_view()),
     # Subscription controls: the plan editor, per-school subscription, and the

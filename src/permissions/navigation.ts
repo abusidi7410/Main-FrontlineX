@@ -1,135 +1,344 @@
 import type { Role } from "@/types";
 
+/**
+ * Hierarchical navigation: Main module → Sub-modules → existing routes.
+ *
+ * Every `to` below is a pre-existing route — this file only groups them, it
+ * never invents screens. A main module with `children` renders as one
+ * expandable sidebar section; a main module without children is a direct link.
+ * `mobile` marks the entries that fit the 5-slot bottom bar on phones.
+ */
+export interface NavChild {
+  label: string;
+  to: string;
+}
+
 export interface NavItem {
   label: string;
   to: string;
   icon: string;
   group?: string;
   mobile?: boolean;
+  children?: NavChild[];
 }
 
 const SCHOOL_ADMIN: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Overview", mobile: true },
-  { label: "Students", to: "/students", icon: "users", group: "People", mobile: true },
-  { label: "Accounts", to: "/accounts", icon: "userKey", group: "People", mobile: true },
-  { label: "Academics", to: "/academics", icon: "graduation", group: "Academics" },
-  { label: "Attendance", to: "/attendance", icon: "clipboard", group: "Academics", mobile: true },
   {
-    label: "Attendance overview",
-    to: "/attendance-overview",
-    icon: "clipboardList",
-    group: "Academics",
+    label: "Students",
+    to: "/students",
+    icon: "users",
+    group: "People",
+    mobile: true,
+    children: [
+      { label: "Student List", to: "/students" },
+      { label: "Admit Student", to: "/students/new" },
+      { label: "Import Students", to: "/students/import" },
+    ],
   },
-  { label: "Results", to: "/results", icon: "award", group: "Academics" },
-  { label: "Timetable", to: "/timetable", icon: "calendar", group: "Academics" },
-  { label: "Lesson Plans", to: "/lesson-plans", icon: "notebook", group: "Academics" },
-  { label: "Promotion Centre", to: "/promotion", icon: "promotion", group: "Academics" },
-  { label: "Finance", to: "/finance", icon: "wallet", group: "Finance", mobile: true },
-  { label: "Invoices", to: "/finance/invoices", icon: "receipt", group: "Finance" },
-  { label: "Announcements", to: "/communication", icon: "megaphone", group: "Engagement" },
-  { label: "Notifications", to: "/notifications", icon: "bell", group: "Engagement" },
-  { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Engagement" },
-  { label: "Reports", to: "/reports", icon: "chart", group: "Manage" },
-  { label: "Subscription", to: "/subscription", icon: "creditCard", group: "Manage" },
-  { label: "Settings", to: "/settings", icon: "settings", group: "Manage" },
-  { label: "USSD", to: "/ussd", icon: "ussd", group: "Manage" },
-  { label: "Audit Logs", to: "/audit-logs", icon: "audit", group: "Manage" },
+  {
+    label: "Staff & Accounts",
+    to: "/staff",
+    icon: "userKey",
+    group: "People",
+    mobile: true,
+    children: [
+      { label: "Staff Directory", to: "/staff" },
+      { label: "Add Staff", to: "/staff/new" },
+      { label: "Login Accounts", to: "/accounts" },
+    ],
+  },
+  {
+    label: "Academics",
+    to: "/academics",
+    icon: "graduation",
+    group: "Academics",
+    children: [
+      { label: "Subjects & Classes", to: "/academics" },
+      { label: "Timetable", to: "/timetable" },
+      { label: "Lesson Plans", to: "/lesson-plans" },
+      { label: "Promotion Centre", to: "/promotion" },
+      { label: "Results", to: "/results" },
+    ],
+  },
+  {
+    label: "Attendance",
+    to: "/attendance",
+    icon: "clipboard",
+    group: "Academics",
+    mobile: true,
+    children: [
+      { label: "Take Attendance", to: "/attendance" },
+      { label: "Attendance Records", to: "/attendance-overview" },
+    ],
+  },
+  {
+    label: "Finance",
+    to: "/finance",
+    icon: "wallet",
+    group: "Finance",
+    mobile: true,
+    children: [
+      { label: "Payment Overview", to: "/finance" },
+      { label: "Invoices", to: "/finance/invoices" },
+    ],
+  },
+  {
+    label: "Communication",
+    to: "/communication",
+    icon: "megaphone",
+    group: "Engagement",
+    children: [
+      { label: "Announcements", to: "/communication" },
+      { label: "Notifications", to: "/notifications" },
+    ],
+  },
+  {
+    label: "Reports & AI",
+    to: "/reports",
+    icon: "chart",
+    group: "Engagement",
+    children: [
+      { label: "Reports", to: "/reports" },
+      { label: "AI Assistant", to: "/ai" },
+    ],
+  },
+  {
+    label: "Manage",
+    to: "/settings",
+    icon: "settings",
+    group: "Manage",
+    children: [
+      { label: "Settings", to: "/settings" },
+      { label: "Subscription", to: "/subscription" },
+      { label: "Audit Logs", to: "/audit-logs" },
+      { label: "USSD", to: "/ussd" },
+    ],
+  },
 ];
 
 const PRINCIPAL: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Overview", mobile: true },
-  { label: "Students", to: "/students", icon: "users", group: "People", mobile: true },
-  { label: "Accounts", to: "/accounts", icon: "userKey", group: "People" },
-  { label: "Attendance", to: "/attendance", icon: "clipboard", group: "Academics", mobile: true },
-  // A principal is read-only on attendance, so the overview (who has taken their
-  // register) is the more useful screen for them than the register itself.
   {
-    label: "Attendance overview",
-    to: "/attendance-overview",
-    icon: "clipboardList",
+    label: "Students",
+    to: "/students",
+    icon: "users",
+    group: "People",
+    mobile: true,
+    children: [
+      { label: "Student List", to: "/students" },
+      { label: "Login Accounts", to: "/accounts" },
+    ],
+  },
+  {
+    label: "Academics",
+    to: "/attendance",
+    icon: "clipboard",
     group: "Academics",
     mobile: true,
+    children: [
+      { label: "Take Attendance", to: "/attendance" },
+      // A principal is read-only on attendance, so the overview (who has
+      // taken their register) is the more useful screen for them.
+      { label: "Attendance Records", to: "/attendance-overview" },
+      { label: "Results", to: "/results" },
+      { label: "Timetable", to: "/timetable" },
+      { label: "Promotion Centre", to: "/promotion" },
+    ],
   },
-  { label: "Results", to: "/results", icon: "award", group: "Academics", mobile: true },
-  { label: "Timetable", to: "/timetable", icon: "calendar", group: "Academics" },
-  { label: "Promotion Centre", to: "/promotion", icon: "promotion", group: "Academics" },
-  { label: "Invoices", to: "/finance/invoices", icon: "receipt", group: "Finance" },
-  { label: "Announcements", to: "/communication", icon: "megaphone", group: "Engagement" },
-  { label: "Notifications", to: "/notifications", icon: "bell", group: "Engagement" },
-  { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Engagement" },
-  { label: "Reports", to: "/reports", icon: "chart", group: "Manage" },
-  // Settings is where the Payment Structure lives, so a principal needs it in
-  // order to see prices. It renders read-only without `finance.structure`.
-  { label: "Settings", to: "/settings", icon: "settings", group: "Manage" },
+  {
+    label: "Finance",
+    to: "/finance/invoices",
+    icon: "wallet",
+    group: "Finance",
+    mobile: true,
+    children: [{ label: "Invoices", to: "/finance/invoices" }],
+  },
+  {
+    label: "Communication",
+    to: "/communication",
+    icon: "megaphone",
+    group: "Engagement",
+    children: [
+      { label: "Announcements", to: "/communication" },
+      { label: "Notifications", to: "/notifications" },
+    ],
+  },
+  {
+    label: "Manage",
+    to: "/reports",
+    icon: "chart",
+    group: "Manage",
+    mobile: true,
+    children: [
+      { label: "Reports", to: "/reports" },
+      { label: "AI Assistant", to: "/ai" },
+      // Settings is where the Payment Structure lives, so a principal needs
+      // it in order to see prices. It renders read-only without
+      // `finance.structure`.
+      { label: "Settings", to: "/settings" },
+    ],
+  },
 ];
 
 const TEACHER: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Today", mobile: true },
   { label: "My Classes", to: "/my-classes", icon: "users", group: "Today", mobile: true },
-  { label: "Attendance", to: "/attendance", icon: "clipboard", group: "Teaching", mobile: true },
-  // Scoped to the teacher's own classes by the API, so this is their own
-  // "did everyone take the register" board rather than the school's.
   {
-    label: "Attendance overview",
-    to: "/attendance-overview",
-    icon: "clipboardList",
+    label: "Teaching",
+    to: "/attendance",
+    icon: "clipboard",
     group: "Teaching",
+    mobile: true,
+    children: [
+      { label: "Take Attendance", to: "/attendance" },
+      // Scoped to the teacher's own classes by the API, so this is their own
+      // "did everyone take the register" board rather than the school's.
+      { label: "Attendance Records", to: "/attendance-overview" },
+      { label: "Results", to: "/results" },
+      { label: "Lesson Plans", to: "/lesson-plans" },
+      { label: "Timetable", to: "/timetable" },
+    ],
   },
-  { label: "Results", to: "/results", icon: "award", group: "Teaching", mobile: true },
-  { label: "Lesson Plans", to: "/lesson-plans", icon: "notebook", group: "Teaching" },
-  { label: "Timetable", to: "/timetable", icon: "calendar", group: "Teaching" },
-  { label: "Notifications", to: "/notifications", icon: "bell", group: "Teaching" },
-  { label: "Sync Centre", to: "/sync", icon: "refresh", group: "Device" },
-  { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Device", mobile: true },
+  {
+    label: "Engagement",
+    to: "/notifications",
+    icon: "bell",
+    group: "Teaching",
+    mobile: true,
+    children: [
+      { label: "Notifications", to: "/notifications" },
+      { label: "AI Assistant", to: "/ai" },
+    ],
+  },
+  { label: "Sync Centre", to: "/sync", icon: "refresh", group: "Device", mobile: true },
 ];
 
 const ACCOUNTANT: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Overview", mobile: true },
-  { label: "Students", to: "/students", icon: "users", group: "Finance" },
-  { label: "Invoices", to: "/finance/invoices", icon: "receipt", group: "Finance", mobile: true },
-  { label: "Payments", to: "/finance", icon: "wallet", group: "Finance", mobile: true },
-  { label: "Notifications", to: "/notifications", icon: "bell", group: "Finance" },
-  { label: "Reports", to: "/reports", icon: "chart", group: "Finance" },
-  { label: "Settings", to: "/settings", icon: "settings", group: "Support" },
-  { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "Support", mobile: true },
+  {
+    label: "Finance",
+    to: "/finance",
+    icon: "wallet",
+    group: "Finance",
+    mobile: true,
+    children: [
+      { label: "Payment Overview", to: "/finance" },
+      { label: "Invoices", to: "/finance/invoices" },
+      { label: "Students", to: "/students" },
+      { label: "Reports", to: "/reports" },
+    ],
+  },
+  {
+    label: "Support",
+    to: "/notifications",
+    icon: "bell",
+    group: "Support",
+    mobile: true,
+    children: [
+      { label: "Notifications", to: "/notifications" },
+      { label: "AI Assistant", to: "/ai" },
+      { label: "Settings", to: "/settings" },
+    ],
+  },
 ];
 
 const SECRETARY: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Overview", mobile: true },
-  { label: "Students", to: "/students", icon: "users", group: "People", mobile: true },
-  { label: "Accounts", to: "/accounts", icon: "userKey", group: "People", mobile: true },
-  { label: "Attendance", to: "/attendance", icon: "clipboard", group: "People", mobile: true },
   {
-    label: "Announcements",
+    label: "People",
+    to: "/students",
+    icon: "users",
+    group: "People",
+    mobile: true,
+    children: [
+      { label: "Students", to: "/students" },
+      { label: "Login Accounts", to: "/accounts" },
+      { label: "Take Attendance", to: "/attendance" },
+    ],
+  },
+  {
+    label: "Communication",
     to: "/communication",
     icon: "megaphone",
     group: "Engagement",
     mobile: true,
+    children: [
+      { label: "Announcements", to: "/communication" },
+      { label: "Notifications", to: "/notifications" },
+    ],
   },
-  { label: "Notifications", to: "/notifications", icon: "bell", group: "Engagement" },
 ];
 
 const PARENT: NavItem[] = [
-  { label: "Home", to: "/dashboard", icon: "home", group: "Family", mobile: true },
-  { label: "My Children", to: "/children", icon: "users", group: "Family", mobile: true },
-  { label: "Fees", to: "/fees", icon: "wallet", group: "Family", mobile: true },
-  { label: "Announcements", to: "/communication", icon: "megaphone", group: "School" },
-  { label: "Notifications", to: "/notifications", icon: "bell", group: "School" },
-  { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "School", mobile: true },
+  {
+    label: "Family",
+    to: "/dashboard",
+    icon: "home",
+    group: "Family",
+    mobile: true,
+    children: [
+      { label: "Home", to: "/dashboard" },
+      { label: "My Children", to: "/children" },
+      { label: "Fees", to: "/fees" },
+    ],
+  },
+  {
+    label: "School",
+    to: "/communication",
+    icon: "megaphone",
+    group: "School",
+    mobile: true,
+    children: [
+      { label: "Announcements", to: "/communication" },
+      { label: "Notifications", to: "/notifications" },
+      { label: "AI Assistant", to: "/ai" },
+    ],
+  },
 ];
 
 const STUDENT: NavItem[] = [
-  { label: "Home", to: "/dashboard", icon: "home", group: "Learning", mobile: true },
-  { label: "Timetable", to: "/timetable", icon: "calendar", group: "Learning", mobile: true },
-  { label: "Results", to: "/results", icon: "award", group: "Learning", mobile: true },
-  { label: "Announcements", to: "/communication", icon: "megaphone", group: "School" },
-  { label: "Notifications", to: "/notifications", icon: "bell", group: "School" },
-  { label: "AI Assistant", to: "/ai", icon: "sparkles", group: "School", mobile: true },
+  {
+    label: "Learning",
+    to: "/dashboard",
+    icon: "home",
+    group: "Learning",
+    mobile: true,
+    children: [
+      { label: "Home", to: "/dashboard" },
+      { label: "Timetable", to: "/timetable" },
+      { label: "Results", to: "/results" },
+    ],
+  },
+  {
+    label: "School",
+    to: "/communication",
+    icon: "megaphone",
+    group: "School",
+    mobile: true,
+    children: [
+      { label: "Announcements", to: "/communication" },
+      { label: "Notifications", to: "/notifications" },
+      { label: "AI Assistant", to: "/ai" },
+    ],
+  },
 ];
 
+/**
+ * Platform Manager — kept entirely separate from school navigation.
+ * Eight sections per the SaaS control spec; related actions live inside the
+ * section's page (dialogs/tabs) rather than as extra sidebar entries.
+ */
 const PLATFORM: NavItem[] = [
-  { label: "Dashboard", to: "/platform", icon: "home", group: "Platform", mobile: true },
+  { label: "Overview", to: "/platform", icon: "home", group: "Platform", mobile: true },
   { label: "Schools", to: "/platform/schools", icon: "building", group: "Platform", mobile: true },
+  {
+    label: "Subscription Plans",
+    to: "/platform/plans",
+    icon: "receipt",
+    group: "Revenue",
+    mobile: true,
+  },
   {
     label: "Subscriptions",
     to: "/platform/subscriptions",
@@ -137,16 +346,16 @@ const PLATFORM: NavItem[] = [
     group: "Revenue",
     mobile: true,
   },
-  { label: "Analytics", to: "/platform/analytics", icon: "chart", group: "Revenue" },
-  { label: "Notifications", to: "/notifications", icon: "bell", group: "Operations" },
+  { label: "Payments & Revenue", to: "/platform/payments", icon: "wallet", group: "Revenue" },
+  { label: "Activity", to: "/platform/activity", icon: "chart", group: "Operations" },
   {
-    label: "Security & Audit",
-    to: "/platform/security",
+    label: "Audit Logs",
+    to: "/platform/audit",
     icon: "shield",
     group: "Operations",
     mobile: true,
   },
-  { label: "Support", to: "/platform/support", icon: "lifebuoy", group: "Operations" },
+  { label: "Settings", to: "/platform/settings", icon: "settings", group: "Operations" },
 ];
 
 export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
@@ -170,3 +379,13 @@ export const HOME_BY_ROLE: Record<Role, string> = {
   parent: "/dashboard",
   student: "/dashboard",
 };
+
+/** Flatten main modules + sub-modules into link targets (for tests/search). */
+export function flattenNav(items: NavItem[]): { label: string; to: string }[] {
+  const out: { label: string; to: string }[] = [];
+  for (const item of items) {
+    out.push({ label: item.label, to: item.to });
+    for (const child of item.children ?? []) out.push({ label: child.label, to: child.to });
+  }
+  return out;
+}

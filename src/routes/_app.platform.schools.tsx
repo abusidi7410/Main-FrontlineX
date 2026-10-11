@@ -33,9 +33,12 @@ import {
   createPlatformSchool,
   deletePlatformSchool,
   getPlatformSchool,
+  listPlatformPlans,
   listPlatformSchools,
   setSchoolStatus,
   updatePlatformSchool,
+  updateSchoolSubscription,
+  type PlatformSchoolDetail,
   type RegisterSchoolResponse,
 } from "@/services/platform.service";
 
@@ -412,11 +415,7 @@ function RegisterSchoolDialog({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="reg-lga">LGA</Label>
-                <Select
-                  value={form.lga}
-                  onValueChange={set("lga")}
-                  disabled={!form.state}
-                >
+                <Select value={form.lga} onValueChange={set("lga")} disabled={!form.state}>
                   <SelectTrigger id="reg-lga" className="h-11">
                     <SelectValue placeholder={form.state ? "Select LGA" : "Select a state first"} />
                   </SelectTrigger>
@@ -702,6 +701,8 @@ function ManageSchoolDialog({
               </span>
             </div>
 
+            <SubscriptionControls school={school} schoolId={schoolId as string} />
+
             <form onSubmit={submit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="mng-name">School name</Label>
@@ -851,5 +852,268 @@ function ManageSchoolDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Subscription lifecycle + complimentary access for one school.
+ *
+ * Lives inside the school's Manage dialog (not as its own sidebar entry):
+ * plan changes, extensions, suspensions and complimentary grants all act on
+ * this school's subscription and every one is audited with before/after
+ * values. Complimentary access records who/when/reason and never writes a
+ * payment row.
+ */
+function SubscriptionControls({
+  school,
+  schoolId,
+}: {
+  school: PlatformSchoolDetail;
+  schoolId: string;
+}) {
+  const queryClient = useQueryClient();
+  const [planId, setPlanId] = useState("");
+  const [extendDays, setExtendDays] = useState("30");
+  const [grantUntil, setGrantUntil] = useState("");
+  const [reason, setReason] = useState("");
+  const [confirming, setConfirming] = useState<string | null>(null);
+
+  const plans = useQuery({ queryKey: ["platform", "plans"], queryFn: listPlatformPlans });
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["platform", "schools"] });
+    void queryClient.invalidateQueries({ queryKey: ["platform", "school", schoolId] });
+  };
+
+  const mutation = useMutation({
+    mutationFn: (input: Parameters<typeof updateSchoolSubscription>[1]) =>
+      updateSchoolSubscription(schoolId, input),
+    onSuccess: (updated) => {
+      toast.success(`${updated.name} subscription updated`);
+      setConfirming(null);
+      setReason("");
+      refresh();
+    },
+    onError: (err) =>
+      toast.error(err instanceof Error ? err.message : "We couldn't update that subscription."),
+  });
+
+  const needReason = (action: string) => {
+    if (!reason.trim()) {
+      toast.error(`Add a reason — it is required to ${action} and is kept in the audit log.`);
+      return false;
+    }
+    return true;
+  };
+
+  const planOptions = (plans.data ?? []).map((p) => ({
+    value: String(p.id ?? p.label),
+    label: `${p.label} — ${naira(Number(p.monthlyPrice) || 0)}`,
+  }));
+
+  return (
+    <section className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
+      <div>
+        <h3 className="font-medium">Subscription</h3>
+        <p className="text-sm text-muted-foreground">
+          {school.planName || "No plan"} ·{" "}
+          {school.expiresAt
+            ? `expires ${new Date(school.expiresAt).toLocaleDateString()}`
+            : "no expiry set"}
+          {school.overrideActive ? (
+            <>
+              {" "}
+              ·{" "}
+              <span className="font-medium text-warning">
+                complimentary until{" "}
+                {school.overrideUntil
+                  ? new Date(school.overrideUntil).toLocaleDateString()
+                  : "revoked"}
+              </span>
+            </>
+          ) : null}
+        </p>
+        {school.overrideActive ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Granted{school.overrideBy ? ` by ${school.overrideBy}` : ""}
+            {school.overrideAt ? ` on ${new Date(school.overrideAt).toLocaleDateString()}` : ""}.
+            Reason: {school.overrideReason || school.overrideNote || "—"}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label>Change plan</Label>
+          <div className="flex gap-2">
+            <Select value={planId} onValueChange={setPlanId}>
+              <SelectTrigger className="h-10" aria-label="Select plan">
+                <SelectValue placeholder="Select plan" />
+              </SelectTrigger>
+              <SelectContent>
+                {planOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-10 shrink-0"
+              disabled={!planId || mutation.isPending}
+              onClick={() => setConfirming("plan")}
+            >
+              Apply
+            </Button>
+          </div>
+          {confirming === "plan" ? (
+            <div className="space-y-2 rounded-lg border border-warning/30 bg-warning-soft p-3 text-sm">
+              <p>
+                Move {school.name} to the selected plan now? The new price applies to this school
+                from its next cycle; other schools are unaffected.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  disabled={mutation.isPending}
+                  onClick={() => mutation.mutate({ planId, reason: reason.trim() || undefined })}
+                >
+                  Confirm move
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="sub-extend">Extend access (days)</Label>
+          <div className="flex gap-2">
+            <Input
+              id="sub-extend"
+              className="h-10"
+              inputMode="numeric"
+              value={extendDays}
+              onChange={(e) => setExtendDays(e.target.value)}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-10 shrink-0"
+              disabled={mutation.isPending}
+              onClick={() => {
+                const days = Number(extendDays);
+                if (!days || days <= 0) {
+                  toast.error("Enter a positive number of days.");
+                  return;
+                }
+                mutation.mutate({ extendDays: days, reason: reason.trim() || undefined });
+              }}
+            >
+              Extend
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="sub-reason">Reason (required for grants, revocations, suspensions)</Label>
+        <Input
+          id="sub-reason"
+          className="h-10"
+          placeholder="e.g. Partnership pilot — Q4, approved by ops"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="sub-grant-until">Complimentary until (blank = until revoked)</Label>
+          <Input
+            id="sub-grant-until"
+            type="date"
+            className="h-10"
+            value={grantUntil}
+            onChange={(e) => setGrantUntil(e.target.value)}
+          />
+          <div className="flex gap-2">
+            {!school.overrideActive ? (
+              <Button
+                size="sm"
+                disabled={mutation.isPending}
+                onClick={() => {
+                  if (!needReason("grant complimentary access")) return;
+                  mutation.mutate({
+                    overrideActive: true,
+                    overrideUntil: grantUntil || null,
+                    reason: reason.trim(),
+                    note: reason.trim().slice(0, 200),
+                  });
+                }}
+              >
+                Grant complimentary access
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={mutation.isPending}
+                onClick={() => {
+                  if (!needReason("revoke complimentary access")) return;
+                  mutation.mutate({ overrideActive: false, reason: reason.trim() });
+                }}
+              >
+                Revoke complimentary access
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            No payment is recorded for complimentary access — the entitlement is stored separately
+            from verified payments.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Suspension</Label>
+          <div className="flex gap-2">
+            {school.status !== "suspended" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                disabled={mutation.isPending}
+                onClick={() => {
+                  if (!needReason("suspend this school")) return;
+                  mutation.mutate({ status: "suspended", reason: reason.trim() });
+                }}
+              >
+                Suspend school
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={mutation.isPending}
+                onClick={() => {
+                  if (!needReason("restore this school")) return;
+                  mutation.mutate({ status: "active", reason: reason.trim() });
+                }}
+              >
+                Restore access
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Suspension locks every login for this school; data is preserved and restored on
+            reactivation.
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }

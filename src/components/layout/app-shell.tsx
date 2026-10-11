@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { ChevronsLeft, ChevronsRight, LogOut, Menu, WifiOff } from "lucide-react";
+import { ChevronDown, ChevronsLeft, ChevronsRight, LogOut, Menu, WifiOff } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -39,6 +39,144 @@ function isActive(pathname: string, to: string) {
   return pathname === to || pathname.startsWith(`${to}/`);
 }
 
+function isItemActive(pathname: string, item: NavItem) {
+  if (isActive(pathname, item.to)) return true;
+  return (item.children ?? []).some((child) => isActive(pathname, child.to));
+}
+
+function NavEntry({
+  item,
+  pathname,
+  onNavigate,
+  collapsed = false,
+}: {
+  item: NavItem;
+  pathname: string;
+  onNavigate?: (() => void) | undefined;
+  collapsed?: boolean | undefined;
+}) {
+  const active = isItemActive(pathname, item);
+  const hasChildren = (item.children ?? []).length > 0;
+  const [open, setOpen] = useState(active);
+
+  useEffect(() => {
+    if (active) setOpen(true);
+  }, [active, pathname]);
+
+  // Collapsed rail (or childless entry): a single icon link to the main route.
+  if (collapsed || !hasChildren) {
+    return (
+      <li>
+        <Link
+          to={item.to}
+          onClick={onNavigate}
+          aria-current={active ? "page" : undefined}
+          aria-label={item.label}
+          title={collapsed ? item.label : undefined}
+          className={cn(
+            "group relative flex min-h-[2.5rem] items-center rounded-lg text-[13px] font-medium transition-colors duration-150",
+            collapsed ? "justify-center px-0" : "gap-2.5 px-3",
+            active
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+          )}
+        >
+          {active ? (
+            <span
+              aria-hidden="true"
+              className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-primary"
+            />
+          ) : null}
+          <NavIcon
+            name={item.icon}
+            className={cn(
+              "size-4 shrink-0",
+              active
+                ? "text-sidebar-primary"
+                : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/90",
+            )}
+          />
+          {!collapsed ? <span className="truncate">{item.label}</span> : null}
+        </Link>
+      </li>
+    );
+  }
+
+  const activeChild = (item.children ?? []).find((child) => isActive(pathname, child.to));
+  return (
+    <li>
+      <div
+        className={cn(
+          "group relative flex min-h-[2.5rem] items-center gap-2.5 rounded-lg px-3 text-[13px] font-medium transition-colors duration-150",
+          active
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+        )}
+      >
+        {active ? (
+          <span
+            aria-hidden="true"
+            className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-primary"
+          />
+        ) : null}
+        <Link
+          to={item.to}
+          onClick={onNavigate}
+          aria-current={active && !activeChild ? "page" : undefined}
+          aria-label={item.label}
+          className="flex min-w-0 flex-1 items-center gap-2.5"
+        >
+          <NavIcon
+            name={item.icon}
+            className={cn(
+              "size-4 shrink-0",
+              active
+                ? "text-sidebar-primary"
+                : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/90",
+            )}
+          />
+          <span className="truncate">{item.label}</span>
+        </Link>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-label={`${open ? "Collapse" : "Expand"} ${item.label}`}
+          className="flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-sidebar-accent"
+        >
+          <ChevronDown
+            className={cn("size-4 transition-transform duration-150", open && "rotate-180")}
+          />
+        </button>
+      </div>
+      {open ? (
+        <ul className="ml-6 mt-1 space-y-0.5 border-l border-sidebar-border pl-2">
+          {(item.children ?? []).map((child) => {
+            const childActive = isActive(pathname, child.to);
+            return (
+              <li key={`${item.to}::${child.to}::${child.label}`}>
+                <Link
+                  to={child.to}
+                  onClick={onNavigate}
+                  aria-current={childActive ? "page" : undefined}
+                  className={cn(
+                    "block truncate rounded-md px-2.5 py-2 text-[13px] transition-colors duration-150",
+                    childActive
+                      ? "bg-sidebar-accent/70 font-semibold text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/65 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+                  )}
+                >
+                  {child.label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
 function NavLinks({
   items,
   pathname,
@@ -59,44 +197,15 @@ function NavLinks({
             <p className="fn-eyebrow px-3 pb-2 text-sidebar-foreground/45">{group}</p>
           ) : null}
           <ul className="space-y-1">
-            {groupItems.map((item) => {
-              const active = isActive(pathname, item.to);
-              return (
-                <li key={item.to}>
-                  <Link
-                    to={item.to}
-                    onClick={onNavigate}
-                    aria-current={active ? "page" : undefined}
-                    aria-label={item.label}
-                    title={collapsed ? item.label : undefined}
-                    className={cn(
-                      "group relative flex min-h-[2.5rem] items-center rounded-lg text-[13px] font-medium transition-colors duration-150",
-                      collapsed ? "justify-center px-0" : "gap-2.5 px-3",
-                      active
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-                    )}
-                  >
-                    {active ? (
-                      <span
-                        aria-hidden="true"
-                        className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-primary"
-                      />
-                    ) : null}
-                    <NavIcon
-                      name={item.icon}
-                      className={cn(
-                        "size-4 shrink-0",
-                        active
-                          ? "text-sidebar-primary"
-                          : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/90",
-                      )}
-                    />
-                    {!collapsed ? <span className="truncate">{item.label}</span> : null}
-                  </Link>
-                </li>
-              );
-            })}
+            {groupItems.map((item) => (
+              <NavEntry
+                key={item.to + item.label}
+                item={item}
+                pathname={pathname}
+                onNavigate={onNavigate}
+                collapsed={collapsed}
+              />
+            ))}
           </ul>
         </div>
       ))}

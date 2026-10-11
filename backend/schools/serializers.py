@@ -200,6 +200,7 @@ class SchoolSessionSerializer(serializers.ModelSerializer):
         mapping = {
             SchoolSubscription.Status.ACTIVE: 'active',
             SchoolSubscription.Status.TRIAL: 'trial',
+            SchoolSubscription.Status.GRACE: 'grace',
             SchoolSubscription.Status.PENDING: 'pending_payment',
             SchoolSubscription.Status.EXPIRED: 'grace',
             SchoolSubscription.Status.SUSPENDED: 'suspended',
@@ -318,6 +319,13 @@ class PlatformPlanSerializer(serializers.ModelSerializer):
 
     id = serializers.CharField(source='code', required=False, allow_blank=True, allow_null=True)
     label = serializers.CharField(source='name')
+    description = serializers.CharField(required=False, allow_blank=True, default='')
+    billingInterval = serializers.ChoiceField(
+        source='billing_interval', choices=['monthly', 'termly', 'yearly'],
+        required=False, default='monthly',
+    )
+    trialDays = serializers.IntegerField(source='trial_days', required=False, default=7, min_value=0)
+    currency = serializers.CharField(required=False, allow_blank=True, default='NGN')
     minStudents = serializers.IntegerField(source='min_students', min_value=0)
     maxStudents = serializers.IntegerField(
         source='max_students', required=False, allow_null=True, min_value=0,
@@ -354,7 +362,8 @@ class PlatformPlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = SubscriptionPlan
         fields = [
-            'id', 'label', 'minStudents', 'maxStudents', 'monthlyPrice',
+            'id', 'label', 'description', 'billingInterval', 'trialDays', 'currency',
+            'minStudents', 'maxStudents', 'monthlyPrice',
             'aiCredits', 'storageGb', 'smsAllowance', 'otpAllowance',
             'aiAllowance', 'smsCostPerUnit', 'otpCostPerUnit', 'aiCostPerCredit',
             'sortOrder', 'isActive', 'features',

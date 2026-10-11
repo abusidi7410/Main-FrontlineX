@@ -39,6 +39,8 @@ def school_status(school, subscription):
             return 'trial'
         if subscription.status == SchoolSubscription.Status.ACTIVE:
             return 'active'
+        if subscription.status == SchoolSubscription.Status.GRACE:
+            return 'grace'
         if subscription.status in (
             SchoolSubscription.Status.PENDING,
             SchoolSubscription.Status.EXPIRED,

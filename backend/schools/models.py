@@ -164,6 +164,16 @@ class SubscriptionPlan(models.Model):
     ai_cost_per_credit = models.PositiveIntegerField(default=0)
     features = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True)
+    # ── Platform plan management (plan editor) ──
+    # Human-readable summary shown on the pricing table and plan editor.
+    description = models.TextField(blank=True, default='')
+    # Billing cadence for new subscribers (existing subscribers keep the price
+    # they signed up at until an explicit, confirmed change moves them).
+    billing_interval = models.CharField(max_length=20, default='monthly', db_default='monthly')
+    # Free trial granted with this plan, in days.
+    trial_days = models.PositiveIntegerField(default=7, db_default=7)
+    # ISO currency code for the plan price (Paystack settles in NGN by default).
+    currency = models.CharField(max_length=8, default='NGN', db_default='NGN')
     # Display order in the pricing table; ties fall back to min_students.
     sort_order = models.PositiveIntegerField(default=0, db_default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -181,6 +191,7 @@ class SchoolSubscription(models.Model):
         PENDING = 'pending', 'Pending'
         TRIAL = 'trial', 'Trial'
         ACTIVE = 'active', 'Active'
+        GRACE = 'grace', 'Grace period'
         EXPIRED = 'expired', 'Expired'
         SUSPENDED = 'suspended', 'Suspended'
 
@@ -205,6 +216,11 @@ class SchoolSubscription(models.Model):
     override_active = models.BooleanField(default=False, db_default=False)
     override_until = models.DateTimeField(null=True, blank=True)
     override_note = models.CharField(max_length=200, blank=True, default='')
+    # Required reason for granting/extending/revoking complimentary access
+    # (promo, partnership, testing, goodwill). Stored separately from the free
+    # -form note so audit history keeps the justification even when the note
+    # changes. Never a payment: no payment row is written for a grant.
+    override_reason = models.CharField(max_length=280, blank=True, default='')
     override_by = models.ForeignKey(
         'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='subscription_overrides',
@@ -437,3 +453,22 @@ class Announcement(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class PlatformSettings(models.Model):
+    """Singleton row (pk=1) holding platform-wide SaaS controls.
+
+    Kept in the database — not in env — so a platform manager can adjust the
+    commercial policy without a redeploy. Every change is audited with
+    before/after values. Only IsSuperAdmin may read or write it.
+    """
+
+    trial_days = models.PositiveIntegerField(default=7)
+    subscription_period_days = models.PositiveIntegerField(default=30)
+    grace_period_days = models.PositiveIntegerField(default=0)
+    support_email = models.EmailField(blank=True, default='')
+    maintenance_message = models.CharField(max_length=280, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return 'Platform settings'

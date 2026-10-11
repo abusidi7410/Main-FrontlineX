@@ -1,5 +1,10 @@
 import { apiFetch } from "@/api/client";
-import type { Announcement, PlatformOverview, PlatformOverviewRange, PlatformSchool } from "@/types";
+import type {
+  Announcement,
+  PlatformOverview,
+  PlatformOverviewRange,
+  PlatformSchool,
+} from "@/types";
 
 export async function getPlatformOverview(
   range: PlatformOverviewRange = "30d",
@@ -35,6 +40,18 @@ export interface PlatformSchoolDetail extends PlatformSchool {
   isActive: boolean;
   studentCount: number;
   staffCount: number;
+  // Subscription facts (from `_subscription_json` on the backend).
+  planId: string | null;
+  planName: string;
+  monthlyPrice: number;
+  expiresAt: string | null;
+  overrideActive: boolean;
+  overrideUntil: string | null;
+  overrideNote: string;
+  overrideReason: string;
+  overrideBy: string | null;
+  overrideAt: string | null;
+  tierLabel?: string;
 }
 
 export interface CreatePlatformSchoolInput {
@@ -156,9 +173,173 @@ export interface AuditEvent {
   ip: string;
   createdAt: string;
   severity: "info" | "warning" | "critical";
+  role?: string;
+  school?: string;
+  schoolId?: string | null;
 }
 
-export async function listAuditEvents(): Promise<AuditEvent[]> {
+interface PaginatedResponse<T> {
+  results: T[];
+  count: number;
+  page: number;
+  pageSize: number;
+}
+
+function unwrapList<T>(payload: T[] | PaginatedResponse<T>): T[] {
+  return Array.isArray(payload) ? payload : (payload?.results ?? []);
+}
+
+export async function listAuditEvents(params?: {
+  action?: string;
+  severity?: string;
+  actor?: string;
+  search?: string;
+  schoolId?: string;
+}): Promise<AuditEvent[]> {
   // SECURITY: Backend must verify permission audit.read and the platform-manager role; schoolId match is intentionally not required for this global audit scope.
-  return apiFetch("/platform/audit");
+  const payload = await apiFetch<AuditEvent[] | PaginatedResponse<AuditEvent>>("/platform/audit", {
+    query: { ...(params ?? {}) },
+  });
+  return unwrapList(payload);
+}
+
+// ── Subscription plans ──────────────────────────────────────────────
+
+export interface PlatformPlan {
+  id: string | null;
+  label: string;
+  description?: string;
+  billingInterval?: string;
+  trialDays?: number;
+  currency?: string;
+  minStudents: number;
+  maxStudents: number | null;
+  monthlyPrice: string | number;
+  aiCredits?: number;
+  storageGb?: number;
+  smsAllowance?: number;
+  otpAllowance?: number;
+  aiAllowance?: number;
+  smsCostPerUnit?: number;
+  otpCostPerUnit?: number;
+  aiCostPerCredit?: number;
+  sortOrder?: number;
+  isActive?: boolean;
+  features?: string[];
+}
+
+export async function listPlatformPlans(): Promise<PlatformPlan[]> {
+  const payload = await apiFetch<{ results: PlatformPlan[] } | PlatformPlan[]>("/platform/plans");
+  if (Array.isArray(payload)) return payload;
+  return payload.results ?? [];
+}
+
+export async function createPlatformPlan(input: Partial<PlatformPlan>): Promise<PlatformPlan> {
+  return apiFetch("/platform/plans", { method: "POST", body: input });
+}
+
+export async function updatePlatformPlan(
+  pk: number | string,
+  input: Partial<PlatformPlan>,
+): Promise<PlatformPlan> {
+  return apiFetch(`/platform/plans/${pk}`, { method: "PATCH", body: input });
+}
+
+export async function deletePlatformPlan(pk: number | string): Promise<{ deleted: string }> {
+  return apiFetch(`/platform/plans/${pk}`, { method: "DELETE" });
+}
+
+// ── Per-school subscription (lifecycle + complimentary access) ──────
+
+export interface UpdateSubscriptionInput {
+  planId?: string | undefined;
+  status?: string | undefined;
+  expiresAt?: string | null | undefined;
+  extendDays?: number | undefined;
+  overrideActive?: boolean | undefined;
+  overrideUntil?: string | null | undefined;
+  note?: string | undefined;
+  reason?: string | undefined;
+}
+
+export async function updateSchoolSubscription(
+  id: string,
+  input: UpdateSubscriptionInput,
+): Promise<PlatformSchoolDetail> {
+  return apiFetch(`/platform/schools/${id}/subscription`, { method: "PATCH", body: input });
+}
+
+// ── Payments & revenue ──────────────────────────────────────────────
+
+export interface SubscriptionPayment {
+  id: string;
+  schoolId: string;
+  schoolName: string;
+  planId: string | null;
+  planName: string;
+  reference: string;
+  amount: number;
+  amountKobo: number;
+  currency: string;
+  status: "pending" | "success" | "failed" | "abandoned";
+  purpose: string;
+  channel: string;
+  paystackReference: string;
+  paidAt: string | null;
+  createdAt: string;
+}
+
+export async function listSubscriptionPayments(params?: {
+  status?: string;
+  schoolId?: string;
+  search?: string;
+}): Promise<SubscriptionPayment[]> {
+  const payload = await apiFetch<SubscriptionPayment[] | PaginatedResponse<SubscriptionPayment>>(
+    "/platform/subscriptions/payments",
+    { query: { ...(params ?? {}) } },
+  );
+  return unwrapList(payload);
+}
+
+export async function getPlatformProfit(month?: string): Promise<Record<string, unknown>> {
+  return apiFetch("/platform/profit", { query: { month } });
+}
+
+// ── Platform settings ───────────────────────────────────────────────
+
+export interface PlatformSettings {
+  trialDays: number;
+  subscriptionPeriodDays: number;
+  gracePeriodDays: number;
+  supportEmail: string;
+  maintenanceMessage: string;
+  updatedAt: string | null;
+}
+
+export async function getPlatformSettings(): Promise<PlatformSettings> {
+  return apiFetch("/platform/settings");
+}
+
+export async function updatePlatformSettings(
+  input: Partial<PlatformSettings>,
+): Promise<PlatformSettings> {
+  return apiFetch("/platform/settings", { method: "PATCH", body: input });
+}
+
+// ── School users & read-only impersonation ──────────────────────────
+
+export interface PlatformSchoolUser {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  role: string;
+  isActive: boolean;
+  isVerified: boolean;
+  mustChangePassword: boolean;
+  lastLogin: string | null;
+}
+
+export async function listPlatformSchoolUsers(schoolId: string): Promise<PlatformSchoolUser[]> {
+  return apiFetch(`/platform/schools/${schoolId}/users`);
 }
