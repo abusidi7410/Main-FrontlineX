@@ -1686,7 +1686,9 @@ class SubscriptionView(APIView):
         school_id = request.user.school_id
         school = get_object_or_404(School, id=school_id)
         active_students = Student.objects.filter(school_id=school_id, status=Student.Status.ACTIVE).count()
-        subscription = SchoolSubscription.objects.filter(school_id=school_id, status__in=['active', 'pending']).first()
+        subscription = SchoolSubscription.objects.filter(
+            school_id=school_id, status__in=['active', 'trial', 'pending'],
+        ).first()
         plan = subscription.plan if subscription and subscription.plan_id else None
 
         max_students = plan.max_students if plan else 100
@@ -1696,6 +1698,9 @@ class SubscriptionView(APIView):
         return Response({
             'tierId': tier_id,
             'status': school.is_active and 'active' or 'pending_payment',
+            # Raw subscription state so the client can tell "no payment yet"
+            # (pending) from a live plan without guessing from dates.
+            'subscriptionStatus': subscription.status if subscription else 'none',
             'activeStudents': active_students,
             'growthAllowance': growth,
             'renewalDate': (subscription.expires_at.isoformat() if subscription and subscription.expires_at else ''),

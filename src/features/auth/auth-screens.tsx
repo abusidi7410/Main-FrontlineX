@@ -374,7 +374,7 @@ function RegisterContent({
   onAdminSubmit,
   submitting,
   createSchool,
-  trialEndsAt,
+  payBy,
   onShowLogin,
 }: {
   schoolForm: UseFormReturn<SchoolValues>;
@@ -390,7 +390,7 @@ function RegisterContent({
   onAdminSubmit: (values: AdminValues) => void;
   submitting: boolean;
   createSchool: () => void;
-  trialEndsAt: string | null;
+  payBy: string | null;
   onShowLogin: () => void;
 }) {
   const { field: nameField } = useController({ control: schoolForm.control, name: "name" });
@@ -896,7 +896,7 @@ function RegisterContent({
           </ul>
           <div className="flex flex-col items-center gap-2.5 pt-1">
             <button type="button" className="auth-btn auth-btn-form" onClick={() => setStep(3)}>
-              Continue to trial
+              Continue
             </button>
             <button
               type="button"
@@ -942,7 +942,7 @@ function RegisterContent({
                   Trial
                 </dt>
                 <dd className="font-display text-base font-semibold" style={{ color: NAVY }}>
-                  Free trial
+                  Free trial, card required
                 </dd>
               </div>
             </dl>
@@ -954,9 +954,10 @@ function RegisterContent({
               aria-hidden="true"
             />
             <p>
-              Your school and administrator account are created now. You can use the selected plan
-              free during its trial period; no payment details are required to start the trial. The
-              end date will be shown after your school is created.
+              Your school and administrator account are created now. To start the free trial, sign
+              in and add a payment method — checkout covers your first month and the trial days are
+              added free on top. Complete payment
+              {payBy ? ` by ${dateFmt(payBy)}` : ""} to keep your school active.
             </p>
           </div>
           <div className="flex flex-col items-center gap-2.5">
@@ -974,7 +975,7 @@ function RegisterContent({
                 </>
               ) : (
                 <>
-                  <CheckCircle2 className="size-4" aria-hidden="true" /> Start free trial
+                  <CheckCircle2 className="size-4" aria-hidden="true" /> Create school
                 </>
               )}
             </button>
@@ -993,15 +994,15 @@ function RegisterContent({
         <div className="px-2 py-8 text-center">
           <CheckCircle2 className="mx-auto size-11" style={{ color: NAVY }} aria-hidden="true" />
           <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
-            {schoolData?.name} trial is active
+            {schoolData?.name} is ready
           </h3>
           <p
             className="mx-auto mt-2 max-w-[320px] text-[13px] leading-relaxed"
             style={{ color: MUTED }}
           >
-            {`Your ${tier.label} plan trial is active until ${
-              trialEndsAt ? dateFmt(trialEndsAt) : "the end of the trial period"
-            }. No payment was taken. Sign in to finish setting up your school.`}
+            {`Your ${tier.label} plan includes a free trial. Sign in and add a payment method to start it${
+              payBy ? ` before ${dateFmt(payBy)}` : ""
+            } — checkout covers your first month and the trial days are added free on top.`}
           </p>
           <div className="mt-6 flex flex-col items-center gap-2.5">
             <Link to="/login" className="auth-btn auth-btn-form">
@@ -1084,7 +1085,7 @@ export function AuthScreens({
   const [schoolData, setSchoolData] = useState<SchoolValues | null>(null);
   const [adminData, setAdminData] = useState<AdminValues | null>(null);
   const [tierId, setTierId] = useState(initialTier ?? "t400");
-  const [trialEndsAt, setTrialEndsAt] = useState<string | null>(null);
+  const [payBy, setPayBy] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const schoolForm = useForm<SchoolValues>({
@@ -1119,12 +1120,12 @@ export function AuthScreens({
         admin: adminData,
         tierId,
       });
-      if (!result.trial) {
+      if (!result.requiresPayment) {
         throw new Error(
-          "The server did not start a trial for this school. Please contact support.",
+          "The server did not set up payment for this school. Please contact support.",
         );
       }
-      setTrialEndsAt(result.trialEndsAt);
+      setPayBy(result.payBy);
       setStep(5);
     } catch (error) {
       toast.error(
@@ -1190,7 +1191,7 @@ export function AuthScreens({
                     }}
                     submitting={submitting}
                     createSchool={() => void createSchool()}
-                    trialEndsAt={trialEndsAt}
+                    payBy={payBy}
                     onShowLogin={toggle}
                   />
                 </section>
@@ -1287,7 +1288,7 @@ export function AuthScreens({
                   }}
                   submitting={submitting}
                   createSchool={() => void createSchool()}
-                  trialEndsAt={trialEndsAt}
+                  payBy={payBy}
                   onShowLogin={toggle}
                 />
               </div>

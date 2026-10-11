@@ -52,7 +52,8 @@ export async function registerSchool(payload: OnboardingPayload) {
     schoolId: string;
     paymentRef: string;
     trial: boolean;
-    trialEndsAt: string;
+    requiresPayment: boolean;
+    payBy: string | null;
     trialDays: number;
     planName: string;
   }>("/schools/register", { method: "POST", body: payload });

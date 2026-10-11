@@ -164,6 +164,53 @@ class SubscriptionPaymentFlowTests(TestCase):
             expiry,
         )
 
+    def test_trial_start_checkout_unlocks_trial_with_bonus_days(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        SchoolSubscription.objects.create(
+            school=self.school,
+            plan=self.plan,
+            status=SchoolSubscription.Status.PENDING,
+            starts_at=timezone.now(),
+            expires_at=timezone.now() + timedelta(days=7),
+        )
+        with patch(
+            'schools.subscription_views.paystack.initialize_transaction',
+            return_value={
+                'access_code': 'access-code',
+                'authorization_url': 'https://checkout.paystack.com/access-code',
+                'reference': 'gateway-reference',
+            },
+        ):
+            checkout = self.client.post(
+                '/api/v1/schools/subscriptions/checkout/',
+                {'planId': 't100'},
+                format='json',
+            )
+        self.assertEqual(checkout.status_code, 200, checkout.content)
+        payment = SubscriptionPayment.objects.get(reference=checkout.data['reference'])
+        self.assertEqual(payment.purpose, SubscriptionPayment.Purpose.TRIAL_START)
+
+        with patch(
+            'schools.subscription_views.paystack.verify_transaction',
+            side_effect=lambda reference: {
+                'status': 'success',
+                'reference': reference,
+                'amount': 800000,
+                'currency': 'NGN',
+            },
+        ):
+            verify = self.client.get(
+                f'/api/v1/schools/subscriptions/verify/{payment.reference}/',
+            )
+        self.assertEqual(verify.status_code, 200, verify.content)
+        self.assertEqual(verify.data['status'], 'success')
+        subscription = SchoolSubscription.objects.get(school=self.school)
+        self.assertEqual(subscription.status, SchoolSubscription.Status.ACTIVE)
+        # Trial bonus (plan.trial_days=7) free on top of the 30-day period.
+        expected_min = timezone.now() + timedelta(days=7 + 30, seconds=-60)
+        self.assertGreater(subscription.expires_at, expected_min)
+
     def _pending_payment(self):
         return SubscriptionPayment.objects.create(
             school=self.school,

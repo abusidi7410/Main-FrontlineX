@@ -118,6 +118,9 @@ export interface SubscriptionTier {
 export interface SubscriptionState {
   tierId: string;
   status: SchoolStatus;
+  /** Raw backend subscription state (active/pending/trial/…): tells the UI
+      whether payment is still required without guessing from dates. */
+  subscriptionStatus?: string | undefined;
   activeStudents: number;
   growthAllowance: number;
   renewalDate: string;
@@ -234,11 +237,7 @@ export interface AttendanceSubmission {
   updatedAt: number;
 }
 
-export type StaffAttendanceStatus =
-  | "at_school"
-  | "outside"
-  | "unverified"
-  | "pending_review";
+export type StaffAttendanceStatus = "at_school" | "outside" | "unverified" | "pending_review";
 
 export interface StaffAttendanceCheckInInput {
   latitude?: number | null;

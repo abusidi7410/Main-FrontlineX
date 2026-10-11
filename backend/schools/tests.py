@@ -297,7 +297,7 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
             'tierId': 't100',
         }
 
-    def test_public_registration_starts_a_free_trial(self):
+    def test_public_registration_requires_payment_before_trial(self):
         response = self.client.post(
             '/api/v1/schools/register/', self._payload(), format='json',
         )
@@ -307,14 +307,16 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
         school = School.objects.get(id=body['schoolId'])
         subscription = SchoolSubscription.objects.get(school=school)
         admin = User.objects.get(email='new-admin@example.com')
+        # Onboarding: the school can sign in, but no trial runs yet.
         self.assertTrue(school.is_active)
-        self.assertEqual(subscription.status, SchoolSubscription.Status.TRIAL)
+        self.assertEqual(subscription.status, SchoolSubscription.Status.PENDING)
         self.assertEqual(subscription.plan, self.plan)
         self.assertIsNotNone(subscription.expires_at)
         self.assertTrue(admin.is_active)
         self.assertTrue(admin.is_verified)
-        self.assertTrue(body['trial'])
-        self.assertIsNotNone(body['trialEndsAt'])
+        self.assertFalse(body['trial'])
+        self.assertTrue(body['requiresPayment'])
+        self.assertIsNotNone(body['payBy'])
         login_response = self.client.post(
             '/api/v1/auth/login/',
             {'identifier': admin.email, 'password': 'Strong-Pass-1!'},
@@ -340,7 +342,7 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
         school = School.objects.get(id=response.json()['schoolId'])
         self.assertEqual(
             school.subscription.status,
-            SchoolSubscription.Status.TRIAL,
+            SchoolSubscription.Status.PENDING,
         )
 
 

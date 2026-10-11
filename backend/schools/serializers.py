@@ -87,7 +87,10 @@ class SchoolRegistrationSerializer(serializers.Serializer):
             )
 
         now = timezone.now()
-        trial_ends_at = now + timedelta(days=trial_days)
+        # Payment is due before the trial: the school is created PENDING with a
+        # pay-by deadline. Signing in still works (onboarding), but the trial
+        # only starts once the first checkout succeeds (purpose `trial_start`).
+        pay_by = now + timedelta(days=trial_days)
 
         with transaction.atomic():
             latitude = school_data.get('latitude')
@@ -102,9 +105,9 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 phone=school_data['phone'],
                 email=school_data['email'],
                 website=school_data.get('website', ''),
-                # A new school starts on a free trial: it is switched on
-                # immediately so the administrator can set it up, and its
-                # subscription lapses on its own when the trial window closes.
+                # Created PENDING: the administrator can sign in straight away
+                # to set the school up and complete checkout, but the trial
+                # only starts once payment is verified (no card, no trial).
                 is_active=True,
                 latitude=latitude if has_location else None,
                 longitude=longitude if has_location else None,
@@ -136,17 +139,18 @@ class SchoolRegistrationSerializer(serializers.Serializer):
             SchoolSubscription.objects.create(
                 school=school,
                 plan=plan,
-                status=SchoolSubscription.Status.TRIAL,
+                status=SchoolSubscription.Status.PENDING,
                 starts_at=now,
-                expires_at=trial_ends_at,
+                expires_at=pay_by,
             )
 
         return {
             'schoolId': str(school.pk),
             'paymentRef': f'FN-{school.slug.upper()}',
-            'trial': True,
-            'trialEndsAt': trial_ends_at.isoformat(),
+            'trial': False,
+            'requiresPayment': True,
             'trialDays': trial_days,
+            'payBy': pay_by.isoformat(),
             'planName': plan.name if plan else '',
         }
 

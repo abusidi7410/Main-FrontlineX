@@ -84,9 +84,15 @@ def activate_subscription(payment: SubscriptionPayment, *, occurred_at=None) -> 
     Idempotent: called from both the browser verification and the webhook, and
     safe to run twice. A renewal extends from the current expiry when that is
     still in the future, so paying early never loses time; otherwise it starts
-    from now.
+    from now. A `trial_start` payment additionally grants the plan's trial
+    days free on top of the paid period, so card-first trials keep their free
+    days while entering the normal ACTIVE lifecycle (reminders, expiry) at
+    once — trial states otherwise bypass every sweep.
     """
     now = occurred_at or timezone.now()
+    trial_bonus = 0
+    if payment.purpose == SubscriptionPayment.Purpose.TRIAL_START and payment.plan_id:
+        trial_bonus = payment.plan.trial_days or 0
     with transaction.atomic():
         payment = SubscriptionPayment.objects.select_for_update().get(pk=payment.pk)
         subscription, _ = (
@@ -99,10 +105,13 @@ def activate_subscription(payment: SubscriptionPayment, *, occurred_at=None) -> 
             subscription.plan = payment.plan
         base = subscription.expires_at if (
             subscription.expires_at and subscription.expires_at > now
+            and payment.purpose != SubscriptionPayment.Purpose.TRIAL_START
         ) else now
         subscription.status = SchoolSubscription.Status.ACTIVE
         subscription.starts_at = subscription.starts_at or now
-        subscription.expires_at = base + timedelta(days=_period_days())
+        subscription.expires_at = (
+            base + timedelta(days=trial_bonus + _period_days())
+        )
         # A successful payment supersedes any complimentary override.
         subscription.override_active = False
         subscription.override_until = None
@@ -285,14 +294,22 @@ class SubscriptionCheckoutView(APIView):
                 {'detail': 'No subscription plan is available to purchase.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        subscription = SchoolSubscription.objects.filter(school=school).first()
+        ever_paid = SubscriptionPayment.objects.filter(
+            school=school, status=SubscriptionPayment.Status.SUCCESS,
+        ).exists()
+        if (subscription is None or subscription.status == SchoolSubscription.Status.PENDING) and not ever_paid:
+            # Card-first trial: the first checkout unlocks the trial, adding
+            # the plan's trial days free on top of the paid period.
+            purpose = SubscriptionPayment.Purpose.TRIAL_START
+        elif SchoolSubscription.objects.filter(school=school).exclude(plan=plan).exists():
+            purpose = SubscriptionPayment.Purpose.PLAN_CHANGE
+        else:
+            purpose = SubscriptionPayment.Purpose.RENEWAL
         return _start_checkout(
             school,
             plan,
-            purpose=(
-                SubscriptionPayment.Purpose.PLAN_CHANGE
-                if SchoolSubscription.objects.filter(school=school).exclude(plan=plan).exists()
-                else SubscriptionPayment.Purpose.RENEWAL
-            ),
+            purpose=purpose,
             user=request.user,
         )
 

@@ -269,6 +269,9 @@ class SubscriptionPayment(models.Model):
         REGISTRATION = 'registration', 'Registration'
         RENEWAL = 'renewal', 'Renewal'
         PLAN_CHANGE = 'plan_change', 'Plan change'
+        # First checkout that unlocks the trial: the amount covers the first
+        # billing period and the plan's trial days are added free on top.
+        TRIAL_START = 'trial_start', 'Trial start'
 
     school = models.ForeignKey(
         School, on_delete=models.CASCADE, related_name='subscription_payments',

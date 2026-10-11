@@ -70,11 +70,19 @@ class Command(BaseCommand):
         )
 
     def _remind_expiring(self, schools) -> int:
-        """Warn schools whose subscription is about to run out."""
+        """Warn schools whose subscription is about to run out.
+
+        PENDING subscriptions are included: a new school's pay-by deadline is
+        stored on the same field, so the same reminders chase an unpaid trial
+        and the same lapse flips it EXPIRED when the window closes with no
+        verified payment.
+        """
         now = timezone.now()
         sent = 0
         upcoming = schools.filter(
-            subscription__status=SchoolSubscription.Status.ACTIVE,
+            subscription__status__in=[
+                SchoolSubscription.Status.ACTIVE, SchoolSubscription.Status.PENDING,
+            ],
             subscription__expires_at__isnull=False,
             subscription__expires_at__gt=now,
         ).select_related('subscription__plan')
@@ -88,9 +96,13 @@ class Command(BaseCommand):
             sent += 1
 
         # Already lapsed: the strongest alert the subscription type carries, and
-        # one the school cannot miss behind a busy inbox.
+        # one the school cannot miss behind a busy inbox. PENDING past its
+        # pay-by deadline lapses the same way, so an unpaid trial cannot run
+        # free forever.
         lapsed = schools.filter(
-            subscription__status=SchoolSubscription.Status.ACTIVE,
+            subscription__status__in=[
+                SchoolSubscription.Status.ACTIVE, SchoolSubscription.Status.PENDING,
+            ],
             subscription__expires_at__lte=now,
         )
         for school in lapsed.select_related('subscription__plan'):

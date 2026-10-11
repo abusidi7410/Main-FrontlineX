@@ -153,19 +153,40 @@ function SubscriptionPage() {
             const sub = query.data;
             const plans = plansQuery.data;
             const tier = plans.find((plan) => plan.id === sub.tierId) ?? tierById(sub.tierId);
+            const paymentRequired = sub.subscriptionStatus === "pending";
             const allowed = (tier.maxStudents ?? sub.activeStudents) + sub.growthAllowance;
             const usedPct = allowed ? (sub.activeStudents / allowed) * 100 : 0;
             const aiPct = sub.aiCreditsTotal ? (sub.aiCreditsUsed / sub.aiCreditsTotal) * 100 : 0;
 
             return (
               <>
+                {paymentRequired ? (
+                  <div
+                    className="fn-panel space-y-2 border-warning/40 bg-warning-soft p-5"
+                    role="status"
+                  >
+                    <p className="font-medium">Start your free trial</p>
+                    <p className="text-sm text-muted-foreground">
+                      Add a payment method to unlock {tier.label}. Checkout of{" "}
+                      {naira(tier.monthlyPrice)} covers your first month and the free trial days are
+                      added on top
+                      {sub.renewalDate
+                        ? ` — complete payment by ${dateFmt(sub.renewalDate)} to keep your school active`
+                        : ""}
+                      .
+                    </p>
+                  </div>
+                ) : null}
                 <div className="fn-panel flex flex-wrap items-center justify-between gap-4 p-5">
                   <div>
                     <p className="text-sm text-muted-foreground">Current plan</p>
                     <p className="font-display text-2xl font-semibold">{tier.label}</p>
                     <p className="text-sm text-muted-foreground">
-                      {naira(tier.monthlyPrice)} / month · Renews {dateFmt(sub.renewalDate)} ·{" "}
-                      {sub.paymentMethod ?? "No payment method saved"}
+                      {naira(tier.monthlyPrice)} / month ·{" "}
+                      {paymentRequired
+                        ? `Payment due${sub.renewalDate ? ` ${dateFmt(sub.renewalDate)}` : ""}`
+                        : `Renews ${dateFmt(sub.renewalDate)}`}{" "}
+                      · {sub.paymentMethod ?? "No payment method saved"}
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
@@ -177,7 +198,11 @@ function SubscriptionPage() {
                       {checkoutPlanId === tier.id ? (
                         <Loader2 className="animate-spin" aria-hidden="true" />
                       ) : null}
-                      {checkoutPlanId === tier.id ? "Opening checkout…" : "Renew subscription"}
+                      {checkoutPlanId === tier.id
+                        ? "Opening checkout…"
+                        : paymentRequired
+                          ? "Add payment method & start trial"
+                          : "Renew subscription"}
                     </Button>
                   </div>
                 </div>
