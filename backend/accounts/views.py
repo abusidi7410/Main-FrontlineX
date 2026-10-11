@@ -496,6 +496,10 @@ def authenticate_by_login(login_id, password):
         return None
     user = matches[0]
 
-    if user.check_password(password) and user.is_active:
+    # Password match alone decides identity here. Activity (is_active) is
+    # decided by the caller so a deactivated account hears "deactivated"
+    # instead of the misleading "invalid credentials" — critical for new
+    # school admins whose accounts start parked awaiting activation.
+    if user.check_password(password):
         return user
     return None

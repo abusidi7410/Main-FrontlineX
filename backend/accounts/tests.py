@@ -52,6 +52,26 @@ class AccountManagementAPITests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()['user']['id'], str(self.admin.id))
 
+    def test_deactivated_account_reports_deactivated_not_invalid_credentials(self):
+        self.admin.is_active = False
+        self.admin.save(update_fields=['is_active'])
+        response = APIClient().post(
+            '/api/v1/auth/login/',
+            {'identifier': 'admin@alpha.example', 'password': 'Strong-Pass-1!'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertEqual(response.json()['detail'], 'Account is deactivated. Contact support.')
+
+    def test_wrong_password_still_reports_invalid_credentials(self):
+        response = APIClient().post(
+            '/api/v1/auth/login/',
+            {'identifier': 'admin@alpha.example', 'password': 'Wrong-Pass-9!'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 401, response.content)
+        self.assertEqual(response.json()['detail'], 'Invalid credentials.')
+
     def test_login_accepts_phone_in_local_and_international_formats(self):
         user = User.objects.create_user(
             email='teacher@alpha.example',
