@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { ErrorState, ListSkeleton } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { tierById } from "@/constants/plans";
+import { SUBSCRIPTION_TIERS, tierById } from "@/constants/plans";
 import { dateFmt, naira, numberFmt, percent } from "@/lib/format";
 import {
   getSubscription,
@@ -151,7 +151,9 @@ function SubscriptionPage() {
         ) : (
           (() => {
             const sub = query.data;
-            const plans = plansQuery.data;
+            // Backend catalogue first (what the Platform Manager priced);
+            // bundled tiers only if the catalogue is empty.
+            const plans = plansQuery.data?.length ? plansQuery.data : SUBSCRIPTION_TIERS;
             const tier = plans.find((plan) => plan.id === sub.tierId) ?? tierById(sub.tierId);
             const paymentRequired = sub.subscriptionStatus === "pending";
             const allowed = (tier.maxStudents ?? sub.activeStudents) + sub.growthAllowance;

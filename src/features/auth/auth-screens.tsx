@@ -1,4 +1,5 @@
 import { useNavigate, Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState, type Dispatch, type SetStateAction, type ReactNode } from "react";
 import { useController, useForm, type UseFormReturn } from "react-hook-form";
@@ -31,7 +32,11 @@ import { NIGERIAN_STATES, lgasForState } from "@/constants/nigeria";
 import { emailField, ngPhone, passwordField, requiredText } from "@/lib/validation";
 import { getCurrentPosition, geolocationSupported } from "@/lib/geolocation";
 import { dateFmt, naira } from "@/lib/format";
-import { registerSchool, startSubscriptionCheckout } from "@/services/school.service";
+import {
+  registerSchool,
+  getSubscriptionPlans,
+  startSubscriptionCheckout,
+} from "@/services/school.service";
 import { cn } from "@/lib/utils";
 import type { SubscriptionTier } from "@/types";
 
@@ -370,6 +375,7 @@ function RegisterContent({
   tierId,
   setTierId,
   tier,
+  tiers,
   onSchoolSubmit,
   onAdminSubmit,
   submitting,
@@ -386,6 +392,7 @@ function RegisterContent({
   tierId: string;
   setTierId: (id: string) => void;
   tier: SubscriptionTier;
+  tiers: SubscriptionTier[];
   onSchoolSubmit: (values: SchoolValues) => void;
   onAdminSubmit: (values: AdminValues) => void;
   submitting: boolean;
@@ -861,7 +868,7 @@ function RegisterContent({
             grow within it during a billing period.
           </Subtext>
           <ul className="space-y-2.5">
-            {SUBSCRIPTION_TIERS.map((option) => {
+            {tiers.map((option) => {
               const selected = option.id === tierId;
               return (
                 <li key={option.id}>
@@ -1088,6 +1095,25 @@ export function AuthScreens({
   const [payBy, setPayBy] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Prices come from the Platform Manager's catalogue, not from a hardcoded
+  // list: what you price there is what a registering school sees and pays.
+  // The bundled tiers are only a fallback for when the catalogue cannot be
+  // reached (offline) or is empty.
+  const catalogue = useQuery({
+    queryKey: ["publicPlans"],
+    queryFn: getSubscriptionPlans,
+    staleTime: 10 * 60 * 1000,
+    retry: 1,
+  });
+  const tiers = catalogue.data?.length ? catalogue.data : SUBSCRIPTION_TIERS;
+
+  useEffect(() => {
+    if (catalogue.data?.length && !catalogue.data.some((t) => t.id === tierId)) {
+      const first = catalogue.data[0];
+      if (first) setTierId(first.id);
+    }
+  }, [catalogue.data, tierId]);
+
   const schoolForm = useForm<SchoolValues>({
     resolver: zodResolver(schoolSchema),
     defaultValues: {
@@ -1109,7 +1135,7 @@ export function AuthScreens({
     defaultValues: { fullName: "", phone: "", email: "", password: "" },
   });
 
-  const tier = tierById(tierId) ?? SUBSCRIPTION_TIERS[0]!;
+  const tier = tiers.find((t) => t.id === tierId) ?? tierById(tierId) ?? tiers[0]!;
 
   const createSchool = async () => {
     if (!schoolData || !adminData) return;
@@ -1200,6 +1226,7 @@ export function AuthScreens({
                     tierId={tierId}
                     setTierId={setTierId}
                     tier={tier}
+                    tiers={tiers}
                     onSchoolSubmit={(values) => {
                       setSchoolData(values);
                       setStep(1);
@@ -1297,6 +1324,7 @@ export function AuthScreens({
                   tierId={tierId}
                   setTierId={setTierId}
                   tier={tier}
+                  tiers={tiers}
                   onSchoolSubmit={(values) => {
                     setSchoolData(values);
                     setStep(1);
