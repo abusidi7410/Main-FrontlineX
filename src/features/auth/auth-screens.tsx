@@ -1,5 +1,6 @@
 import { useNavigate, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { ApiRequestError } from "@/api/client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState, type Dispatch, type SetStateAction, type ReactNode } from "react";
 import { useController, useForm, type UseFormReturn } from "react-hook-form";
@@ -54,6 +55,72 @@ const SCHOOL_TYPES = [
   "Primary & Secondary",
   "Secondary only",
 ];
+
+/**
+ * The picker shows friendly labels; the API only accepts its school-type
+ * codes. Mappings live here (not in the submit handler) so a label the
+ * server would reject with "Unsupported school type" can never be sent.
+ */
+const SCHOOL_TYPE_CODES = ["nursery", "primary", "secondary", "mixed"] as const;
+
+function toSchoolTypeCode(label: string): string {
+  const value = label.trim();
+  if ((SCHOOL_TYPE_CODES as readonly string[]).includes(value)) return value;
+  switch (value) {
+    case "Nursery only":
+      return "nursery";
+    case "Primary only":
+      return "primary";
+    case "Secondary only":
+      return "secondary";
+    default:
+      return "mixed";
+  }
+}
+
+/**
+ * Catalogue rows come in two shapes: the current `{id (code), label, …}`
+ * and the legacy `{id (number), name, min_students, monthly_price, …}`.
+ * Normalise either into the picker shape so registration prices always
+ * render — and check out — against a real catalogue row.
+ */
+function toPickerTier(row: unknown): SubscriptionTier | null {
+  if (!row || typeof row !== "object") return null;
+  const record = row as Record<string, unknown>;
+  const code = record["code"];
+  const name = record["name"];
+  const rawId = record["id"];
+  const id =
+    (typeof code === "string" && code) ||
+    (typeof rawId === "string" && rawId) ||
+    (typeof name === "string" && name) ||
+    (typeof rawId === "number" ? String(rawId) : "");
+  if (!id) return null;
+  const label =
+    (typeof record["label"] === "string" && record["label"]) ||
+    tierById(id)?.label ||
+    (typeof name === "string" && name) ||
+    id;
+  const num = (value: unknown, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const maxRaw = record["maxStudents"] ?? record["max_students"] ?? null;
+  const features = Array.isArray(record["features"])
+    ? record["features"].map((f) => String(f))
+    : [];
+  return {
+    id,
+    label,
+    minStudents: num(record["minStudents"] ?? record["min_students"]),
+    maxStudents: maxRaw === null || maxRaw === undefined ? null : num(maxRaw),
+    monthlyPrice: num(record["monthlyPrice"] ?? record["monthly_price"]),
+    aiCredits: num(record["aiCredits"] ?? record["ai_credits"]),
+    storageGb: num(record["storageGb"] ?? record["storage_gb"] ?? record["storage"]),
+    smsAllowance: num(record["smsAllowance"] ?? record["sms_allowance"]),
+    features,
+  };
+}
 
 const schoolSchema = z.object({
   name: requiredText("School name"),
@@ -1105,13 +1172,17 @@ export function AuthScreens({
     staleTime: 10 * 60 * 1000,
     retry: 1,
   });
-  const tiers = catalogue.data?.length ? catalogue.data : SUBSCRIPTION_TIERS;
+  const catalogueTiers = (catalogue.data ?? [])
+    .map(toPickerTier)
+    .filter((t): t is SubscriptionTier => t !== null);
+  const tiers = catalogueTiers.length ? catalogueTiers : SUBSCRIPTION_TIERS;
 
   useEffect(() => {
-    if (catalogue.data?.length && !catalogue.data.some((t) => t.id === tierId)) {
-      const first = catalogue.data[0];
+    if (catalogueTiers.length && !catalogueTiers.some((t) => t.id === tierId)) {
+      const first = catalogueTiers[0];
       if (first) setTierId(first.id);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalogue.data, tierId]);
 
   const schoolForm = useForm<SchoolValues>({
@@ -1142,7 +1213,11 @@ export function AuthScreens({
     setSubmitting(true);
     try {
       const result = await registerSchool({
-        school: { ...schoolData, ...(schoolData.website ? { website: schoolData.website } : {}) },
+        school: {
+          ...schoolData,
+          type: toSchoolTypeCode(schoolData.type),
+          ...(schoolData.website ? { website: schoolData.website } : {}),
+        },
         admin: adminData,
         tierId,
       });
@@ -1173,11 +1248,25 @@ export function AuthScreens({
         setStep(5);
       }
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "We couldn't create your school. Please try again.",
-      );
+      // The register endpoint answers 400 with an `errors` object and no
+      // top-level message — fold its field errors into the toast so a
+      // rejection (duplicate email, unsupported type) says what is wrong
+      // instead of the generic loader text.
+      let message = "We couldn't create your school. Please try again.";
+      if (error instanceof ApiRequestError) {
+        const specifics = Object.values(error.fieldErrors ?? {})
+          .flat()
+          .map((v) => String(v))
+          .filter(Boolean)
+          .join(" ");
+        message = [error.message, specifics].filter(Boolean).join(" ").trim() || message;
+        if (/already exists/i.test(message)) {
+          message += " This school may already be registered — try signing in instead.";
+        }
+      } else if (error instanceof Error && error.message) {
+        message = error.message;
+      }
+      toast.error(message);
     } finally {
       setSubmitting(false);
     }

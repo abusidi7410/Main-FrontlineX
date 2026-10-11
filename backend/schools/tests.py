@@ -324,6 +324,19 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
         )
         self.assertEqual(login_response.status_code, 200, login_response.content)
 
+    def test_public_registration_rejection_explains_itself(self):
+        payload = self._payload()
+        payload['school']['type'] = 'Primary only'
+        response = self.client.post(
+            '/api/v1/schools/register/', payload, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
+        body = response.json()
+        self.assertTrue(body['detail'])
+        self.assertIn('school', body['errors'])
+        self.assertFalse(School.objects.filter(email='new-academy@example.com').exists())
+
     def test_payment_verification_never_trusts_a_public_reference(self):
         response = self.client.post(
             '/api/v1/schools/register/', self._payload(), format='json',

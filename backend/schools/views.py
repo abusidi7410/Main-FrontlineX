@@ -146,7 +146,13 @@ class SchoolRegisterView(APIView):
     def post(self, request):
         serializer = SchoolRegistrationSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response({'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    'detail': 'Could not register this school. Check the highlighted fields.',
+                    'errors': serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         result = serializer.save()
         return Response(result, status=status.HTTP_201_CREATED)
 
