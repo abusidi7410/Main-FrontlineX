@@ -185,6 +185,16 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS')
 CORS_ALLOW_CREDENTIALS = True
 
+# Custom domain + admin/API hosts must be trusted for CSRF (admin login,
+# browsable API, any cookie/credentialed POST from the live site).
+CSRF_TRUSTED_ORIGINS = env.list(
+    'CSRF_TRUSTED_ORIGINS',
+    default=[
+        'https://frontlinex.ng',
+        'https://www.frontlinex.ng',
+    ],
+)
+
 # ── Redis / cache ─────────────────────────────────────────────────────────────
 
 if env.bool('USE_REDIS', default=True) and env('REDIS_URL', default=None):
@@ -269,7 +279,7 @@ PAYSTACK_PUBLIC_KEY = env('PAYSTACK_PUBLIC_KEY', default='')
 PAYSTACK_BASE_URL = env('PAYSTACK_BASE_URL', default='https://api.paystack.co')
 PAYSTACK_CALLBACK_URL = env(
     'PAYSTACK_CALLBACK_URL',
-    default='https://abusidi7410-main-frontlinex.2027frontline.workers.dev/subscription',
+    default='https://frontlinex.ng/subscription',
 )
 
 

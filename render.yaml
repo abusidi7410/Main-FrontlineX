@@ -42,7 +42,7 @@ services:
         # does not match the live site's host is rejected by django-cors-headers
         # and every request fails, so keep this in step with the deployed
         # frontend URL. Comma-separate to allow more than one origin.
-        value: https://abusidi7410-main-frontlinex.2027frontline.workers.dev,https://frontlinex-school.netlify.app
+        value: https://frontlinex.ng,https://www.frontlinex.ng,https://abusidi7410-main-frontlinex.2027frontline.workers.dev,https://frontlinex-school.netlify.app
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_SSL_REQUIRE
@@ -58,7 +58,7 @@ services:
       - key: PAYSTACK_PUBLIC_KEY
         sync: false
       - key: PAYSTACK_CALLBACK_URL
-        value: https://abusidi7410-main-frontlinex.2027frontline.workers.dev/subscription
+        value: https://frontlinex.ng/subscription
       - key: JWT_ACCESS_TOKEN_MINUTES
         value: 30
       - key: JWT_REFRESH_TOKEN_DAYS
