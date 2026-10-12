@@ -19,6 +19,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from records.services import events as event_service
+from records.services.sweep_lock import release_sweep_lock, try_acquire_sweep_lock
 from schools.models import School, SchoolSubscription
 
 #: Days before expiry at which the school is warned. Only the closest one fires
@@ -40,6 +41,18 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        # Single-flight across pods/workers: the loser exits quietly instead
+        # of double-emitting. Released in `finally` so a crash never wedges
+        # future runs (and Postgres drops session locks on disconnect anyway).
+        if not try_acquire_sweep_lock('notifications'):
+            self.stdout.write('Another sweep_notifications is running; exiting.')
+            return
+        try:
+            self._run(*args, **options)
+        finally:
+            release_sweep_lock('notifications')
+
+    def _run(self, *args, **options):
         if options['date']:
             from django.utils.dateparse import parse_date
             on = parse_date(options['date'])
@@ -107,11 +120,19 @@ class Command(BaseCommand):
         )
         for school in lapsed.select_related('subscription__plan'):
             plan = getattr(school.subscription.plan, 'name', '') or ''
+            # Notify first (dedupe_key makes re-emission a no-op), then flip
+            # with a WHERE guard so overlapping runs cannot double-write the
+            # status. Alert is never lost to a crash between the two steps.
             event_service.subscription_ending(
                 school, days_left=0, plan_name=plan,
             )
+            SchoolSubscription.objects.filter(
+                pk=school.subscription.pk,
+                status__in=[
+                    SchoolSubscription.Status.ACTIVE,
+                    SchoolSubscription.Status.PENDING,
+                ],
+            ).update(status=SchoolSubscription.Status.EXPIRED)
             sent += 1
-            school.subscription.status = SchoolSubscription.Status.EXPIRED
-            school.subscription.save(update_fields=['status'])
 
         return sent

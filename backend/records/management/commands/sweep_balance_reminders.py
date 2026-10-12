@@ -20,9 +20,11 @@ Run once a day from cron alongside `sweep_notifications`.
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from records.models import AcademicSession, Invoice, ReminderLog, Student
+from records.services.sweep_lock import release_sweep_lock, try_acquire_sweep_lock
 from records.services.usage import AllowanceExhausted, usage_service
 
 
@@ -42,6 +44,16 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        # Single-flight across pods/workers (see sweep_lock).
+        if not try_acquire_sweep_lock('balance_reminders'):
+            self.stdout.write('Another sweep_balance_reminders is running; exiting.')
+            return
+        try:
+            self._run(*args, **options)
+        finally:
+            release_sweep_lock('balance_reminders')
+
+    def _run(self, *args, **options):
         days = options['days']
         rule = f'{days}_days_before_term_end'
         target = timezone.localdate() + timedelta(days=days)
@@ -77,15 +89,23 @@ class Command(BaseCommand):
                 if not student.guardian_phone:
                     continue
 
-                # Claim the idempotency slot before spending an SMS unit.
-                _, created = ReminderLog.objects.get_or_create(
-                    school=school,
-                    student=student,
-                    reminder_type='balance_reminder',
-                    term=invoice.term,
-                    reminder_rule=rule,
-                    defaults={'status': 'pending'},
-                )
+                # Claim the idempotency slot before spending an SMS unit. The
+                # unique row is the final judge: a concurrent worker claiming
+                # the same slot raises IntegrityError, which we treat as
+                # "already handled" rather than a 500.
+                try:
+                    with transaction.atomic():
+                        _, created = ReminderLog.objects.get_or_create(
+                            school=school,
+                            student=student,
+                            reminder_type='balance_reminder',
+                            term=invoice.term,
+                            reminder_rule=rule,
+                            defaults={'status': 'pending'},
+                        )
+                except IntegrityError:
+                    skipped += 1
+                    continue
                 if not created:
                     skipped += 1
                     continue

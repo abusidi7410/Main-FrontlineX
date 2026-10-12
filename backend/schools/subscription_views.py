@@ -94,9 +94,11 @@ def activate_subscription(payment: SubscriptionPayment, *, occurred_at=None) -> 
     if payment.purpose == SubscriptionPayment.Purpose.TRIAL_START and payment.plan_id:
         trial_bonus = payment.plan.trial_days or 0
     with transaction.atomic():
-        payment = SubscriptionPayment.objects.select_for_update().get(pk=payment.pk)
+        # of=('self',) keeps the lock scoped to these two rows; lock order is
+        # always Payment -> Subscription, matching the fee-payment paths.
+        payment = SubscriptionPayment.objects.select_for_update(of=('self',)).get(pk=payment.pk)
         subscription, _ = (
-            SchoolSubscription.objects.select_for_update()
+            SchoolSubscription.objects.select_for_update(of=('self',))
             .get_or_create(school=payment.school)
         )
         if payment.status == SubscriptionPayment.Status.SUCCESS:
@@ -189,7 +191,18 @@ def _start_checkout(school, plan, *, purpose, user=None) -> Response:
     payment.access_code = data.get('access_code', '') or ''
     payment.authorization_url = data.get('authorization_url', '') or ''
     payment.paystack_reference = data.get('reference', '') or payment.reference
-    payment.save(update_fields=['access_code', 'authorization_url', 'paystack_reference'])
+    try:
+        payment.save(update_fields=['access_code', 'authorization_url', 'paystack_reference'])
+    except IntegrityError:
+        # The gateway echoed a reference already attached to another payment.
+        # Never grant access on an ambiguous handle: fail closed instead.
+        payment.paystack_reference = ''
+        payment.status = SubscriptionPayment.Status.FAILED
+        payment.save(update_fields=['paystack_reference', 'status', 'updated_at'])
+        return Response(
+            {'detail': 'The payment provider returned a conflicting reference. Please try again.'},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
     return Response(_checkout_payload(payment, email))
 
 
@@ -356,8 +369,19 @@ class SubscriptionWebhookView(APIView):
                 reference=reference,
             ).first() or SubscriptionPayment.objects.filter(
                 paystack_reference=reference,
-            ).first()
-            if payment is not None and payment.status != SubscriptionPayment.Status.SUCCESS:
+            ).exclude(paystack_reference='').first()
+            if payment is not None:
+                # Brief locked re-check (no external calls inside): a duplicate
+                # webhook racing this one may already have been confirmed, in
+                # which case there is nothing to re-verify with Paystack.
+                with transaction.atomic():
+                    locked = SubscriptionPayment.objects.select_for_update(
+                        of=('self',),
+                    ).get(pk=payment.pk)
+                    already_done = locked.status == SubscriptionPayment.Status.SUCCESS
+                if already_done:
+                    return Response({'received': True})
+            if payment is not None:
                 if (
                     data.get('status') == 'success'
                     and _amount_matches(data, payment.amount_kobo)
@@ -464,7 +488,11 @@ class PlatformSchoolSubscriptionView(APIView):
         if school is None:
             return Response({'detail': 'School not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        subscription, _ = SchoolSubscription.objects.get_or_create(school=school)
+        try:
+            subscription, _ = SchoolSubscription.objects.get_or_create(school=school)
+        except IntegrityError:
+            # A concurrent request created the row first; re-read it.
+            subscription = SchoolSubscription.objects.get(school=school)
         before = {
             'plan': subscription.plan.name if subscription.plan_id else '',
             'status': subscription.status,

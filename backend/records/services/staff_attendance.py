@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from ..models import StaffAttendance, StaffMember
@@ -112,21 +112,32 @@ def check_in(
     day = day or local_day(school, at)
     status, distance = classify(school, latitude, longitude, accuracy)
 
-    record, created = StaffAttendance.objects.get_or_create(
-        staff=staff,
-        date=day,
-        defaults={
-            'school': school,
-            'check_in_at': at,
-            'latitude': latitude,
-            'longitude': longitude,
-            'accuracy_meters': accuracy,
-            'distance_meters': distance,
-            'status': status,
-            'notes': (notes or '')[:280],
-        },
-    )
+    try:
+        record, created = StaffAttendance.objects.get_or_create(
+            staff=staff,
+            date=day,
+            defaults={
+                'school': school,
+                'check_in_at': at,
+                'latitude': latitude,
+                'longitude': longitude,
+                'accuracy_meters': accuracy,
+                'distance_meters': distance,
+                'status': status,
+                'notes': (notes or '')[:280],
+            },
+        )
+    except IntegrityError:
+        # A concurrent check-in won the insert race. Re-read under lock and
+        # fall through to the refresh path below — same outcome, no 500.
+        record = StaffAttendance.objects.select_for_update(of=('self',)).get(
+            staff=staff, date=day,
+        )
+        created = False
     if not created:
+        record = StaffAttendance.objects.select_for_update(of=('self',)).get(
+            pk=record.pk,
+        )
         record.school = school
         record.check_in_at = at
         record.latitude = latitude

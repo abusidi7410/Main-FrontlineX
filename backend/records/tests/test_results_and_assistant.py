@@ -777,3 +777,52 @@ class AssistantWriteConfirmationTests(SecurityTestBase):
         self.assertEqual(resp.status_code, 400)
         other_payment.refresh_from_db()
         self.assertEqual(other_payment.status, 'pending')
+
+
+class ResultSheetConcurrencyTests(SecurityTestBase):
+    """Stale-state writes must surface as conflicts, never silent overwrites.
+
+    These pin the WHERE-guarded transitions: two writers racing on the same
+    sheet serialize on the row lock, and the loser gets a 400-style
+    ValidationError instead of clobbering the winner's transition.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.sheet = results_service.create_sheet(
+            school=self.school,
+            academic_session=self.session,
+            class_obj=self.jss1,
+            subject='"'"'Mathematics'"'"',
+            assessment='"'"'First Term Test'"'"',
+        )
+
+    def test_stale_advance_is_rejected(self):
+        from rest_framework.exceptions import ValidationError
+
+        stale_copy = ResultSheet.objects.get(pk=self.sheet.pk)
+        results_service.advance(
+            self.sheet, ResultSheet.Status.SUBMITTED, actor=self.admin,
+        )
+        with self.assertRaises(ValidationError):
+            results_service.advance(
+                stale_copy, ResultSheet.Status.SUBMITTED, actor=self.admin,
+            )
+        self.sheet.refresh_from_db()
+        self.assertEqual(self.sheet.status, ResultSheet.Status.SUBMITTED)
+
+    def test_double_release_for_correction_is_rejected(self):
+        from rest_framework.exceptions import ValidationError
+
+        for to_status in ResultSheet.ALLOWED_TRANSITIONS.values():
+            self.sheet = results_service.advance(
+                self.sheet, to_status, actor=self.admin,
+            )
+        results_service.request_correction(self.sheet, reason='Wrong row')
+        stale_copy = ResultSheet.objects.get(pk=self.sheet.pk)
+        results_service.release_for_correction(self.sheet, actor=self.admin)
+        with self.assertRaises(ValidationError):
+            results_service.release_for_correction(stale_copy, actor=self.admin)
+        self.sheet.refresh_from_db()
+        self.assertEqual(self.sheet.status, ResultSheet.Status.DRAFT)
+        self.assertFalse(self.sheet.is_locked)

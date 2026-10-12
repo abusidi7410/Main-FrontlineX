@@ -313,6 +313,16 @@ class SubscriptionPayment(models.Model):
             models.Index(fields=['school', '-created_at']),
             models.Index(fields=['status']),
         ]
+        constraints = [
+            # The gateway reference is the webhook's join key: it must be
+            # unique when present so a callback can never match two payments.
+            # Blank (not yet initialised) rows are excluded from the index.
+            models.UniqueConstraint(
+                fields=['paystack_reference'],
+                condition=~models.Q(paystack_reference=''),
+                name='unique_subscription_paystack_reference',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.reference} ({self.status})'

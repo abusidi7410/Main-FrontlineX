@@ -211,6 +211,55 @@ class SubscriptionPaymentFlowTests(TestCase):
         expected_min = timezone.now() + timedelta(days=7 + 30, seconds=-60)
         self.assertGreater(subscription.expires_at, expected_min)
 
+    @override_settings(PAYSTACK_SECRET_KEY='test-secret')
+    @patch(
+        'schools.subscription_views.paystack.verify_transaction',
+        side_effect=lambda reference: {
+            'status': 'success',
+            'reference': reference,
+            'amount': 800000,
+            'currency': 'NGN',
+            'channel': 'card',
+        },
+    )
+    def test_duplicate_webhook_does_not_reverify_or_extend_twice(self, verify):
+        """A redelivered charge.success is a no-op: no second gateway verify,
+        no second expiry extension."""
+        payment = self._pending_payment()
+
+        def _signed_post():
+            body = json.dumps({
+                'event': 'charge.success',
+                'data': {
+                    'status': 'success',
+                    'reference': payment.reference,
+                    'amount': 800000,
+                    'currency': 'NGN',
+                },
+            })
+            signature = hmac.new(
+                b'test-secret', body.encode('utf-8'), hashlib.sha512,
+            ).hexdigest()
+            return APIClient().post(
+                '/api/v1/schools/subscriptions/webhook/',
+                body,
+                content_type='application/json',
+                HTTP_X_PAYSTACK_SIGNATURE=signature,
+            )
+
+        first = _signed_post()
+        expiry = SchoolSubscription.objects.get(school=self.school).expires_at
+        second = _signed_post()
+
+        self.assertEqual(first.status_code, 200, first.content)
+        self.assertEqual(second.status_code, 200, second.content)
+        # Only the first delivery paid for a gateway verification round-trip.
+        verify.assert_called_once_with(payment.reference)
+        self.assertEqual(
+            SchoolSubscription.objects.get(school=self.school).expires_at,
+            expiry,
+        )
+
     def _pending_payment(self):
         return SubscriptionPayment.objects.create(
             school=self.school,

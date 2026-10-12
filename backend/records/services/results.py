@@ -254,24 +254,36 @@ def advance(sheet: ResultSheet, to_status: str, *, actor=None) -> ResultSheet:
             })
 
     with transaction.atomic():
-        sheet = ResultSheet.objects.select_for_update().get(pk=sheet.pk)
-        sheet.status = to_status
-        fields = ['status', 'updated_at']
+        sheet = ResultSheet.objects.select_for_update(of=('self',)).get(pk=sheet.pk)
+        # Re-validate under the lock: a concurrent advance may have moved the
+        # sheet since the caller read it. Same business rule, fresh state.
+        locked_expected = ResultSheet.ALLOWED_TRANSITIONS.get(sheet.status)
+        if locked_expected is None or to_status != locked_expected:
+            raise ValidationError({
+                'status': 'This result sheet was changed by someone else. Refresh and try again.',
+            })
+        update_kwargs: dict = {'status': to_status}
         if to_status == ResultSheet.Status.SUBMITTED and actor is not None:
-            sheet.submitted_by = actor
-            fields.append('submitted_by')
+            update_kwargs['submitted_by'] = actor
         if to_status == ResultSheet.Status.APPROVED and actor is not None:
-            sheet.approved_by = actor
-            fields.append('approved_by')
+            update_kwargs['approved_by'] = actor
         if to_status == ResultSheet.Status.PUBLISHED:
-            sheet.published_at = _now()
-            fields.append('published_at')
+            update_kwargs['published_at'] = _now()
         if to_status == ResultSheet.Status.LOCKED:
-            sheet.is_locked = True
-            sheet.locked_at = _now()
-            sheet.locked_by = actor
-            fields += ['is_locked', 'locked_at', 'locked_by']
-        sheet.save(update_fields=fields)
+            update_kwargs['is_locked'] = True
+            update_kwargs['locked_at'] = _now()
+            update_kwargs['locked_by'] = actor
+        # WHERE-guarded write: only succeeds if the status is still the one we
+        # locked. Zero rows means a concurrent writer slipped in — report a
+        # conflict instead of silently overwriting their transition.
+        updated = ResultSheet.objects.filter(
+            pk=sheet.pk, status=sheet.status,
+        ).update(**update_kwargs)
+        if updated != 1:
+            raise ValidationError({
+                'status': 'This result sheet was changed by someone else. Refresh and try again.',
+            })
+        sheet.refresh_from_db()
     return sheet
 
 
@@ -305,17 +317,29 @@ def release_for_correction(sheet: ResultSheet, *, actor) -> ResultSheet:
             'sheet': 'Record a correction request before releasing the sheet.',
         })
     with transaction.atomic():
-        sheet = ResultSheet.objects.select_for_update().get(pk=sheet.pk)
-        sheet.is_locked = False
-        sheet.locked_at = None
-        sheet.locked_by = None
-        sheet.status = ResultSheet.Status.DRAFT
-        sheet.correction_authorised_by = actor
-        sheet.correction_requested_at = None
-        sheet.save(update_fields=[
-            'is_locked', 'locked_at', 'locked_by', 'status',
-            'correction_authorised_by', 'correction_requested_at', 'updated_at',
-        ])
+        sheet = ResultSheet.objects.select_for_update(of=('self',)).get(pk=sheet.pk)
+        # Re-validate under the lock: same rule, fresh state.
+        if not sheet.is_locked:
+            raise ValidationError({'sheet': 'This result sheet is not locked.'})
+        if not sheet.correction_requested_at:
+            raise ValidationError({
+                'sheet': 'Record a correction request before releasing the sheet.',
+            })
+        updated = ResultSheet.objects.filter(
+            pk=sheet.pk, is_locked=True,
+        ).update(
+            is_locked=False,
+            locked_at=None,
+            locked_by=None,
+            status=ResultSheet.Status.DRAFT,
+            correction_authorised_by=actor,
+            correction_requested_at=None,
+        )
+        if updated != 1:
+            raise ValidationError({
+                'sheet': 'This result sheet was changed by someone else. Refresh and try again.',
+            })
+        sheet.refresh_from_db()
     return sheet
 
 

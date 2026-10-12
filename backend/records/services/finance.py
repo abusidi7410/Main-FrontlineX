@@ -126,7 +126,10 @@ def apply_verified_payment(
     from . import enrollment as enrollment_service
 
     with transaction.atomic():
-        payment = Payment.objects.select_for_update().select_related(
+        # of=('self',) scopes the row lock to Payment only: the joined
+        # invoice/student rows are read, not locked, which keeps lock order
+        # (Payment -> Invoice) consistent and avoids deadlocks.
+        payment = Payment.objects.select_for_update(of=('self',)).select_related(
             'invoice', 'invoice__student',
         ).get(pk=payment.pk)
 
@@ -232,7 +235,7 @@ def reverse_payment(payment: Payment, *, actor=None, reason: str = '') -> dict:
     from . import enrollment as enrollment_service
 
     with transaction.atomic():
-        payment = Payment.objects.select_for_update().select_related(
+        payment = Payment.objects.select_for_update(of=('self',)).select_related(
             'invoice', 'invoice__student',
         ).get(pk=payment.pk)
         if payment.status != Payment.Status.VERIFIED:
