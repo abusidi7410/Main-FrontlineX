@@ -78,7 +78,8 @@ services:
     buildCommand: ./build.sh
     command: >
       python manage.py sweep_notifications &&
-      python manage.py sweep_balance_reminders
+      python manage.py sweep_balance_reminders &&
+      python manage.py sweep_renewals
     envVars:
       - key: DJANGO_DEBUG
         value: false

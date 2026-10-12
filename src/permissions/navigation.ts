@@ -69,6 +69,7 @@ const SCHOOL_ADMIN: NavItem[] = [
     children: [
       { label: "Overview", to: "/finance" },
       { label: "Invoices", to: "/finance/invoices" },
+      { label: "Wallet & Billing", to: "/wallet" },
     ],
   },
   {

@@ -39,6 +39,7 @@ import { Route as AppSubscriptionRouteImport } from './routes/_app.subscription'
 import { Route as AppSyncRouteImport } from './routes/_app.sync'
 import { Route as AppTimetableRouteImport } from './routes/_app.timetable'
 import { Route as AppUssdRouteImport } from './routes/_app.ussd'
+import { Route as AppWalletRouteImport } from './routes/_app.wallet'
 import { Route as AppFinanceIndexRouteImport } from './routes/_app.finance.index'
 import { Route as AppFinanceInvoicesRouteImport } from './routes/_app.finance.invoices'
 import { Route as AppPlatformIndexRouteImport } from './routes/_app.platform.index'
@@ -213,6 +214,11 @@ const AppUssdRoute = AppUssdRouteImport.update({
   path: '/ussd',
   getParentRoute: () => AppRoute,
 } as any)
+const AppWalletRoute = AppWalletRouteImport.update({
+  id: '/wallet',
+  path: '/wallet',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppFinanceIndexRoute = AppFinanceIndexRouteImport.update({
   id: '/finance/',
   path: '/finance/',
@@ -367,6 +373,7 @@ export interface FileRoutesByFullPath {
   '/sync': typeof AppSyncRoute
   '/timetable': typeof AppTimetableRoute
   '/ussd': typeof AppUssdRoute
+  '/wallet': typeof AppWalletRoute
   '/finance/invoices': typeof AppFinanceInvoicesRoute
   '/platform/activity': typeof AppPlatformActivityRoute
   '/platform/analytics': typeof AppPlatformAnalyticsRoute
@@ -421,6 +428,7 @@ export interface FileRoutesByTo {
   '/sync': typeof AppSyncRoute
   '/timetable': typeof AppTimetableRoute
   '/ussd': typeof AppUssdRoute
+  '/wallet': typeof AppWalletRoute
   '/finance/invoices': typeof AppFinanceInvoicesRoute
   '/platform/activity': typeof AppPlatformActivityRoute
   '/platform/analytics': typeof AppPlatformAnalyticsRoute
@@ -476,6 +484,7 @@ export interface FileRoutesById {
   '/_app/sync': typeof AppSyncRoute
   '/_app/timetable': typeof AppTimetableRoute
   '/_app/ussd': typeof AppUssdRoute
+  '/_app/wallet': typeof AppWalletRoute
   '/_app/finance/invoices': typeof AppFinanceInvoicesRoute
   '/_app/platform/activity': typeof AppPlatformActivityRoute
   '/_app/platform/analytics': typeof AppPlatformAnalyticsRoute
@@ -533,6 +542,7 @@ export interface FileRouteTypes {
     | '/sync'
     | '/timetable'
     | '/ussd'
+    | '/wallet'
     | '/finance/invoices'
     | '/platform/activity'
     | '/platform/analytics'
@@ -587,6 +597,7 @@ export interface FileRouteTypes {
     | '/sync'
     | '/timetable'
     | '/ussd'
+    | '/wallet'
     | '/finance/invoices'
     | '/platform/activity'
     | '/platform/analytics'
@@ -641,6 +652,7 @@ export interface FileRouteTypes {
     | '/_app/sync'
     | '/_app/timetable'
     | '/_app/ussd'
+    | '/_app/wallet'
     | '/_app/finance/invoices'
     | '/_app/platform/activity'
     | '/_app/platform/analytics'
@@ -889,6 +901,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppUssdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/wallet': {
+      id: '/_app/wallet'
+      path: '/wallet'
+      fullPath: '/wallet'
+      preLoaderRoute: typeof AppWalletRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/finance/': {
       id: '/_app/finance/'
       path: '/finance'
@@ -1127,6 +1146,7 @@ interface AppRouteChildren {
   AppSyncRoute: typeof AppSyncRoute
   AppTimetableRoute: typeof AppTimetableRoute
   AppUssdRoute: typeof AppUssdRoute
+  AppWalletRoute: typeof AppWalletRoute
   AppFinanceInvoicesRoute: typeof AppFinanceInvoicesRoute
   AppPlatformActivityRoute: typeof AppPlatformActivityRoute
   AppPlatformAnalyticsRoute: typeof AppPlatformAnalyticsRoute
@@ -1170,6 +1190,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSyncRoute: AppSyncRoute,
   AppTimetableRoute: AppTimetableRoute,
   AppUssdRoute: AppUssdRoute,
+  AppWalletRoute: AppWalletRoute,
   AppFinanceInvoicesRoute: AppFinanceInvoicesRoute,
   AppPlatformActivityRoute: AppPlatformActivityRoute,
   AppPlatformAnalyticsRoute: AppPlatformAnalyticsRoute,

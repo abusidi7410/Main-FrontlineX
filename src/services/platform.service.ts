@@ -326,6 +326,84 @@ export async function updatePlatformSettings(
   return apiFetch("/platform/settings", { method: "PATCH", body: input });
 }
 
+// ── Wallet billing policy & messaging ─────────────────────────────
+
+export interface BillingPricing {
+  studentPriceKobo: number;
+  smsPriceKobo: number;
+  graceDays: number;
+  autoRenew: boolean;
+  smsEnabledGlobal: boolean;
+  minDepositKobo: number;
+  maxDepositKobo: number | null;
+  priceChangedAt: string | null;
+}
+
+export async function getBillingPricing(): Promise<BillingPricing> {
+  return apiFetch("/billing/platform/pricing");
+}
+
+export async function updateBillingPricing(
+  input: Partial<BillingPricing>,
+): Promise<BillingPricing> {
+  return apiFetch("/billing/platform/pricing", { method: "PATCH", body: input });
+}
+
+export interface SchoolMessagingState {
+  schoolId: string;
+  schoolName: string;
+  platformBlocked: boolean;
+  schoolEnabled: boolean;
+  globalEnabled: boolean;
+  balanceKobo: number;
+  priceKobo: number;
+  canSend: boolean;
+  usage: {
+    total: number;
+    sent: number;
+    failed: number;
+    refunded: number;
+    chargedKobo: number;
+  };
+}
+
+export async function getSchoolMessaging(schoolId: string): Promise<SchoolMessagingState> {
+  return apiFetch(`/billing/platform/schools/${schoolId}/messaging`);
+}
+
+export async function updateSchoolMessaging(
+  schoolId: string,
+  input: { platformBlocked?: boolean; schoolEnabled?: boolean },
+): Promise<SchoolMessagingState> {
+  return apiFetch(`/billing/platform/schools/${schoolId}/messaging`, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+export async function getMessagingOverview(): Promise<{
+  alerts: {
+    total: number;
+    sent: number;
+    failed: number;
+    chargedKobo: number;
+    knownCostKobo: number;
+    unknownCostCount: number;
+  };
+  providerUsage: { total: number; succeeded: number; failed: number; exhausted: number };
+  globalEnabled: boolean;
+}> {
+  return apiFetch("/billing/platform/messaging");
+}
+
+export async function createManualAdjustment(input: {
+  schoolId: string;
+  amountKobo: number;
+  reason: string;
+}): Promise<{ reference: string; balanceKobo: number }> {
+  return apiFetch("/billing/platform/adjustments", { method: "POST", body: input });
+}
+
 // ── School users & read-only impersonation ──────────────────────────
 
 export interface PlatformSchoolUser {

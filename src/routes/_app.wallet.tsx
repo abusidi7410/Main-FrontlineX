@@ -1,0 +1,636 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { PageHeader } from "@/components/common/page-header";
+import { PermissionGate } from "@/components/common/permission-gate";
+import { StatCard } from "@/components/common/stat-card";
+import { StatusBadge } from "@/components/common/status-badge";
+import { EmptyState, ErrorState, ListSkeleton } from "@/components/common/states";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { useDebounced } from "@/hooks/use-debounced";
+import { dateFmt, dateTimeFmt, naira } from "@/lib/format";
+import {
+  ACCESS_STATUS_LABEL,
+  activateStudent,
+  getMessaging,
+  getWallet,
+  listAlerts,
+  listStudentAccess,
+  listWalletTransactions,
+  sendAlert,
+  setSchoolMessaging,
+  startDeposit,
+  verifyDeposit,
+  type StudentAccess,
+} from "@/services/wallet.service";
+import { cn } from "@/lib/utils";
+
+export const Route = createFileRoute("/_app/wallet")({
+  head: () => ({
+    meta: [
+      { title: "Wallet & Billing — Frontline Nexus" },
+      {
+        name: "description",
+        content: "Prepaid wallet, per-student access, SME alerts and transaction history.",
+      },
+      { property: "og:title", content: "Wallet & Billing — Frontline Nexus" },
+      { name: "robots", content: "noindex" },
+    ],
+  }),
+  component: WalletPage,
+});
+
+const TX_CATEGORIES = [
+  "all",
+  "deposit",
+  "student_activation",
+  "student_renewal",
+  "sms_alert",
+  "refund",
+  "adjustment",
+] as const;
+
+function accessTone(status: StudentAccess["status"]): string {
+  switch (status) {
+    case "Active":
+      return "active";
+    case "ExpiringSoon":
+      return "pending";
+    case "GracePeriod":
+      return "grace";
+    case "Expired":
+      return "failed";
+    case "NeverActivated":
+      return "pending";
+  }
+}
+
+function WalletPage() {
+  const queryClient = useQueryClient();
+  const walletQuery = useQuery({ queryKey: ["wallet"], queryFn: getWallet });
+  const [depositNaira, setDepositNaira] = useState("");
+  const [startingDeposit, setStartingDeposit] = useState(false);
+  const [depositResult, setDepositResult] = useState<"verifying" | "success" | "failed" | null>(
+    null,
+  );
+  const processedDeposit = useRef<string | null>(null);
+
+  // Handle the Paystack return (?reference=…).
+  useEffect(() => {
+    const search = new URLSearchParams(window.location.search);
+    const reference = search.get("reference") ?? search.get("trxref");
+    if (!reference || processedDeposit.current === reference) return;
+    processedDeposit.current = reference;
+    setDepositResult("verifying");
+    verifyDeposit(reference)
+      .then((result) => {
+        setDepositResult(result.status);
+        if (result.status === "success") {
+          void queryClient.invalidateQueries({ queryKey: ["wallet"] });
+          void queryClient.invalidateQueries({ queryKey: ["wallet", "transactions"] });
+          toast.success("Deposit confirmed. Your wallet has been credited.");
+        } else {
+          toast.error("The deposit was not completed. Your wallet was not credited.");
+        }
+      })
+      .catch((error: unknown) => {
+        setDepositResult("failed");
+        toast.error(error instanceof Error ? error.message : "We couldn't verify the deposit.");
+      });
+  }, [queryClient]);
+
+  const beginDeposit = async () => {
+    const nairaAmount = Number(depositNaira);
+    if (!Number.isFinite(nairaAmount) || nairaAmount <= 0) {
+      toast.error("Enter a deposit amount in naira.");
+      return;
+    }
+    setStartingDeposit(true);
+    try {
+      const checkout = await startDeposit(Math.round(nairaAmount * 100));
+      const destination = new URL(checkout.authorizationUrl);
+      if (destination.protocol !== "https:" || destination.hostname !== "checkout.paystack.com") {
+        throw new Error("Paystack returned an invalid checkout address.");
+      }
+      window.location.assign(destination.href);
+    } catch (error) {
+      setStartingDeposit(false);
+      toast.error(error instanceof Error ? error.message : "We couldn't start the deposit.");
+    }
+  };
+
+  return (
+    <PermissionGate permission="finance.payment">
+      <div className="space-y-6">
+        <PageHeader
+          title="Wallet & Billing"
+          description="Deposit funds once, then activate students one by one. Money stays in your wallet until a real service charge occurs."
+        />
+
+        {depositResult ? (
+          <div className="fn-panel space-y-2 p-4" role="status" aria-live="polite">
+            <p>
+              {depositResult === "verifying" &&
+                "Confirming your deposit with the payment provider…"}
+              {depositResult === "success" && "Deposit confirmed. Your wallet has been credited."}
+              {depositResult === "failed" &&
+                "The deposit was not completed. Your wallet was not credited."}
+            </p>
+          </div>
+        ) : null}
+
+        {walletQuery.isError ? (
+          <ErrorState onRetry={() => void walletQuery.refetch()} />
+        ) : walletQuery.isPending ? (
+          <ListSkeleton />
+        ) : (
+          <>
+            <WalletBalanceCard
+              wallet={walletQuery.data}
+              depositNaira={depositNaira}
+              setDepositNaira={setDepositNaira}
+              startingDeposit={startingDeposit}
+              beginDeposit={() => void beginDeposit()}
+            />
+            <StudentAccessSection wallet={walletQuery.data} />
+            <SmsSection wallet={walletQuery.data} />
+            <TransactionsSection />
+          </>
+        )}
+      </div>
+    </PermissionGate>
+  );
+}
+
+function WalletBalanceCard({
+  wallet,
+  depositNaira,
+  setDepositNaira,
+  startingDeposit,
+  beginDeposit,
+}: {
+  wallet: Awaited<ReturnType<typeof getWallet>>;
+  depositNaira: string;
+  setDepositNaira: (value: string) => void;
+  startingDeposit: boolean;
+  beginDeposit: () => void;
+}) {
+  return (
+    <div className="fn-panel space-y-4 p-5">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-sm text-muted-foreground">Wallet balance</p>
+          <p className="font-display text-3xl font-semibold tabular-nums">
+            {naira(wallet.balance)}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Student access {naira(wallet.studentPrice)} per student per month · SME alert{" "}
+            {naira(wallet.smsPrice)} each
+            {wallet.autoRenew ? " · renewals automatic while funded" : ""}
+          </p>
+        </div>
+        <div className="flex w-full max-w-sm flex-col gap-2">
+          <Label htmlFor="deposit-amount">Deposit amount (₦)</Label>
+          <div className="flex gap-2">
+            <Input
+              id="deposit-amount"
+              inputMode="decimal"
+              placeholder={`Minimum ${naira(wallet.minDeposit)}`}
+              value={depositNaira}
+              onChange={(e) => setDepositNaira(e.target.value)}
+            />
+            <Button disabled={startingDeposit} onClick={beginDeposit}>
+              {startingDeposit ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+              {startingDeposit ? "Opening…" : "Fund wallet"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            You decide the amount — no fixed packages. The wallet is credited only after the
+            provider confirms payment.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof getWallet>> }) {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState("");
+  const debounced = useDebounced(search, 300);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
+  const list = useQuery({
+    queryKey: ["wallet", "students", debounced],
+    queryFn: () => listStudentAccess(debounced || undefined),
+  });
+
+  const activate = async (student: StudentAccess) => {
+    setActivatingId(student.studentId);
+    try {
+      const result = await activateStudent(student.studentId);
+      await queryClient.invalidateQueries({ queryKey: ["wallet"] });
+      await queryClient.invalidateQueries({ queryKey: ["wallet", "students"] });
+      setConfirmId(null);
+      if (result.created) {
+        toast.success(`${student.studentName} activated until ${dateFmt(result.periodEnd)}.`);
+      } else {
+        toast.info(`${student.studentName} already has paid access. No charge made.`);
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Activation failed. No charge was made.",
+      );
+    } finally {
+      setActivatingId(null);
+    }
+  };
+
+  const rows = list.data?.results ?? [];
+  const active = rows.filter((r) => ["Active", "ExpiringSoon"].includes(r.status)).length;
+  const needAttention = rows.filter((r) =>
+    ["GracePeriod", "Expired", "NeverActivated"].includes(r.status),
+  ).length;
+
+  return (
+    <section className="space-y-3">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard label="Active paid students" value={String(active)} tone="success" />
+        <StatCard
+          label="Need activation or renewal"
+          value={String(needAttention)}
+          tone={needAttention ? "warning" : "success"}
+        />
+        <StatCard
+          label="Access price"
+          value={naira(wallet.studentPrice)}
+          hint="per student / month"
+        />
+      </div>
+
+      <div className="fn-panel space-y-3 p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="font-medium">Student access</h2>
+          <Input
+            className="h-10 sm:max-w-xs"
+            placeholder="Search by name or admission number"
+            aria-label="Search students"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        {list.isError ? (
+          <ErrorState onRetry={() => void list.refetch()} />
+        ) : list.isPending ? (
+          <ListSkeleton />
+        ) : rows.length === 0 ? (
+          <EmptyState
+            title="No students found"
+            description="Admit students first — they will appear here for activation."
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Student</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Paid through</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row) => (
+                <TableRow key={row.studentId}>
+                  <TableCell>
+                    <p className="font-medium">{row.studentName}</p>
+                    <p className="text-xs text-muted-foreground">{row.admissionNumber}</p>
+                  </TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-2">
+                      <StatusBadge status={accessTone(row.status)} />
+                      <span className="text-sm">{ACCESS_STATUS_LABEL[row.status]}</span>
+                    </span>
+                  </TableCell>
+                  <TableCell>{row.periodEnd ? dateFmt(row.periodEnd) : "—"}</TableCell>
+                  <TableCell className="text-right">
+                    {["Active", "ExpiringSoon"].includes(row.status) ? (
+                      <span className="text-sm text-muted-foreground">
+                        {row.periodEnd ? `Paid to ${dateFmt(row.periodEnd)}` : "Paid"}
+                      </span>
+                    ) : confirmId === row.studentId ? (
+                      <span className="inline-flex flex-col items-end gap-1">
+                        <span className="text-xs text-muted-foreground">
+                          Charge {naira(wallet.studentPrice)} for one month?
+                        </span>
+                        <span className="inline-flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setConfirmId(null)}>
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            disabled={activatingId !== null}
+                            onClick={() => void activate(row)}
+                          >
+                            {activatingId === row.studentId ? (
+                              <Loader2 className="animate-spin" aria-hidden="true" />
+                            ) : null}
+                            Confirm
+                          </Button>
+                        </span>
+                      </span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={activatingId !== null}
+                        onClick={() => setConfirmId(row.studentId)}
+                      >
+                        {row.status === "NeverActivated" ? "Activate" : "Renew"}
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SmsSection({ wallet }: { wallet: Awaited<ReturnType<typeof getWallet>> }) {
+  const queryClient = useQueryClient();
+  const messaging = useQuery({ queryKey: ["wallet", "messaging"], queryFn: getMessaging });
+  const history = useQuery({ queryKey: ["wallet", "alerts"], queryFn: () => listAlerts() });
+  const [recipient, setRecipient] = useState("");
+  const [message, setMessage] = useState("");
+
+  const toggle = useMutation({
+    mutationFn: (enabled: boolean) => setSchoolMessaging(enabled),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["wallet", "messaging"], data);
+      toast.success(data.schoolEnabled ? "SME alerts switched on." : "SME alerts switched off.");
+    },
+    onError: () => toast.error("We couldn't change that setting."),
+  });
+
+  const send = useMutation({
+    mutationFn: () => sendAlert({ recipient: recipient.trim(), message: message.trim() }),
+    onSuccess: () => {
+      setRecipient("");
+      setMessage("");
+      void queryClient.invalidateQueries({ queryKey: ["wallet"] });
+      void queryClient.invalidateQueries({ queryKey: ["wallet", "alerts"] });
+      void queryClient.invalidateQueries({ queryKey: ["wallet", "transactions"] });
+      toast.success(`Alert sent. Charged ${naira(wallet.smsPrice)}.`);
+    },
+    onError: (error: unknown) =>
+      toast.error(error instanceof Error ? error.message : "The alert was not sent."),
+  });
+
+  const gate = messaging.data;
+  const availability = !gate
+    ? "Checking…"
+    : !gate.globalEnabled
+      ? "Disabled for the whole platform."
+      : gate.platformBlocked
+        ? "Blocked for your school by the platform manager."
+        : !gate.schoolEnabled
+          ? "Switched off for your school."
+          : gate.balanceKobo < gate.priceKobo
+            ? "Insufficient wallet funds."
+            : "Available.";
+
+  return (
+    <section className="fn-panel space-y-4 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-medium">SME alerts</h2>
+          <p className="text-sm text-muted-foreground">
+            {naira(wallet.smsPrice)} per delivered request · Status: {availability}
+          </p>
+        </div>
+        {gate ? (
+          <Button
+            variant="outline"
+            disabled={toggle.isPending || gate.platformBlocked || !gate.globalEnabled}
+            onClick={() => toggle.mutate(!gate.schoolEnabled)}
+            title={
+              gate.platformBlocked || !gate.globalEnabled
+                ? "Blocked by the platform — you cannot change this."
+                : undefined
+            }
+          >
+            {gate.schoolEnabled ? "Switch off" : "Switch on"}
+          </Button>
+        ) : null}
+      </div>
+
+      {gate?.canSend ? (
+        <div className="grid gap-3 sm:grid-cols-[220px_1fr_auto] sm:items-end">
+          <div className="space-y-1">
+            <Label htmlFor="sms-to">Recipient phone</Label>
+            <Input
+              id="sms-to"
+              placeholder="+234…"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="sms-message">Message</Label>
+            <Textarea
+              id="sms-message"
+              rows={2}
+              maxLength={480}
+              placeholder="Type the alert (480 characters max)"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+            />
+          </div>
+          <Button
+            disabled={send.isPending || !recipient.trim() || !message.trim()}
+            onClick={() => send.mutate()}
+          >
+            {send.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+            {send.isPending ? "Sending…" : `Send (${naira(wallet.smsPrice)})`}
+          </Button>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Sending is unavailable right now. Rejected requests are never charged; if the provider
+          rejects a request after charging, the charge is refunded automatically.
+        </p>
+      )}
+
+      <div>
+        <h3 className="mb-2 text-sm font-medium">Recent alerts</h3>
+        {history.isPending ? (
+          <ListSkeleton />
+        ) : !history.data || history.data.results.length === 0 ? (
+          <EmptyState
+            title="No alerts yet"
+            description="Sent alerts and their charges appear here."
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Recipient</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Charged</TableHead>
+                <TableHead>Provider cost</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {history.data.results.slice(0, 10).map((alert) => (
+                <TableRow key={alert.id}>
+                  <TableCell>{alert.recipient}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={alert.status} />
+                  </TableCell>
+                  <TableCell className="tabular-nums">{naira(alert.customer_kobo / 100)}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {alert.provider_cost_kobo == null
+                      ? "Unknown"
+                      : naira(alert.provider_cost_kobo / 100)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function TransactionsSection() {
+  const [category, setCategory] = useState<(typeof TX_CATEGORIES)[number]>("all");
+  const [page, setPage] = useState(1);
+  const query = useQuery({
+    queryKey: ["wallet", "transactions", category, page],
+    queryFn: () => listWalletTransactions(page, 20, category === "all" ? undefined : category),
+  });
+
+  return (
+    <section className="fn-panel space-y-3 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="font-medium">Transaction history</h2>
+        <Select
+          value={category}
+          onValueChange={(value) => {
+            setCategory(value as (typeof TX_CATEGORIES)[number]);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="sm:w-56" aria-label="Filter by category">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {TX_CATEGORIES.map((c) => (
+              <SelectItem key={c} value={c}>
+                {c === "all" ? "All categories" : c.replace(/_/g, " ")}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {query.isError ? (
+        <ErrorState onRetry={() => void query.refetch()} />
+      ) : query.isPending ? (
+        <ListSkeleton />
+      ) : query.data.results.length === 0 ? (
+        <EmptyState
+          title="No transactions yet"
+          description="Deposits, activations, renewals, alerts and refunds appear here."
+        />
+      ) : (
+        <>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="text-right">Balance after</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {query.data.results.map((tx) => (
+                <TableRow key={tx.id}>
+                  <TableCell className="whitespace-nowrap">{dateTimeFmt(tx.created_at)}</TableCell>
+                  <TableCell>
+                    <p>{tx.description || tx.reference}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{tx.reference}</p>
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={tx.status} />
+                  </TableCell>
+                  <TableCell
+                    className={cn(
+                      "text-right tabular-nums font-medium",
+                      tx.direction === "credit" ? "text-success" : "text-foreground",
+                    )}
+                  >
+                    {tx.direction === "credit" ? "+" : "−"}
+                    {naira(tx.amount_kobo / 100)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {naira(tx.balance_after_kobo / 100)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Page {query.data.page} of{" "}
+              {Math.max(1, Math.ceil(query.data.count / query.data.pageSize))}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page * query.data.pageSize >= query.data.count}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}

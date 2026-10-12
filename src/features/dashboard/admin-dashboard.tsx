@@ -12,12 +12,14 @@ import { compactNaira, dateFmt, greeting, numberFmt } from "@/lib/format";
 import { getAttendanceOverview } from "@/services/attendance.service";
 import { getFinanceSummary } from "@/services/finance.service";
 import { getStaff, getResultSheets, getSubscription } from "@/services/school.service";
+import { getWallet } from "@/services/wallet.service";
 import { listStudents } from "@/services/students.service";
 
 export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
   const { user, school } = useAuthenticatedSession();
 
   const subscription = useQuery({ queryKey: ["subscription"], queryFn: getSubscription });
+  const wallet = useQuery({ queryKey: ["wallet"], queryFn: getWallet });
   const students = useQuery({
     queryKey: ["students", { pageSize: 1 }],
     queryFn: () => listStudents({ pageSize: 1 }),
@@ -183,6 +185,26 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
             </div>
             <Button asChild variant="outline" size="lg" className="shrink-0">
               <Link to="/subscription">Manage subscription</Link>
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
+      {wallet.data ? (
+        <section className="fn-panel p-5" aria-labelledby="wallet-heading">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 id="wallet-heading" className="font-semibold">
+                Wallet balance: {compactNaira(wallet.data.balance)}
+              </h2>
+              <p className="mt-1 text-muted-foreground">
+                Student access {compactNaira(wallet.data.studentPrice)} per student per month ·
+                SME alert {compactNaira(wallet.data.smsPrice)} each. Deposits stay available
+                until a real charge occurs.
+              </p>
+            </div>
+            <Button asChild variant="outline" size="lg" className="shrink-0">
+              <Link to="/wallet">Wallet & Billing</Link>
             </Button>
           </div>
         </section>

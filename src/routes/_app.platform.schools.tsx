@@ -30,13 +30,16 @@ import { tierById, SUBSCRIPTION_TIERS } from "@/constants/plans";
 import { NIGERIAN_STATES, lgasForState } from "@/constants/nigeria";
 import type { PlatformSchool } from "@/types";
 import {
+  createManualAdjustment,
   createPlatformSchool,
   deletePlatformSchool,
   getPlatformSchool,
+  getSchoolMessaging,
   listPlatformPlans,
   listPlatformSchools,
   setSchoolStatus,
   updatePlatformSchool,
+  updateSchoolMessaging,
   updateSchoolSubscription,
   type PlatformSchoolDetail,
   type RegisterSchoolResponse,
@@ -703,6 +706,8 @@ function ManageSchoolDialog({
 
             <SubscriptionControls school={school} schoolId={schoolId as string} />
 
+            <MessagingControls schoolId={schoolId as string} schoolName={school.name} />
+
             <form onSubmit={submit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="mng-name">School name</Label>
@@ -1113,6 +1118,158 @@ function SubscriptionControls({
             reactivation.
           </p>
         </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Wallet + SME alert controls for one school.
+ *
+ * Lives inside the school's Manage dialog: wallet balance and alert usage are
+ * read-only facts, while blocking/unblocking alerts and manual adjustments are
+ * platform-only actions — every one audited with before/after values.
+ */
+function MessagingControls({ schoolId, schoolName }: { schoolId: string; schoolName: string }) {
+  const queryClient = useQueryClient();
+  const [adjustNaira, setAdjustNaira] = useState("");
+  const [adjustReason, setAdjustReason] = useState("");
+  const [confirmAdjust, setConfirmAdjust] = useState(false);
+
+  const query = useQuery({
+    queryKey: ["platform", "school", schoolId, "messaging"],
+    queryFn: () => getSchoolMessaging(schoolId),
+  });
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({
+      queryKey: ["platform", "school", schoolId, "messaging"],
+    });
+  };
+
+  const blockMutation = useMutation({
+    mutationFn: (blocked: boolean) => updateSchoolMessaging(schoolId, { platformBlocked: blocked }),
+    onSuccess: (updated) => {
+      toast.success(
+        updated.platformBlocked
+          ? `${schoolName} is now blocked from SME alerts`
+          : `${schoolName} can use SME alerts again`,
+      );
+      refresh();
+    },
+    onError: (err) =>
+      toast.error(err instanceof Error ? err.message : "We couldn't update messaging."),
+  });
+
+  const adjustMutation = useMutation({
+    mutationFn: () =>
+      createManualAdjustment({
+        schoolId,
+        amountKobo: Math.round(Number(adjustNaira) * 100),
+        reason: adjustReason.trim(),
+      }),
+    onSuccess: (result) => {
+      toast.success(`Wallet adjusted. New balance ${naira(result.balanceKobo / 100)}.`);
+      setAdjustNaira("");
+      setAdjustReason("");
+      setConfirmAdjust(false);
+      refresh();
+    },
+    onError: (err) =>
+      toast.error(err instanceof Error ? err.message : "We couldn't adjust the wallet."),
+  });
+
+  const data = query.data;
+
+  return (
+    <section className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
+      <div>
+        <h3 className="font-medium">Wallet & SME alerts</h3>
+        {data ? (
+          <p className="text-sm text-muted-foreground">
+            Balance {naira(data.balanceKobo / 100)} · {data.usage.sent} alert(s) sent ·{" "}
+            {naira(data.usage.chargedKobo / 100)} charged
+            {data.platformBlocked ? (
+              <>
+                {" "}
+                · <span className="font-medium text-destructive">blocked by platform</span>
+              </>
+            ) : data.schoolEnabled ? (
+              " · school switch on"
+            ) : (
+              " · school switch off"
+            )}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">Loading wallet and alert usage…</p>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!data || blockMutation.isPending}
+          className={data?.platformBlocked ? undefined : "text-destructive hover:text-destructive"}
+          onClick={() => blockMutation.mutate(!(data?.platformBlocked ?? false))}
+        >
+          {data?.platformBlocked ? "Unblock SME alerts" : "Block SME alerts"}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Blocking stops new billable alerts even if the school switch is on. Messages already
+        accepted by the provider are unaffected.
+      </p>
+
+      <div className="space-y-2 border-t border-border/60 pt-3">
+        <Label>Manual wallet adjustment</Label>
+        {confirmAdjust ? (
+          <div className="space-y-2 rounded-lg border border-warning/30 bg-warning-soft p-3 text-sm">
+            <p>
+              Adjust by {naira(Number(adjustNaira) || 0)}? A reason is required and the adjustment
+              is written to the audit log with before/after values.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                disabled={adjustMutation.isPending}
+                onClick={() => adjustMutation.mutate()}
+              >
+                Confirm adjustment
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmAdjust(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-[140px_1fr_auto]">
+            <Input
+              className="h-10"
+              inputMode="decimal"
+              placeholder="₦ amount (+/−)"
+              aria-label="Adjustment amount in naira"
+              value={adjustNaira}
+              onChange={(e) => setAdjustNaira(e.target.value)}
+            />
+            <Input
+              className="h-10"
+              placeholder="Reason (required, kept in audit log)"
+              aria-label="Adjustment reason"
+              value={adjustReason}
+              onChange={(e) => setAdjustReason(e.target.value)}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-10"
+              disabled={!adjustNaira.trim() || !adjustReason.trim() || adjustMutation.isPending}
+              onClick={() => setConfirmAdjust(true)}
+            >
+              Adjust
+            </Button>
+          </div>
+        )}
       </div>
     </section>
   );

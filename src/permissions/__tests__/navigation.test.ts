@@ -18,6 +18,7 @@ const KNOWN_ROUTES = new Set([
   "/promotion",
   "/finance",
   "/finance/invoices",
+  "/wallet",
   "/fees",
   "/communication",
   "/notifications",

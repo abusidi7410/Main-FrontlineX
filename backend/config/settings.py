@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     'accounts',
     'schools',
     'records',
+    'billing',
     'ratelimit',
 ]
 
