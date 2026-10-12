@@ -176,6 +176,10 @@ class PlatformPricing(models.Model):
     grace_days = models.PositiveIntegerField(default=3)
     auto_renew = models.BooleanField(default=True)
     sms_enabled_global = models.BooleanField(default=True)
+    # When True, unpaid students (no live or grace-period entitlement) are
+    # blocked from student features until staff activate them. Staff unblock
+    # via the activation endpoint, which debits the wallet atomically.
+    enforce_student_access = models.BooleanField(default=True)
     min_deposit_kobo = models.PositiveBigIntegerField(default=10000)
     max_deposit_kobo = models.PositiveBigIntegerField(null=True, blank=True)
     price_changed_at = models.DateTimeField(null=True, blank=True)

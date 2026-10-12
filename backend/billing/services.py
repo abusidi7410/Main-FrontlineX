@@ -253,6 +253,63 @@ def _lock_wallet(school):
     return wallet
 
 
+# ── Access enforcement ─────────────────────────────────────────────
+
+class StudentAccessRequired(ValidationError):
+    """Raised when a student feature is used for an unpaid student."""
+
+    def __init__(self, student, required_kobo: int, available_kobo: int):
+        name = f'{student.first_name} {student.last_name}'.strip() or 'This student'
+        super().__init__({
+            'student': (
+                f'{name} has no active access. Activate them from Wallet & Billing '
+                f'(₦{required_kobo / 100:,.2f}; wallet holds ₦{available_kobo / 100:,.2f}).'
+            ),
+            'reasonCode': 'student_access_required',
+            'requiredKobo': required_kobo,
+            'availableKobo': available_kobo,
+        })
+
+
+def student_has_access(student, on: date | None = None) -> bool:
+    """True when the student may use paid features: a live entitlement, or one
+    inside the grace window. Grace maintains temporary access by policy."""
+    from .models import StudentEntitlement
+    on = on or timezone.localdate()
+    pricing = get_pricing()
+    return StudentEntitlement.objects.filter(
+        student=student,
+        period_start__lte=on,
+        period_end__gte=on - timedelta(days=pricing.grace_days),
+    ).exists()
+
+
+def students_with_access(student_ids, on: date | None = None) -> set:
+    """Bulk version of `student_has_access`. One query for a whole roster."""
+    from .models import StudentEntitlement
+    on = on or timezone.localdate()
+    pricing = get_pricing()
+    if not pricing.enforce_student_access:
+        return set(student_ids)
+    return set(StudentEntitlement.objects.filter(
+        student_id__in=list(student_ids),
+        period_start__lte=on,
+        period_end__gte=on - timedelta(days=pricing.grace_days),
+    ).values_list('student_id', flat=True))
+
+
+def check_student_access(student, on: date | None = None) -> None:
+    """Block unpaid students from paid features. Staff unblock by activating
+    (which debits the wallet). No-op when enforcement is switched off."""
+    pricing = get_pricing()
+    if not pricing.enforce_student_access:
+        return
+    if student_has_access(student, on):
+        return
+    wallet = get_wallet(student.school)
+    raise StudentAccessRequired(student, pricing.student_price_kobo, wallet.balance_kobo)
+
+
 # ── SME alerts ─────────────────────────────────────────────────────────
 
 class AlertBlocked(ValidationError):

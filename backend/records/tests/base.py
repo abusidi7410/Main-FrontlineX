@@ -99,6 +99,14 @@ class SchoolTestCase(TestCase):
 
         self._make_users()
         self.client = APIClient()
+        # Access enforcement is covered explicitly by the billing suite with
+        # the flag on. The shared suite creates students without entitlements,
+        # so it runs unenforced — production defaults to enforced.
+        from billing.models import PlatformPricing
+        pricing, _ = PlatformPricing.objects.get_or_create(pk=1)
+        if pricing.enforce_student_access:
+            pricing.enforce_student_access = False
+            pricing.save(update_fields=['enforce_student_access'])
 
     def _make_users(self):
         def make(email, role, school=None, **kwargs):

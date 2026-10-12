@@ -25,6 +25,7 @@ from accounts.permissions import (
 )
 from accounts.services import notifications as notification_service
 from accounts.utils import audit as log_audit
+from billing import services as wallet_billing
 from schools.models import Announcement, School, SchoolSubscription
 from .constants import DEFAULT_SUBJECTS
 from .models import (
@@ -547,12 +548,21 @@ class StudentStatsView(APIView):
         })
 
 
+def _require_student_access(student) -> None:
+    """Block unpaid students from paid features (no-op when unenforced)."""
+    wallet_billing.check_student_access(student)
+
+
 class StudentDetailView(APIView):
     """Read/update a single student, always inside the caller's own school.
 
     `get_object` scopes the lookup by `request.user.school_id`, so a student
     belonging to another school is simply not found (404) — the endpoint never
     confirms that the ID exists elsewhere.
+
+    Paid feature: when the platform enforces student access, a student without
+    a live or grace-period entitlement is blocked until staff activate them
+    (Wallet & Billing debits the wallet atomically).
     """
 
     permission_classes = [IsAuthenticated, HasSchool]
@@ -570,10 +580,12 @@ class StudentDetailView(APIView):
 
     def get(self, request, pk):
         student = self.get_object(request, pk)
+        _require_student_access(student)
         return Response(StudentSerializer(student, context={'request': request}).data)
 
     def patch(self, request, pk):
         student = self.get_object(request, pk)
+        _require_student_access(student)
         before_status = student.status
         requested = str(request.data.get('status') or '').strip()
         if requested and requested != before_status:

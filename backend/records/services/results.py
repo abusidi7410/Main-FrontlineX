@@ -35,6 +35,12 @@ def _now():
     return timezone.now()
 
 
+def _require_access(student) -> None:
+    """Paid feature gate for result recording (no-op when unenforced)."""
+    from billing import services as wallet_billing
+    wallet_billing.check_student_access(student)
+
+
 def grade_for(percentage: Decimal) -> str:
     """Grade band for a percentage. Grading scale stays configurable later."""
     if percentage >= 70:
@@ -145,6 +151,7 @@ def record_scores(sheet: ResultSheet, scores: dict) -> int:
                     'can be recorded for them.'
                 ),
             })
+        _require_access(entry.student)
         score = _validate_score(sheet, raw_score)
         entry.score = score
         if score is None:
@@ -174,6 +181,7 @@ def record_term_scores(sheet: ResultSheet, scores: dict) -> int:
             raise ValidationError({
                 'scores': f'Student {student_id} is not on this class roster.',
             })
+        _require_access(entry.student)
         if not isinstance(raw_scores, dict):
             raise ValidationError({
                 'scores': f'Scores for student {student_id} must be an object.',

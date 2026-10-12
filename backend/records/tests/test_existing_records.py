@@ -127,12 +127,23 @@ class AttendanceFinanceTests(TestCase):
         )
         self.other_teacher.staff_profile = self.other_teacher_staff
         self.other_teacher.save(update_fields=['staff_profile'])
+        self._disable_access_enforcement()
 
     def _auth(self, user):
         self.client.force_authenticate(user)
 
     def _url(self, path):
         return f'/api/v1{path}'
+
+    def _disable_access_enforcement(self):
+        # This legacy suite predates wallet enforcement and creates students
+        # without entitlements. Enforcement is covered by the billing suite
+        # with the flag on; here the flag stays off (production: on).
+        from billing.models import PlatformPricing
+        pricing, _ = PlatformPricing.objects.get_or_create(pk=1)
+        if pricing.enforce_student_access:
+            pricing.enforce_student_access = False
+            pricing.save(update_fields=['enforce_student_access'])
 
 
 # ── Attendance ─────────────────────────────────────────────────────────────

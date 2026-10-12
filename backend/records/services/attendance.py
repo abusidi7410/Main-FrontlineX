@@ -264,10 +264,19 @@ def submit_register(
     valid_statuses = set(AttendanceRecord.Status.values)
     to_create = []
 
+    # Paid feature: students without access are skipped, never recorded. The
+    # skipped counter reports them, so the register stays truthful without
+    # blocking the whole class for one unpaid student.
+    from billing import services as wallet_billing
+    allowed_ids = wallet_billing.students_with_access(set(roster.values()), day)
+
     for item in records:
         raw_id = item.get('studentId')
         student_id = roster.get(str(raw_id)) if raw_id is not None else None
         if student_id is None:
+            result.skipped += 1
+            continue
+        if student_id not in allowed_ids:
             result.skipped += 1
             continue
         mark = (item.get('status') or AttendanceRecord.Status.PRESENT).strip()

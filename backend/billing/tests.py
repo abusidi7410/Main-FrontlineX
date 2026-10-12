@@ -529,6 +529,107 @@ class PlatformBillingTests(SchoolTestCase):
         self.assertIn('unknownCostCount', response.data['alerts'])
 
 
+class AccessEnforcementTests(SchoolTestCase):
+    """Unpaid students are blocked from paid features until staff activate them.
+
+    Enforcement is on here (the shared base runs unenforced). Each block
+    carries a reason code and figures; activation unblocks immediately.
+    """
+
+    def setUp(self):
+        super().setUp()
+        pricing = PlatformPricing.objects.get(pk=1)
+        pricing.enforce_student_access = True
+        pricing.save(update_fields=['enforce_student_access'])
+        self.auth(self.admin)
+        services.credit_wallet(
+            self.school, 50000, category=WalletTransaction.Category.DEPOSIT,
+        )
+
+    def test_student_detail_is_blocked_until_activation(self):
+        student = self.make_student(admission_number='B1')
+        blocked = self.client.get(f'/api/v1/students/{student.public_id}/')
+        self.assertEqual(blocked.status_code, 400)
+        self.assertEqual(
+            blocked.data['fieldErrors']['reasonCode'], 'student_access_required',
+        )
+        activated = self.client.post(
+            f'/api/v1/billing/students/{student.public_id}/activate/',
+        )
+        self.assertEqual(activated.status_code, 200)
+        allowed = self.client.get(f'/api/v1/students/{student.public_id}/')
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_result_recording_is_blocked_for_unpaid_student(self):
+        from records.models import Enrollment
+        from records.services import results as results_service
+        student = self.make_student(admission_number='B1')
+        Enrollment.objects.create(
+            school=self.school, student=student,
+            academic_session=self.session, class_obj=self.jss1,
+            status=Enrollment.Status.ACTIVE,
+        )
+        sheet = results_service.create_sheet(
+            school=self.school, academic_session=self.session,
+            class_obj=self.jss1, subject='Mathematics',
+            assessment='First Term Test',
+        )
+        with self.assertRaises(ValidationError) as raised:
+            results_service.record_scores(
+                sheet, {str(student.public_id): 75},
+            )
+        self.assertEqual(
+            raised.exception.detail['reasonCode'], 'student_access_required',
+        )
+        services.activate_student(self.school, student, actor=self.admin)
+        updated = results_service.record_scores(
+            sheet, {str(student.public_id): 75},
+        )
+        self.assertEqual(updated, 1)
+
+    def test_attendance_skips_unpaid_students(self):
+        from records.services import attendance as attendance_service
+        from records.models import AcademicSession, Enrollment
+        paid = self.make_student(admission_number='B1')
+        unpaid = self.make_student(admission_number='B2')
+        services.activate_student(self.school, paid, actor=self.admin)
+        for student in (paid, unpaid):
+            Enrollment.objects.create(
+                school=self.school, student=student,
+                academic_session=self.session, class_obj=self.jss1,
+                status=Enrollment.Status.ACTIVE,
+            )
+        # A school day inside the paid student's entitlement window.
+        day = timezone.localdate()
+        for _ in range(14):
+            if attendance_service.is_school_day(self.school, day):
+                break
+            day += timedelta(days=1)
+        result = attendance_service.submit_register(
+            user=self.admin, school=self.school, class_obj=self.jss1,
+            day=day,
+            records=[
+                {'studentId': str(paid.public_id), 'status': 'present'},
+                {'studentId': str(unpaid.public_id), 'status': 'present'},
+            ],
+        )
+        self.assertEqual(result.saved, 1)
+        self.assertEqual(result.skipped, 1)
+
+    def test_grace_period_keeps_access(self):
+        from records.services import results as results_service
+        today = timezone.localdate()
+        student = self.make_student(admission_number='B1')
+        StudentEntitlement.objects.create(
+            student=student, school=self.school,
+            period_start=today - timedelta(days=32),
+            period_end=today - timedelta(days=1),
+            amount_kobo=11500,
+        )
+        response = self.client.get(f'/api/v1/students/{student.public_id}/')
+        self.assertEqual(response.status_code, 200)
+
+
 class EntitlementModelTests(TestCase):
     def test_school_admin_role_value_exists(self):
         self.assertTrue(User.Role.SCHOOL_ADMIN)
