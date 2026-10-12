@@ -47,6 +47,11 @@ def _call(method: str, path: str, payload: dict | None = None, timeout: int = 20
     req.add_header('Authorization', f'Bearer {_secret_key()}')
     req.add_header('Content-Type', 'application/json')
     req.add_header('Accept', 'application/json')
+    # Paystack sits behind Cloudflare bot protection, which blocks requests
+    # carrying a stock script User-Agent (urllib) from datacenter IPs with
+    # HTTP 403 error 1010. Identify as the platform backend instead.
+    req.add_header('User-Agent', 'FrontlineNexus/1.0 (+https://frontlinex.ng)')
+    req.add_header('Accept-Language', 'en-NG,en;q=0.9')
     try:
         with request.urlopen(req, timeout=timeout) as response:
             body = response.read().decode('utf-8')
