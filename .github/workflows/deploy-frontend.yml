@@ -1,0 +1,63 @@
+# Auto-deploy the frontend Worker on every push to main.
+#
+# How it works: checkout → install → production build (VITE_* baked in) →
+# `nitro deploy --prebuilt` (same command used for manual deploys).
+#
+# ONE-TIME SETUP (repo owner, 2 minutes):
+#   1. Create a Cloudflare API token: dash.cloudflare.com → My Profile →
+#      API Tokens → Create Token → "Edit Cloudflare Workers" template
+#      (needs Account:Workers Scripts:Edit, Workers Routes:Edit, Account:Read).
+#   2. GitHub repo → Settings → Secrets and variables → Actions → Secrets:
+#        CLOUDFLARE_API_TOKEN = <the token>
+#   3. Optional overrides (Variables tab, same screen):
+#        VITE_API_URL (default: the Railway backend below)
+#
+# Backend note: Railway auto-deploys itself when its GitHub integration is on
+# (service → Settings → Source → Auto Deploy). No workflow needed for it.
+# This workflow only touches the Cloudflare Worker, and only when frontend
+# files change.
+
+name: Deploy frontend to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'backend/**'
+      - 'nginx/**'
+      - 'render.yaml'
+      - '**.md'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VITE_API_URL: ${{ vars.VITE_API_URL }}
+      VITE_API_MODE: live
+      VITE_AUTH_LIVE: 'true'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Fall back to the live backend URL when no override is set
+        run: |
+          if [ -z "$VITE_API_URL" ]; then
+            echo "VITE_API_URL=https://main-frontlinex-ratelimitenabledtrue.up.railway.app/api/v1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Production build
+        run: npm run build
+
+      - name: Deploy Worker
+        run: npx nitro deploy --prebuilt
