@@ -377,6 +377,9 @@ class AttendanceRecord(models.Model):
             models.Index(fields=['school', 'date', 'class_name']),
             models.Index(fields=['school', 'student', 'date']),
             models.Index(fields=['school', 'class_obj', 'date']),
+            # The admin overview board filters (school, date) before grouping;
+            # the dedicated prefix keeps it off the wider class indexes.
+            models.Index(fields=['school', 'date'], name='attendance_school_date_idx'),
         ]
 
     def __str__(self):
@@ -480,6 +483,11 @@ class ClassTeacherAssignment(models.Model):
         indexes = [
             models.Index(fields=['school', 'class_obj']),
             models.Index(fields=['school', 'staff']),
+            # Teacher-scoped lookups filter all three at once.
+            models.Index(
+                fields=['school', 'staff', 'academic_session'],
+                name='cta_school_staff_session_idx',
+            ),
         ]
 
     def __str__(self):

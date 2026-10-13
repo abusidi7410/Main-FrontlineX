@@ -880,6 +880,11 @@ class PlatformSchoolUsersView(APIView):
             return Response({'detail': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
         if role not in User.Role.values:
             return Response({'detail': 'Unknown role.'}, status=status.HTTP_400_BAD_REQUEST)
+        if role == User.Role.PLATFORM_MANAGER:
+            return Response(
+                {'detail': 'Platform manager accounts are created via the server console, not attached to a school.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if User.objects.filter(email=email).exists():
             return Response({'detail': 'A user with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
         parts = full_name.split(' ', 1)
@@ -931,6 +936,11 @@ class PlatformUserDetailView(APIView):
             role = str(request.data.get('role') or '').strip()
             if role not in User.Role.values:
                 return Response({'detail': 'Unknown role.'}, status=status.HTTP_400_BAD_REQUEST)
+            if role == User.Role.PLATFORM_MANAGER:
+                return Response(
+                    {'detail': 'Platform staff accounts are managed outside this screen.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             user.role = role
         temporary_password = None
         if request.data.get('resetPassword'):

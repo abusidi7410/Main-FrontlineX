@@ -330,6 +330,99 @@ def ensure_student_access(school, student, *, actor=None, on: date | None = None
     return activate_student(school, student, actor=actor)
 
 
+def ensure_many_student_access(school, students, *, actor=None, on: date | None = None):
+    """Batch auto-debit for whole-class operations (e.g. attendance submit).
+
+    Same one-charge-per-student-per-period guarantee as `ensure_student_access`,
+    but one wallet lock, one entitlement lookup, `bulk_create` writes and a
+    single wallet UPDATE for the whole batch: ~6 queries for 60 students
+    instead of ~420. Students are processed in the given order (callers pass
+    roster order so partial funds cover the top of the visible list).
+
+    Returns {'activated': [students charged now], 'already': [students with
+    access], 'unfunded': [students skipped for lack of funds]}. Never raises
+    InsufficientFunds: shortfall is reported, not thrown, so one broke wallet
+    never blocks the rest of the register.
+    """
+    from .models import StudentEntitlement, WalletTransaction
+
+    students = [s for s in students if s.school_id == school.id]
+    if not students:
+        return {'activated': [], 'already': [], 'unfunded': []}
+    pricing = get_pricing()
+    today = timezone.localdate()
+    on = on or today
+    if not pricing.enforce_student_access:
+        return {'activated': [], 'already': list(students), 'unfunded': []}
+    price = pricing.student_price_kobo
+    grace = timedelta(days=pricing.grace_days)
+    with transaction.atomic():
+        wallet = _lock_wallet(school)
+        covered_ids = set(StudentEntitlement.objects.filter(
+            student_id__in=[s.id for s in students],
+            period_start__lte=on,
+            period_end__gte=on - grace,
+        ).values_list('student_id', flat=True))
+        activated, unfunded = [], []
+        new_entitlements, new_entries = [], []
+        balance = wallet.balance_kobo
+        by = actor if getattr(actor, 'school_id', None) else None
+        for student in students:
+            if student.id in covered_ids:
+                continue
+            if balance < price:
+                unfunded.append(student)
+                continue
+            period_end = today + timedelta(days=_period_days())
+            try:
+                with transaction.atomic():
+                    entitlement = StudentEntitlement.objects.create(
+                        student=student,
+                        school=school,
+                        period_start=today,
+                        period_end=period_end,
+                        amount_kobo=price,
+                        created_by=by,
+                    )
+            except IntegrityError:
+                # A concurrent activation won this window: reuse, no charge.
+                covered_ids.add(student.id)
+                continue
+            before = balance
+            balance -= price
+            entry = WalletTransaction(
+                school=school,
+                reference=_ref('WTX'),
+                direction=WalletTransaction.Direction.DEBIT,
+                amount_kobo=price,
+                category=WalletTransaction.Category.STUDENT_ACTIVATION,
+                status=WalletTransaction.Status.SUCCESS,
+                student=student,
+                balance_before_kobo=before,
+                balance_after_kobo=balance,
+                description=(
+                    f'Student access activation for {student} '
+                    f'({today} – {period_end}).'
+                ),
+                created_by=by,
+            )
+            new_entitlements.append(entitlement)
+            new_entries.append(entry)
+            activated.append(student)
+            covered_ids.add(student.id)
+        if new_entries:
+            WalletTransaction.objects.bulk_create(new_entries)
+            for entitlement, entry in zip(new_entitlements, new_entries):
+                entitlement.wallet_transaction = entry
+            StudentEntitlement.objects.bulk_update(
+                new_entitlements, ['wallet_transaction'],
+            )
+            wallet.balance_kobo = balance
+            wallet.save(update_fields=['balance_kobo', 'updated_at'])
+    already = [s for s in students if s.id in covered_ids and s not in activated]
+    return {'activated': activated, 'already': already, 'unfunded': unfunded}
+
+
 # ── SME alerts ─────────────────────────────────────────────────────────
 
 class AlertBlocked(ValidationError):

@@ -31,16 +31,13 @@ class SchoolViewSet(viewsets.ModelViewSet):
 
 @method_decorator(cache_page(60 * 5), name='list')
 class SubscriptionPlanViewSet(viewsets.ModelViewSet):
-    """Plans are readable by anyone so the onboarding flow can show pricing.
+    """Retired catalogue: fixed subscription plans are replaced by the wallet.
 
-    The list is cached in Redis for 5 minutes since plans change rarely.
-
-    Only the platform superadmin may change pricing. This used to be a plain
-    `AllowAny` on a full ModelViewSet, which let an anonymous caller create,
-    rewrite and delete the commercial plan data.
+    Reads return an empty list; writes are gone. Rows are preserved for
+    historical payments.
     """
 
-    queryset = SubscriptionPlan.objects.filter(is_active=True)
+    queryset = SubscriptionPlan.objects.none()
     serializer_class = SubscriptionPlanSerializer
 
     def get_permissions(self):
@@ -49,17 +46,12 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
         return [IsSuperAdmin()]
 
     def get_serializer_class(self):
-        # Reads are the pricing catalogue (camelCase, stable plan codes); writes
-        # are the platform manager's plan editor.
         if self.action in ('list', 'retrieve'):
             return PublicPlanSerializer
         return PlatformPlanSerializer
 
     def get_queryset(self):
-        base = SubscriptionPlan.objects.all()
-        if self.action in ('list', 'retrieve'):
-            return base.filter(is_active=True).order_by('sort_order', 'min_students')
-        return base.order_by('sort_order', 'min_students')
+        return SubscriptionPlan.objects.none()
 
 
 class SchoolProfileView(APIView):

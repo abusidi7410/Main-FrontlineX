@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -26,19 +26,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { useDebounced } from "@/hooks/use-debounced";
 import { dateFmt, dateTimeFmt, naira } from "@/lib/format";
 import {
   ACCESS_STATUS_LABEL,
   activateStudent,
-  getMessaging,
   getWallet,
-  listAlerts,
   listStudentAccess,
   listWalletTransactions,
-  sendAlert,
-  setSchoolMessaging,
   startDeposit,
   verifyDeposit,
   type StudentAccess,
@@ -173,7 +168,6 @@ function WalletPage() {
               beginDeposit={() => void beginDeposit()}
             />
             <StudentAccessSection wallet={walletQuery.data} />
-            <SmsSection wallet={walletQuery.data} />
             <TransactionsSection />
           </>
         )}
@@ -314,240 +308,95 @@ function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof ge
             description="Admit students first — they will appear here for activation."
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Student</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Paid through</TableHead>
-                <TableHead className="text-right">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow key={row.studentId}>
-                  <TableCell>
-                    <p className="font-medium">{row.studentName}</p>
-                    <p className="text-xs text-muted-foreground">{row.admissionNumber}</p>
-                  </TableCell>
-                  <TableCell>
-                    <span className="inline-flex items-center gap-2">
-                      <StatusBadge status={accessTone(row.status)} />
-                      <span className="text-sm">{ACCESS_STATUS_LABEL[row.status]}</span>
-                    </span>
-                  </TableCell>
-                  <TableCell>{row.periodEnd ? dateFmt(row.periodEnd) : "—"}</TableCell>
-                  <TableCell className="text-right">
-                    {["Active", "ExpiringSoon"].includes(row.status) ? (
-                      <span className="text-sm text-muted-foreground">
-                        {row.periodEnd ? `Paid to ${dateFmt(row.periodEnd)}` : "Paid"}
-                      </span>
-                    ) : confirmId === row.studentId ? (
-                      <span className="inline-flex flex-col items-end gap-1">
-                        <span className="text-xs text-muted-foreground">
-                          Charge {naira(wallet.studentPrice)} for one month?
-                        </span>
-                        <span className="inline-flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => setConfirmId(null)}>
-                            Cancel
-                          </Button>
-                          <Button
-                            size="sm"
-                            disabled={activatingId !== null}
-                            onClick={() => void activate(row)}
-                          >
-                            {activatingId === row.studentId ? (
-                              <Loader2 className="animate-spin" aria-hidden="true" />
-                            ) : null}
-                            Confirm
-                          </Button>
-                        </span>
-                      </span>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={activatingId !== null}
-                        onClick={() => setConfirmId(row.studentId)}
-                      >
-                        {row.status === "NeverActivated" ? "Activate" : "Renew"}
-                      </Button>
-                    )}
-                  </TableCell>
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Student</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Paid through</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <div className="flex items-center justify-between pt-1">
-            <p className="text-sm text-muted-foreground">
-              Page {page} of {totalPages} · {totalCount} students
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </Button>
+              </TableHeader>
+              <TableBody>
+                {rows.map((row) => (
+                  <TableRow key={row.studentId}>
+                    <TableCell>
+                      <p className="font-medium">{row.studentName}</p>
+                      <p className="text-xs text-muted-foreground">{row.admissionNumber}</p>
+                    </TableCell>
+                    <TableCell>
+                      <span className="inline-flex items-center gap-2">
+                        <StatusBadge status={accessTone(row.status)} />
+                        <span className="text-sm">{ACCESS_STATUS_LABEL[row.status]}</span>
+                      </span>
+                    </TableCell>
+                    <TableCell>{row.periodEnd ? dateFmt(row.periodEnd) : "—"}</TableCell>
+                    <TableCell className="text-right">
+                      {["Active", "ExpiringSoon"].includes(row.status) ? (
+                        <span className="text-sm text-muted-foreground">
+                          {row.periodEnd ? `Paid to ${dateFmt(row.periodEnd)}` : "Paid"}
+                        </span>
+                      ) : confirmId === row.studentId ? (
+                        <span className="inline-flex flex-col items-end gap-1">
+                          <span className="text-xs text-muted-foreground">
+                            Charge {naira(wallet.studentPrice)} for one month?
+                          </span>
+                          <span className="inline-flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => setConfirmId(null)}>
+                              Cancel
+                            </Button>
+                            <Button
+                              size="sm"
+                              disabled={activatingId !== null}
+                              onClick={() => void activate(row)}
+                            >
+                              {activatingId === row.studentId ? (
+                                <Loader2 className="animate-spin" aria-hidden="true" />
+                              ) : null}
+                              Confirm
+                            </Button>
+                          </span>
+                        </span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={activatingId !== null}
+                          onClick={() => setConfirmId(row.studentId)}
+                        >
+                          {row.status === "NeverActivated" ? "Activate" : "Renew"}
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <div className="flex items-center justify-between pt-1">
+              <p className="text-sm text-muted-foreground">
+                Page {page} of {totalPages} · {totalCount} students
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => p - 1)}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function SmsSection({ wallet }: { wallet: Awaited<ReturnType<typeof getWallet>> }) {
-  const queryClient = useQueryClient();
-  const messaging = useQuery({ queryKey: ["wallet", "messaging"], queryFn: getMessaging });
-  const history = useQuery({ queryKey: ["wallet", "alerts"], queryFn: () => listAlerts() });
-  const [recipient, setRecipient] = useState("");
-  const [message, setMessage] = useState("");
-
-  const toggle = useMutation({
-    mutationFn: (enabled: boolean) => setSchoolMessaging(enabled),
-    onSuccess: (data) => {
-      queryClient.setQueryData(["wallet", "messaging"], data);
-      toast.success(data.schoolEnabled ? "SME alerts switched on." : "SME alerts switched off.");
-    },
-    onError: () => toast.error("We couldn't change that setting."),
-  });
-
-  const send = useMutation({
-    mutationFn: () => sendAlert({ recipient: recipient.trim(), message: message.trim() }),
-    onSuccess: () => {
-      setRecipient("");
-      setMessage("");
-      void queryClient.invalidateQueries({ queryKey: ["wallet"] });
-      void queryClient.invalidateQueries({ queryKey: ["wallet", "alerts"] });
-      void queryClient.invalidateQueries({ queryKey: ["wallet", "transactions"] });
-      toast.success(`Alert sent. Charged ${naira(wallet.smsPrice)}.`);
-    },
-    onError: (error: unknown) =>
-      toast.error(error instanceof Error ? error.message : "The alert was not sent."),
-  });
-
-  const gate = messaging.data;
-  const availability = !gate
-    ? "Checking…"
-    : !gate.globalEnabled
-      ? "Disabled for the whole platform."
-      : gate.platformBlocked
-        ? "Blocked for your school by the platform manager."
-        : !gate.schoolEnabled
-          ? "Switched off for your school."
-          : gate.balanceKobo < gate.priceKobo
-            ? "Insufficient wallet funds."
-            : "Available.";
-
-  return (
-    <section className="fn-panel space-y-4 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-medium">SME alerts</h2>
-          <p className="text-sm text-muted-foreground">
-            {naira(wallet.smsPrice)} per delivered request · Status: {availability}
-          </p>
-        </div>
-        {gate ? (
-          <Button
-            variant="outline"
-            disabled={toggle.isPending || gate.platformBlocked || !gate.globalEnabled}
-            onClick={() => toggle.mutate(!gate.schoolEnabled)}
-            title={
-              gate.platformBlocked || !gate.globalEnabled
-                ? "Blocked by the platform — you cannot change this."
-                : undefined
-            }
-          >
-            {gate.schoolEnabled ? "Switch off" : "Switch on"}
-          </Button>
-        ) : null}
-      </div>
-
-      {gate?.canSend ? (
-        <div className="grid gap-3 sm:grid-cols-[220px_1fr_auto] sm:items-end">
-          <div className="space-y-1">
-            <Label htmlFor="sms-to">Recipient phone</Label>
-            <Input
-              id="sms-to"
-              placeholder="+234…"
-              value={recipient}
-              onChange={(e) => setRecipient(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="sms-message">Message</Label>
-            <Textarea
-              id="sms-message"
-              rows={2}
-              maxLength={480}
-              placeholder="Type the alert (480 characters max)"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-            />
-          </div>
-          <Button
-            disabled={send.isPending || !recipient.trim() || !message.trim()}
-            onClick={() => send.mutate()}
-          >
-            {send.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-            {send.isPending ? "Sending…" : `Send (${naira(wallet.smsPrice)})`}
-          </Button>
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Sending is unavailable right now. Rejected requests are never charged; if the provider
-          rejects a request after charging, the charge is refunded automatically.
-        </p>
-      )}
-
-      <div>
-        <h3 className="mb-2 text-sm font-medium">Recent alerts</h3>
-        {history.isPending ? (
-          <ListSkeleton />
-        ) : !history.data || history.data.results.length === 0 ? (
-          <EmptyState
-            title="No alerts yet"
-            description="Sent alerts and their charges appear here."
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Recipient</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Charged</TableHead>
-                <TableHead>Provider cost</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {history.data.results.slice(0, 10).map((alert) => (
-                <TableRow key={alert.id}>
-                  <TableCell>{alert.recipient}</TableCell>
-                  <TableCell>
-                    <StatusBadge status={alert.status} />
-                  </TableCell>
-                  <TableCell className="tabular-nums">{naira(alert.customer_kobo / 100)}</TableCell>
-                  <TableCell className="tabular-nums">
-                    {alert.provider_cost_kobo == null
-                      ? "Unknown"
-                      : naira(alert.provider_cost_kobo / 100)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          </>
         )}
       </div>
     </section>

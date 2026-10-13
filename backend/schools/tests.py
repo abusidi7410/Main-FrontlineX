@@ -127,6 +127,59 @@ class PlatformSchoolDeleteTests(TestCase):
         self.assertEqual(resp.json()['remaining'], 1)
 
 
+class PlatformManagerHardeningTests(TestCase):
+    """Platform managers stay global-only: never attached to a school,
+    never promotable from the school-user screens."""
+
+    def setUp(self):
+        self.platform = User.objects.create_user(
+            email='platform@example.com', password='Strong-Pass-1!',
+            first_name='Platform', last_name='Manager',
+            role=User.Role.PLATFORM_MANAGER, is_active=True,
+        )
+        self.school = School.objects.create(
+            name='Sunrise Academy', slug='sunrise-academy', address='1 Sunrise Way',
+            state='Kano', lga='Kano Municipal', phone='+2348000000011',
+            email='sunrise@example.com', is_active=True,
+        )
+        self.admin = User.objects.create_user(
+            email='admin@sunrise.example', password='Strong-Pass-1!',
+            first_name='Sunrise', last_name='Admin',
+            role=User.Role.SCHOOL_ADMIN, school=self.school, is_active=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.platform)
+
+    def test_cannot_create_schooled_platform_manager(self):
+        resp = self.client.post(
+            f'/api/v1/platform/schools/{self.school.id}/users/',
+            {'email': 'evil@example.com', 'name': 'Evil PM', 'role': 'platform_manager'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertFalse(User.objects.filter(email='evil@example.com').exists())
+
+    def test_cannot_promote_school_user_to_platform_manager(self):
+        resp = self.client.patch(
+            f'/api/v1/platform/users/{self.admin.id}/',
+            {'role': 'platform_manager'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.role, User.Role.SCHOOL_ADMIN)
+
+    def test_schooled_platform_manager_role_is_not_superadmin(self):
+        schooled = User.objects.create_user(
+            email='schooled@example.com', password='Strong-Pass-1!',
+            first_name='Schooled', last_name='PM',
+            role=User.Role.PLATFORM_MANAGER, school=self.school, is_active=True,
+        )
+        other = APIClient()
+        other.force_authenticate(schooled)
+        resp = other.get('/api/v1/platform/overview/')
+        self.assertEqual(resp.status_code, 403)
+
+
 @override_settings(
     CACHES={
         'default': {
@@ -297,7 +350,7 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
             'tierId': 't100',
         }
 
-    def test_public_registration_requires_payment_before_trial(self):
+    def test_public_registration_starts_with_empty_wallet(self):
         response = self.client.post(
             '/api/v1/schools/register/', self._payload(), format='json',
         )
@@ -305,18 +358,17 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         body = response.json()
         school = School.objects.get(id=body['schoolId'])
-        subscription = SchoolSubscription.objects.get(school=school)
         admin = User.objects.get(email='new-admin@example.com')
-        # Onboarding: the school can sign in, but no trial runs yet.
+        # No subscription rows: the school starts with a ₦0 wallet instead.
+        self.assertFalse(SchoolSubscription.objects.filter(school=school).exists())
+        from billing.models import Wallet
+        wallet = Wallet.objects.get(school=school)
+        self.assertEqual(wallet.balance_kobo, 0)
         self.assertTrue(school.is_active)
-        self.assertEqual(subscription.status, SchoolSubscription.Status.PENDING)
-        self.assertEqual(subscription.plan, self.plan)
-        self.assertIsNotNone(subscription.expires_at)
         self.assertTrue(admin.is_active)
         self.assertTrue(admin.is_verified)
         self.assertFalse(body['trial'])
-        self.assertTrue(body['requiresPayment'])
-        self.assertIsNotNone(body['payBy'])
+        self.assertFalse(body['requiresPayment'])
         login_response = self.client.post(
             '/api/v1/auth/login/',
             {'identifier': admin.email, 'password': 'Strong-Pass-1!'},
@@ -353,9 +405,8 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
         self.assertEqual(valid_reference_response.json(), {'status': 'pending'})
         self.assertEqual(fake_reference_response.json(), {'status': 'pending'})
         school = School.objects.get(id=response.json()['schoolId'])
-        self.assertEqual(
-            school.subscription.status,
-            SchoolSubscription.Status.PENDING,
+        self.assertFalse(
+            SchoolSubscription.objects.filter(school=school).exists(),
         )
 
 

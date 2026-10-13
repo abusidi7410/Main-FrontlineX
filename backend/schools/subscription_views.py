@@ -275,11 +275,10 @@ def _verify_and_confirm(payment: SubscriptionPayment, request) -> Response:
 # ── Payment endpoints ───────────────────────────────────────────────────────
 
 class SubscriptionCheckoutView(APIView):
-    """POST /schools/subscriptions/checkout/ → a Paystack checkout to open.
+    """Retired: fixed subscriptions are replaced by the prepaid wallet.
 
-    Starts (or restarts) a payment for the caller's school. The plan is taken
-    from the request when supplied, otherwise the school's current plan; the
-    amount always comes from the plan row, never from the client.
+    Kept as a 410 (not deleted) so old clients fail loudly with a fund-the-
+    wallet pointer. Historical payments/subscriptions are untouched.
     """
 
     permission_classes = [
@@ -287,110 +286,48 @@ class SubscriptionCheckoutView(APIView):
     ]
 
     def post(self, request):
-        school = request.user.school
-        plan_id = request.data.get('planId')
-        plan = _resolve_plan(plan_id) if plan_id else None
-        if plan_id and (plan is None or not plan.is_active):
-            return Response(
-                {'detail': 'The selected subscription plan is unavailable.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if plan is None:
-            subscription = SchoolSubscription.objects.filter(school=school).first()
-            plan = subscription.plan if subscription and subscription.plan_id else None
-        if plan is None:
-            plan = SubscriptionPlan.objects.filter(is_active=True).order_by(
-                'sort_order', 'min_students',
-            ).first()
-        if plan is None:
-            return Response(
-                {'detail': 'No subscription plan is available to purchase.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        subscription = SchoolSubscription.objects.filter(school=school).first()
-        ever_paid = SubscriptionPayment.objects.filter(
-            school=school, status=SubscriptionPayment.Status.SUCCESS,
-        ).exists()
-        if (subscription is None or subscription.status == SchoolSubscription.Status.PENDING) and not ever_paid:
-            # Card-first trial: the first checkout unlocks the trial, adding
-            # the plan's trial days free on top of the paid period.
-            purpose = SubscriptionPayment.Purpose.TRIAL_START
-        elif SchoolSubscription.objects.filter(school=school).exclude(plan=plan).exists():
-            purpose = SubscriptionPayment.Purpose.PLAN_CHANGE
-        else:
-            purpose = SubscriptionPayment.Purpose.RENEWAL
-        return _start_checkout(
-            school,
-            plan,
-            purpose=purpose,
-            user=request.user,
+        return Response(
+            {
+                'detail': (
+                    'Fixed subscriptions are retired. Fund your school wallet '
+                    'instead — student access is charged per student per month.'
+                ),
+            },
+            status=status.HTTP_410_GONE,
         )
 
 
 class SubscriptionVerifyView(APIView):
-    """GET /schools/subscriptions/verify/<reference>/ → confirm a checkout."""
+    """Retired: fixed subscriptions are replaced by the prepaid wallet."""
 
     permission_classes = [IsAuthenticated, HasSchool]
 
     def get(self, request, reference):
-        payment = SubscriptionPayment.objects.filter(
-            reference=reference, school=request.user.school,
-        ).first()
-        if payment is None:
-            return Response({'detail': 'Payment not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return _verify_and_confirm(payment, request)
+        return Response(
+            {
+                'detail': (
+                    'Fixed subscriptions are retired. Fund your school wallet '
+                    'instead — student access is charged per student per month.'
+                ),
+            },
+            status=status.HTTP_410_GONE,
+        )
 
 
 class SubscriptionWebhookView(APIView):
-    """POST /schools/subscriptions/webhook/ → Paystack's server callback.
+    """Retired: fixed subscriptions are replaced by the prepaid wallet.
 
-    Unauthenticated by design; the signed body is the only credential. DRF views
-    are already CSRF-exempt. We only act on ``charge.success`` and re-verify the
-    amount ourselves before touching the subscription, so a forged or stale
-    event cannot switch a school on.
+    Still validates the payload shape, but never activates anything.
     """
 
     permission_classes = [AllowAny]
     authentication_classes = []
 
     def post(self, request):
-        signature = request.headers.get('x-paystack-signature', '')
-        if not paystack.verify_webhook_signature(request.body, signature):
-            return Response({'detail': 'Invalid signature.'}, status=status.HTTP_401_UNAUTHORIZED)
-        try:
-            payload = json.loads(request.body.decode('utf-8'))
-        except (ValueError, UnicodeDecodeError):
-            return Response({'detail': 'Malformed payload.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if payload.get('event') == 'charge.success':
-            data = payload.get('data') or {}
-            reference = data.get('reference')
-            payment = SubscriptionPayment.objects.filter(
-                reference=reference,
-            ).first() or SubscriptionPayment.objects.filter(
-                paystack_reference=reference,
-            ).exclude(paystack_reference='').first()
-            if payment is not None:
-                # Brief locked re-check (no external calls inside): a duplicate
-                # webhook racing this one may already have been confirmed, in
-                # which case there is nothing to re-verify with Paystack.
-                with transaction.atomic():
-                    locked = SubscriptionPayment.objects.select_for_update(
-                        of=('self',),
-                    ).get(pk=payment.pk)
-                    already_done = locked.status == SubscriptionPayment.Status.SUCCESS
-                if already_done:
-                    return Response({'received': True})
-            if payment is not None:
-                if (
-                    data.get('status') == 'success'
-                    and _amount_matches(data, payment.amount_kobo)
-                    and data.get('currency') == payment.currency
-                ):
-                    # Verify independently with Paystack before granting access.
-                    return _verify_and_confirm(payment, request)
-        # A valid event for an unknown or non-successful attempt needs no retry.
-        return Response({'received': True})
+        return Response(
+            {'received': True, 'retired': True},
+            status=status.HTTP_410_GONE,
+        )
 
 
 # ── Platform: plan management ────────────────────────────────────────────────
@@ -411,21 +348,15 @@ class PlatformPlanListCreateView(APIView):
         })
 
     def post(self, request):
-        serializer = PlatformPlanSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        try:
-            plan = serializer.save()
-        except IntegrityError:
-            return Response(
-                {'detail': 'A plan with that code or name already exists.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        audit(
-            request, 'subscription.plan.created', plan.name,
-            f'Plan {plan.name} created.', entity='subscription_plan', entity_id=str(plan.pk),
-            after=PlatformPlanSerializer(plan).data,
+        return Response(
+            {
+                'detail': (
+                    'Fixed subscription plans are retired. Configure the '
+                    'per-student wallet price instead.'
+                ),
+            },
+            status=status.HTTP_410_GONE,
         )
-        return Response(PlatformPlanSerializer(plan).data, status=status.HTTP_201_CREATED)
 
 
 class PlatformPlanDetailView(APIView):
@@ -435,45 +366,26 @@ class PlatformPlanDetailView(APIView):
         return SubscriptionPlan.objects.filter(pk=pk).first()
 
     def patch(self, request, pk):
-        plan = self.get_object(pk)
-        if plan is None:
-            return Response({'detail': 'Plan not found.'}, status=status.HTTP_404_NOT_FOUND)
-        before = PlatformPlanSerializer(plan).data
-        serializer = PlatformPlanSerializer(plan, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        try:
-            plan = serializer.save()
-        except IntegrityError:
-            return Response(
-                {'detail': 'A plan with that code or name already exists.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        audit(
-            request, 'subscription.plan.updated', plan.name,
-            'Plan updated.', entity='subscription_plan', entity_id=str(plan.pk),
-            before=before, after=PlatformPlanSerializer(plan).data,
+        return Response(
+            {
+                'detail': (
+                    'Fixed subscription plans are retired. Configure the '
+                    'per-student wallet price instead.'
+                ),
+            },
+            status=status.HTTP_410_GONE,
         )
-        return Response(PlatformPlanSerializer(plan).data)
 
     def delete(self, request, pk):
-        plan = self.get_object(pk)
-        if plan is None:
-            return Response({'detail': 'Plan not found.'}, status=status.HTTP_404_NOT_FOUND)
-        in_use = SchoolSubscription.objects.filter(plan=plan).exists()
-        if in_use:
-            # Never delete a plan a school is on: that would silently strand the
-            # school. Deactivating keeps existing schools intact.
-            return Response(
-                {'detail': 'This plan is in use. Deactivate it instead of deleting.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        name = plan.name
-        plan.delete()
-        audit(
-            request, 'subscription.plan.deleted', name, 'Plan deleted.',
-            severity='warning', entity='subscription_plan', entity_id=str(pk),
+        return Response(
+            {
+                'detail': (
+                    'Fixed subscription plans are retired. Plan history is '
+                    'preserved and cannot be deleted from here.'
+                ),
+            },
+            status=status.HTTP_410_GONE,
         )
-        return Response({'deleted': name})
 
 
 # ── Platform: per-school subscription ────────────────────────────────────────

@@ -60,7 +60,7 @@ describe("ROLE_PERMISSIONS", () => {
     expect(teacherPerms).not.toContain("settings.write");
     expect(teacherPerms).not.toContain("results.publish");
     expect(teacherPerms).not.toContain("students.import");
-    expect(teacherPerms).not.toContain("subscription.read");
+    expect(teacherPerms).not.toContain("finance.payment");
   });
 
   it("accountant cannot access results or attendance", () => {

@@ -70,7 +70,8 @@ class SchoolRegistrationSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         from django.db import transaction
-        from schools.models import School, SchoolSubscription, SubscriptionPlan
+        from billing.models import Wallet
+        from schools.models import School
 
         with transaction.atomic():
             school = School.objects.create(
@@ -96,12 +97,7 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 is_active=False,
                 is_verified=False,
             )
-            plan = SubscriptionPlan.objects.filter(is_active=True).first()
-            SchoolSubscription.objects.create(
-                school=school,
-                plan=plan,
-                status=SchoolSubscription.Status.PENDING,
-            )
+            Wallet.objects.get_or_create(school=school, defaults={'balance_kobo': 0})
 
         return user, school
 

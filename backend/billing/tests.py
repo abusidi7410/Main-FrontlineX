@@ -20,7 +20,6 @@ from accounts.models import User
 from billing import services
 from billing.models import (
     PlatformPricing,
-    SchoolMessaging,
     SmsAlert,
     StudentEntitlement,
     Wallet,
@@ -228,7 +227,7 @@ class StudentBillingTests(SchoolTestCase):
         self.assertEqual(listed.status_code, 200)
         row = next(
             r for r in listed.data['results']
-            if r['admissionNumber'] == 'W1'
+            if r['studentId'] == str(student.public_id)
         )
         # The list id must be the public UUID the activate endpoint expects —
         # numeric pks 404 there, which used to break wallet activation.
@@ -353,6 +352,8 @@ class RenewalSweepTests(SchoolTestCase):
 
 
 class SmsAlertTests(SchoolTestCase):
+    """SME messaging is retired: sends are refused, history stays readable."""
+
     def setUp(self):
         super().setUp()
         self.auth(self.admin)
@@ -360,109 +361,31 @@ class SmsAlertTests(SchoolTestCase):
             self.school, 50000, category=WalletTransaction.Category.DEPOSIT,
         )
 
-    def _send(self, **overrides):
-        payload = {
-            'recipient': '+2348000000001',
-            'message': 'Fee reminder for tomorrow.',
-            'reference': 'SMS-TEST-1',
-        }
-        payload.update(overrides)
-        return self.client.post('/api/v1/billing/alerts/', payload, format='json')
+    def test_send_is_disabled_platform_wide(self):
+        before = services.get_wallet(self.school).balance_kobo
+        response = self.client.post(
+            '/api/v1/billing/alerts/',
+            {
+                'recipient': '+2348000000001',
+                'message': 'Fee reminder for tomorrow.',
+                'reference': 'SMS-TEST-1',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(response.data['reasonCode'], 'sms_disabled')
+        self.assertEqual(services.get_wallet(self.school).balance_kobo, before)
+        self.assertFalse(SmsAlert.objects.filter(reference='SMS-TEST-1').exists())
 
-    def _ok_provider(self):
-        from records.services import sms as sms_module
-
-        class _Provider:
-            def send(self, to, message, sender_id=None):
-                return sms_module.SMSResult(
-                    succeeded=True, provider_reference='termii-123', cost=0,
-                )
-
-        return patch.object(sms_module, 'get_sms_provider', return_value=_Provider())
-
-    def test_global_switch_off_blocks_everyone(self):
-        pricing = services.get_pricing()
-        pricing.sms_enabled_global = False
-        pricing.save()
-        with self._ok_provider():
-            response = self._send()
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data['reasonCode'], 'global_disabled')
-
-    def test_platform_block_beats_school_setting(self):
-        messaging, _ = SchoolMessaging.objects.get_or_create(school=self.school)
-        messaging.platform_blocked = True
-        messaging.save()
-        with self._ok_provider():
-            response = self._send()
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data['reasonCode'], 'school_blocked')
-
-    def test_school_admin_can_disable_own_alerts(self):
+    def test_school_toggle_is_disabled(self):
         response = self.client.patch(
             '/api/v1/billing/messaging/', {'schoolEnabled': False}, format='json',
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.data['schoolEnabled'])
-        with self._ok_provider():
-            blocked = self._send()
-        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(response.status_code, 403, response.data)
 
-    def test_insufficient_funds_prevents_send(self):
-        wallet = services.get_wallet(self.school)
-        wallet.balance_kobo = 500
-        wallet.save()
-        with self._ok_provider():
-            response = self._send()
-        self.assertEqual(response.status_code, 402)
-        self.assertEqual(SmsAlert.objects.count(), 0)
-
-    def test_legitimate_alert_charges_configured_price(self):
-        with self._ok_provider():
-            response = self._send()
-        self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(response.data['customer_kobo'], 1000)
-        self.assertIsNone(response.data['provider_cost_kobo'])
-        self.assertEqual(services.get_wallet(self.school).balance_kobo, 49000)
-        entry = WalletTransaction.objects.get(
-            message_reference='SMS-TEST-1',
-            category=WalletTransaction.Category.SMS_ALERT,
-        )
-        self.assertEqual(entry.amount_kobo, 1000)
-
-    def test_retry_with_same_reference_does_not_recharge(self):
-        with self._ok_provider():
-            first = self._send()
-            second = self._send()
-        self.assertEqual(first.status_code, 201)
-        self.assertEqual(second.status_code, 201)
-        self.assertEqual(
-            WalletTransaction.objects.filter(
-                message_reference='SMS-TEST-1',
-                category=WalletTransaction.Category.SMS_ALERT,
-            ).count(),
-            1,
-        )
-        self.assertEqual(services.get_wallet(self.school).balance_kobo, 49000)
-
-    def test_provider_rejection_refunds(self):
-        from records.services import sms as sms_module
-
-        class _Rejecting:
-            def send(self, to, message, sender_id=None):
-                return sms_module.SMSResult(
-                    succeeded=False, error='Insufficient Termii balance',
-                )
-
-        with patch.object(
-            sms_module, 'get_sms_provider', return_value=_Rejecting(),
-        ):
-            response = self._send()
-        self.assertEqual(response.status_code, 400)
-        alert = SmsAlert.objects.get(reference='SMS-TEST-1')
-        self.assertEqual(alert.status, SmsAlert.Status.REFUNDED)
-        # Charge refunded in full: balance back to ₦500.
-        self.assertEqual(services.get_wallet(self.school).balance_kobo, 50000)
+    def test_alert_history_stays_readable(self):
+        response = self.client.get('/api/v1/billing/alerts/history/')
+        self.assertEqual(response.status_code, 200, response.data)
 
 
 class PlatformBillingTests(SchoolTestCase):
@@ -688,6 +611,65 @@ class AccessEnforcementTests(SchoolTestCase):
         )
         self.assertEqual(result.saved, 0)
         self.assertEqual(result.skipped, 1)
+
+    def test_partial_funds_save_covered_and_name_the_rest(self):
+        from records.services import attendance as attendance_service
+        from records.models import Enrollment
+        from billing.models import Wallet
+        # ₦300 covers 2 of 3 at ₦115.
+        Wallet.objects.filter(school=self.school).update(balance_kobo=30000)
+        students = [self.make_student(admission_number=f'P{i}') for i in range(3)]
+        for student in students:
+            Enrollment.objects.create(
+                school=self.school, student=student,
+                academic_session=self.session, class_obj=self.jss1,
+                status=Enrollment.Status.ACTIVE,
+            )
+        day = timezone.localdate()
+        for _ in range(14):
+            if attendance_service.is_school_day(self.school, day):
+                break
+            day += timedelta(days=1)
+        result = attendance_service.submit_register(
+            user=self.admin, school=self.school, class_obj=self.jss1,
+            day=day,
+            records=[
+                {'studentId': str(s.public_id), 'status': 'present'} for s in students
+            ],
+        )
+        self.assertEqual(result.saved, 2)
+        self.assertEqual(result.skipped, 1)
+        self.assertEqual(len(result.activated), 2)
+        self.assertEqual(len(result.skipped_unfunded), 1)
+        self.assertEqual(result.charged_kobo, 23000)
+        self.assertEqual(result.shortfall_kobo, 11500)
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, 7000,
+        )
+        # One ledger row per charged student, none for the unfunded one.
+        self.assertEqual(
+            WalletTransaction.objects.filter(
+                school=self.school,
+                category=WalletTransaction.Category.STUDENT_ACTIVATION,
+            ).count(),
+            2,
+        )
+
+    def test_batch_activation_is_idempotent_on_retry(self):
+        from records.models import Enrollment
+        students = [self.make_student(admission_number=f'Q{i}') for i in range(3)]
+        first = services.ensure_many_student_access(
+            self.school, students, actor=self.admin,
+        )
+        second = services.ensure_many_student_access(
+            self.school, students, actor=self.admin,
+        )
+        self.assertEqual(len(first['activated']), 3)
+        self.assertEqual(len(second['activated']), 0)
+        self.assertEqual(len(second['already']), 3)
+        self.assertEqual(
+            StudentEntitlement.objects.filter(school=self.school).count(), 3,
+        )
 
     def test_grace_period_keeps_access(self):
         from records.services import results as results_service

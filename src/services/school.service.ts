@@ -17,8 +17,6 @@ import type {
   ReverseGeocodeResult,
   School,
   StaffMember,
-  SubscriptionState,
-  SubscriptionTier,
   TimetableEntry,
   TimetableEntryInput,
   TimetableGrid,
@@ -43,7 +41,6 @@ export interface OnboardingPayload {
     timezone?: string | undefined;
   };
   admin: { fullName: string; phone: string; email: string; password: string };
-  tierId: string;
 }
 
 export async function registerSchool(payload: OnboardingPayload) {
@@ -53,8 +50,6 @@ export async function registerSchool(payload: OnboardingPayload) {
     paymentRef: string;
     trial: boolean;
     requiresPayment: boolean;
-    payBy: string | null;
-    trialEndsAt?: string | null | undefined;
     trialDays: number;
     planName: string;
   }>("/schools/register", { method: "POST", body: payload });
@@ -149,42 +144,6 @@ export async function uploadSchoolLogo(logo: File): Promise<SchoolProfile> {
     if (!isMissingProfileRoute(err)) throw err;
     return await apiFetch<SchoolProfile>("/schools/schools/profile", { method: "PATCH", body });
   }
-}
-
-export async function getSubscription(): Promise<SubscriptionState> {
-  // SECURITY: Backend must verify permission subscription.read and schoolId match.
-  return apiFetch("/subscription");
-}
-
-export async function getSubscriptionPlans(): Promise<SubscriptionTier[]> {
-  return apiFetch("/schools/plans");
-}
-
-export interface SubscriptionCheckout {
-  reference: string;
-  authorizationUrl: string;
-  amount: number;
-  currency: string;
-  planLabel: string;
-}
-
-export interface SubscriptionVerification {
-  status: "success" | "pending" | "failed";
-  reference: string;
-  expiresAt?: string | null;
-}
-
-export async function startSubscriptionCheckout(planId: string): Promise<SubscriptionCheckout> {
-  return apiFetch("/schools/subscriptions/checkout", {
-    method: "POST",
-    body: { planId },
-  });
-}
-
-export async function verifySubscriptionPayment(
-  reference: string,
-): Promise<SubscriptionVerification> {
-  return apiFetch(`/schools/subscriptions/verify/${encodeURIComponent(reference)}`);
 }
 
 export async function getStaff(): Promise<StaffMember[]> {

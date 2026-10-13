@@ -8,7 +8,7 @@ import {
   updateStudent,
 } from "@/services/students.service";
 import { listStaff } from "@/services/staff.service";
-import { getSubscription } from "@/services/school.service";
+import { getWallet } from "@/services/wallet.service";
 import { getRoster, submitAttendance } from "@/services/attendance.service";
 import { login } from "@/services/auth.service";
 
@@ -73,12 +73,12 @@ describe("API prefix", () => {
 });
 
 describe("services route through the centralized /api/v1 prefix", () => {
-  it("covers students, staff, school, attendance, transfer and auth", async () => {
+  it("covers students, staff, wallet, attendance, transfer and auth", async () => {
     const fetchMock = mockOk();
 
     await listStudents();
     await listStaff();
-    await getSubscription();
+    await getWallet();
     await getRoster({ className: "JSS 1" });
     await submitAttendance({
       id: "roster-1",

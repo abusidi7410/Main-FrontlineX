@@ -15,6 +15,15 @@ export type RosterParams = {
   date?: string;
 };
 
+export interface RosterBillingQuote {
+  balanceKobo: number;
+  priceKobo: number;
+  entitledCount: number;
+  unpaidCount: number;
+  coverableCount: number;
+  shortfallKobo: number;
+}
+
 export interface RosterResponse {
   students: Student[];
   date: string;
@@ -27,6 +36,14 @@ export interface RosterResponse {
   classTeacher: string;
   isSchoolDay: boolean;
   canSubmit: boolean;
+  billing: RosterBillingQuote;
+}
+
+export interface SubmitAttendanceBilling {
+  activated: { studentId: string; studentName: string; admissionNumber: string }[];
+  skippedUnfunded: { studentId: string; studentName: string; admissionNumber: string }[];
+  chargedKobo: number;
+  shortfallKobo: number;
 }
 
 export interface SubmitAttendanceResponse {
@@ -35,6 +52,7 @@ export interface SubmitAttendanceResponse {
   skipped: number;
   byStatus: Record<string, number>;
   date: string;
+  billing: SubmitAttendanceBilling;
 }
 
 export interface AttendanceOverviewRow {
@@ -162,16 +180,18 @@ export async function checkInStaff(
  * Staff check-ins. An administrator/principal sees the whole school; everyone
  * else receives only their own rows, scoped by the server.
  */
-export async function getStaffAttendance(params: {
-  date?: string;
-  dateFrom?: string;
-  dateTo?: string;
-  staffId?: string;
-  status?: StaffAttendanceStatus[];
-  search?: string;
-  page?: number;
-  pageSize?: number;
-} = {}): Promise<StaffAttendancePage> {
+export async function getStaffAttendance(
+  params: {
+    date?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    staffId?: string;
+    status?: StaffAttendanceStatus[];
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<StaffAttendancePage> {
   // SECURITY: Backend requires attendance.staff and scopes non-managers to
   // their own records.
   const query: Record<string, string | number | undefined> = {};

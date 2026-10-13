@@ -944,7 +944,7 @@ class NotificationSweepCommandTests(NotificationTestCase):
         call_command('sweep_notifications', stdout=out)
         self.assertIn('Swept', out.getvalue())
 
-    def test_the_command_warns_a_school_about_to_lapse(self):
+    def test_the_command_ignores_subscriptions(self):
         from datetime import timedelta
 
         from django.core.management import call_command
@@ -955,11 +955,10 @@ class NotificationSweepCommandTests(NotificationTestCase):
 
         call_command('sweep_notifications', stdout=None)
 
-        note = Notification.objects.filter(type='subscription').first()
-        self.assertIsNotNone(note)
-        self.assertIn('3', note.title)
+        # Retired: the sweep no longer emits subscription reminders.
+        self.assertFalse(Notification.objects.filter(type='subscription').exists())
 
-    def test_the_command_expires_a_lapsed_subscription(self):
+    def test_the_command_leaves_lapsed_subscriptions_untouched(self):
         from schools.models import SchoolSubscription
 
         subscription = self.school.subscription
@@ -970,7 +969,7 @@ class NotificationSweepCommandTests(NotificationTestCase):
         call_command('sweep_notifications', stdout=None)
 
         subscription.refresh_from_db()
-        self.assertEqual(subscription.status, SchoolSubscription.Status.EXPIRED)
+        self.assertNotEqual(subscription.status, SchoolSubscription.Status.EXPIRED)
 
 
 class PlatformBroadcastTests(NotificationTestCase):

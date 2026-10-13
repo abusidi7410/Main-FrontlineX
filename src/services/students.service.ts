@@ -136,7 +136,12 @@ export interface ImportAnalysis {
   duplicates: number;
   missingFields: number;
   rows: ImportRow[];
-  capacity: { activeStudents: number; allowed: number; afterImport: number; exceeds: boolean };
+  capacity: {
+    activeStudents: number;
+    allowed: number | null;
+    afterImport: number;
+    exceeds: boolean;
+  };
 }
 
 export async function analyseImportFile(file: File): Promise<ImportAnalysis> {

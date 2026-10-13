@@ -65,32 +65,8 @@ class SchoolRegistrationSerializer(serializers.Serializer):
 
         school_data = validated_data['school']
         admin_data = validated_data['admin']
-        tier_id = validated_data.get('tierId') or 't400'
-        trial_days = getattr(settings, 'REGISTRATION_TRIAL_DAYS', 7)
-
-        plan = None
-        tier = (tier_id or '').strip()
-        if tier:
-            plan = SubscriptionPlan.objects.filter(code=tier).first()
-        if plan is None and tier.startswith('t'):
-            index = int(tier[1:]) if tier[1:].isdigit() else None
-            if index is not None:
-                plan = SubscriptionPlan.objects.filter(
-                    is_active=True,
-                    min_students__lte=index,
-                ).order_by('-min_students').first()
-        if plan is None:
-            plan = (
-                SubscriptionPlan.objects.filter(is_active=True)
-                .order_by('sort_order', 'min_students')
-                .first()
-            )
 
         now = timezone.now()
-        # Payment is due before the trial: the school is created PENDING with a
-        # pay-by deadline. Signing in still works (onboarding), but the trial
-        # only starts once the first checkout succeeds (purpose `trial_start`).
-        pay_by = now + timedelta(days=trial_days)
 
         with transaction.atomic():
             latitude = school_data.get('latitude')
@@ -136,22 +112,18 @@ class SchoolRegistrationSerializer(serializers.Serializer):
             )
             admin.save()
 
-            SchoolSubscription.objects.create(
-                school=school,
-                plan=plan,
-                status=SchoolSubscription.Status.PENDING,
-                starts_at=now,
-                expires_at=pay_by,
-            )
+            # New schools start with a ₦0 wallet: no plan, no trial deadline.
+            # The administrator funds the wallet and activates students.
+            from billing.models import Wallet
+            Wallet.objects.get_or_create(school=school, defaults={'balance_kobo': 0})
 
         return {
             'schoolId': str(school.pk),
             'paymentRef': f'FN-{school.slug.upper()}',
             'trial': False,
-            'requiresPayment': True,
-            'trialDays': trial_days,
-            'payBy': pay_by.isoformat(),
-            'planName': plan.name if plan else '',
+            'requiresPayment': False,
+            'trialDays': 0,
+            'planName': '',
         }
 
 

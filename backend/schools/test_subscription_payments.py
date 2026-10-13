@@ -1,17 +1,18 @@
-import hashlib
-import hmac
-import json
-from decimal import Decimal
-from unittest.mock import patch
+"""Retired subscription money paths: checkout/verify/webhook answer 410.
 
-from django.test import TestCase, override_settings
+Historical rows (SubscriptionPayment / SchoolSubscription) are preserved and
+asserted untouched: retiring means no NEW charges, never rewritten history.
+"""
+from decimal import Decimal
+
+from django.test import TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import User
 from schools.models import School, SchoolSubscription, SubscriptionPayment, SubscriptionPlan
 
 
-class SubscriptionPaymentFlowTests(TestCase):
+class RetiredSubscriptionPaymentTests(TestCase):
     def setUp(self):
         self.school = School.objects.create(
             name='Payment Flow Academy',
@@ -41,229 +42,62 @@ class SubscriptionPaymentFlowTests(TestCase):
             monthly_price=Decimal('8000.00'),
             is_active=True,
         )
+        self.payment = SubscriptionPayment.objects.create(
+            school=self.school,
+            plan=self.plan,
+            reference='SUB-PAYMENT-FLOW-01',
+            amount_kobo=800000,
+        )
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
 
-    @override_settings(PAYSTACK_CALLBACK_URL='https://schools.example/subscription')
-    @patch(
-        'schools.subscription_views.paystack.initialize_transaction',
-        return_value={
-            'access_code': 'access-code',
-            'authorization_url': 'https://checkout.paystack.com/access-code',
-            'reference': 'gateway-reference',
-        },
-    )
-    def test_checkout_uses_backend_plan_amount_and_callback_url(self, initialize):
+    def test_checkout_is_retired(self):
         response = self.client.post(
             '/api/v1/schools/subscriptions/checkout/',
             {'planId': 't100'},
             format='json',
         )
-
-        self.assertEqual(response.status_code, 200, response.content)
-        initialize.assert_called_once()
-        self.assertEqual(initialize.call_args.kwargs['amount_kobo'], 800000)
+        self.assertEqual(response.status_code, 410, response.content)
+        # No new payment attempt created.
         self.assertEqual(
-            initialize.call_args.kwargs['callback_url'],
-            'https://schools.example/subscription',
+            SubscriptionPayment.objects.filter(school=self.school).count(), 1,
         )
-        self.assertEqual(response.data['authorizationUrl'], 'https://checkout.paystack.com/access-code')
-        payment = SubscriptionPayment.objects.get(reference=response.data['reference'])
-        self.assertEqual(payment.paystack_reference, 'gateway-reference')
-        self.assertEqual(payment.amount_kobo, 800000)
 
-    @patch(
-        'schools.subscription_views.paystack.verify_transaction',
-        side_effect=lambda reference: {
-            'status': 'success',
-            'reference': reference,
-            'amount': 800000,
-            'currency': 'NGN',
-            'channel': 'card',
-        },
-    )
-    def test_callback_verifies_payment_and_activates_subscription(self, verify):
-        payment = self._pending_payment()
-
+    def test_verify_is_retired_and_leaves_history_untouched(self):
         response = self.client.get(
-            f'/api/v1/schools/subscriptions/verify/{payment.reference}/',
+            '/api/v1/schools/subscriptions/verify/SUB-PAYMENT-FLOW-01/',
         )
+        self.assertEqual(response.status_code, 410, response.content)
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, SubscriptionPayment.Status.PENDING)
 
-        self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(response.data['status'], 'success')
-        verify.assert_called_once_with(payment.reference)
-        payment.refresh_from_db()
-        self.assertEqual(payment.status, SubscriptionPayment.Status.SUCCESS)
-        self.assertEqual(payment.channel, 'card')
-        self.assertEqual(
-            SchoolSubscription.objects.get(school=self.school).status,
-            SchoolSubscription.Status.ACTIVE,
-        )
-
-    @override_settings(PAYSTACK_SECRET_KEY='test-secret')
-    @patch(
-        'schools.subscription_views.paystack.verify_transaction',
-        side_effect=lambda reference: {
-            'status': 'success',
-            'reference': reference,
-            'amount': 800000,
-            'currency': 'NGN',
-            'channel': 'card',
-        },
-    )
-    def test_signed_webhook_reverifies_with_paystack_before_activation(self, verify):
-        payment = self._pending_payment()
-        body = json.dumps({
-            'event': 'charge.success',
-            'data': {
-                'status': 'success',
-                'reference': payment.reference,
-                'amount': 800000,
-                'currency': 'NGN',
-            },
-        })
-        signature = hmac.new(
-            b'test-secret', body.encode('utf-8'), hashlib.sha512,
-        ).hexdigest()
-
+    def test_webhook_is_retired(self):
         response = APIClient().post(
             '/api/v1/schools/subscriptions/webhook/',
-            body,
-            content_type='application/json',
-            HTTP_X_PAYSTACK_SIGNATURE=signature,
+            {'event': 'charge.success', 'data': {'reference': 'SUB-PAYMENT-FLOW-01'}},
+            format='json',
         )
+        self.assertEqual(response.status_code, 410, response.content)
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, SubscriptionPayment.Status.PENDING)
 
+    def test_plan_catalogue_is_empty(self):
+        response = self.client.get('/api/v1/schools/plans/')
         self.assertEqual(response.status_code, 200, response.content)
-        verify.assert_called_once_with(payment.reference)
-        payment.refresh_from_db()
-        self.assertEqual(payment.status, SubscriptionPayment.Status.SUCCESS)
+        data = response.data
+        results = data.get('results', data) if hasattr(data, 'get') else list(data)
+        self.assertEqual(list(results), [])
 
-    def test_repeated_payment_confirmation_does_not_extend_subscription_twice(self):
-        payment = self._pending_payment()
-        with patch(
-            'schools.subscription_views.paystack.verify_transaction',
-            side_effect=lambda reference: {
-                'status': 'success',
-                'reference': reference,
-                'amount': 800000,
-                'currency': 'NGN',
-            },
-        ):
-            first = self.client.get(
-                f'/api/v1/schools/subscriptions/verify/{payment.reference}/',
-            )
-            expiry = SchoolSubscription.objects.get(school=self.school).expires_at
-            second = self.client.get(
-                f'/api/v1/schools/subscriptions/verify/{payment.reference}/',
-            )
+    def test_school_subscription_self_view_is_retired(self):
+        response = self.client.get('/api/v1/subscription/')
+        self.assertEqual(response.status_code, 410, response.content)
 
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 200)
-        self.assertEqual(
-            SchoolSubscription.objects.get(school=self.school).expires_at,
-            expiry,
-        )
-
-    def test_trial_start_checkout_unlocks_trial_with_bonus_days(self):
-        from datetime import timedelta
-        from django.utils import timezone
+    def test_historical_subscription_row_survives(self):
         SchoolSubscription.objects.create(
             school=self.school,
             plan=self.plan,
-            status=SchoolSubscription.Status.PENDING,
-            starts_at=timezone.now(),
-            expires_at=timezone.now() + timedelta(days=7),
+            status=SchoolSubscription.Status.ACTIVE,
         )
-        with patch(
-            'schools.subscription_views.paystack.initialize_transaction',
-            return_value={
-                'access_code': 'access-code',
-                'authorization_url': 'https://checkout.paystack.com/access-code',
-                'reference': 'gateway-reference',
-            },
-        ):
-            checkout = self.client.post(
-                '/api/v1/schools/subscriptions/checkout/',
-                {'planId': 't100'},
-                format='json',
-            )
-        self.assertEqual(checkout.status_code, 200, checkout.content)
-        payment = SubscriptionPayment.objects.get(reference=checkout.data['reference'])
-        self.assertEqual(payment.purpose, SubscriptionPayment.Purpose.TRIAL_START)
-
-        with patch(
-            'schools.subscription_views.paystack.verify_transaction',
-            side_effect=lambda reference: {
-                'status': 'success',
-                'reference': reference,
-                'amount': 800000,
-                'currency': 'NGN',
-            },
-        ):
-            verify = self.client.get(
-                f'/api/v1/schools/subscriptions/verify/{payment.reference}/',
-            )
-        self.assertEqual(verify.status_code, 200, verify.content)
-        self.assertEqual(verify.data['status'], 'success')
-        subscription = SchoolSubscription.objects.get(school=self.school)
-        self.assertEqual(subscription.status, SchoolSubscription.Status.ACTIVE)
-        # Trial bonus (plan.trial_days=7) free on top of the 30-day period.
-        expected_min = timezone.now() + timedelta(days=7 + 30, seconds=-60)
-        self.assertGreater(subscription.expires_at, expected_min)
-
-    @override_settings(PAYSTACK_SECRET_KEY='test-secret')
-    @patch(
-        'schools.subscription_views.paystack.verify_transaction',
-        side_effect=lambda reference: {
-            'status': 'success',
-            'reference': reference,
-            'amount': 800000,
-            'currency': 'NGN',
-            'channel': 'card',
-        },
-    )
-    def test_duplicate_webhook_does_not_reverify_or_extend_twice(self, verify):
-        """A redelivered charge.success is a no-op: no second gateway verify,
-        no second expiry extension."""
-        payment = self._pending_payment()
-
-        def _signed_post():
-            body = json.dumps({
-                'event': 'charge.success',
-                'data': {
-                    'status': 'success',
-                    'reference': payment.reference,
-                    'amount': 800000,
-                    'currency': 'NGN',
-                },
-            })
-            signature = hmac.new(
-                b'test-secret', body.encode('utf-8'), hashlib.sha512,
-            ).hexdigest()
-            return APIClient().post(
-                '/api/v1/schools/subscriptions/webhook/',
-                body,
-                content_type='application/json',
-                HTTP_X_PAYSTACK_SIGNATURE=signature,
-            )
-
-        first = _signed_post()
-        expiry = SchoolSubscription.objects.get(school=self.school).expires_at
-        second = _signed_post()
-
-        self.assertEqual(first.status_code, 200, first.content)
-        self.assertEqual(second.status_code, 200, second.content)
-        # Only the first delivery paid for a gateway verification round-trip.
-        verify.assert_called_once_with(payment.reference)
-        self.assertEqual(
-            SchoolSubscription.objects.get(school=self.school).expires_at,
-            expiry,
-        )
-
-    def _pending_payment(self):
-        return SubscriptionPayment.objects.create(
-            school=self.school,
-            plan=self.plan,
-            reference='SUB-PAYMENT-FLOW-01',
-            amount_kobo=800000,
+        self.assertTrue(
+            SchoolSubscription.objects.filter(school=self.school).exists(),
         )

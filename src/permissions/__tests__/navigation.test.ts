@@ -25,7 +25,6 @@ const KNOWN_ROUTES = new Set([
   "/ai",
   "/reports",
   "/settings",
-  "/subscription",
   "/audit-logs",
   "/ussd",
   "/sync",
@@ -33,8 +32,6 @@ const KNOWN_ROUTES = new Set([
   "/children",
   "/platform",
   "/platform/schools",
-  "/platform/plans",
-  "/platform/subscriptions",
   "/platform/payments",
   "/platform/activity",
   "/platform/audit",
@@ -83,13 +80,11 @@ describe("hierarchical navigation", () => {
     }
   });
 
-  it("gives the platform manager exactly the 8 SaaS control sections", () => {
+  it("gives the platform manager the SaaS control sections (no retired plans)", () => {
     const platform = NAV_BY_ROLE.platform_manager.map((i) => i.to);
     expect(platform).toEqual([
       "/platform",
       "/platform/schools",
-      "/platform/plans",
-      "/platform/subscriptions",
       "/platform/payments",
       "/platform/activity",
       "/platform/audit",

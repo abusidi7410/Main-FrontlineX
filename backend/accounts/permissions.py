@@ -139,6 +139,7 @@ class IsSuperAdmin(BasePermission):
             request.user
             and request.user.is_authenticated
             and request.user.role == 'platform_manager'
+            and request.user.school_id is None
         )
 
 

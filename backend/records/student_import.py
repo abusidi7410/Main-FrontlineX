@@ -12,8 +12,6 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils.dateparse import parse_date
 
-from schools.models import SchoolSubscription
-
 from .models import Student
 
 
@@ -33,7 +31,6 @@ OPTIONAL_COLUMNS = (
 HEADER_ALIASES = {'class_name': 'class'}
 DEFAULT_MAX_FILE_SIZE = 5 * 1024 * 1024
 DEFAULT_MAX_ROWS = 10000
-DEFAULT_CAPACITY = 100
 ADMISSION_NUMBER_PATTERN = re.compile(r'^[A-Za-z0-9/_-]+$')
 SPACE_PATTERN = re.compile(r'\s+')
 HEADER_SPACE_PATTERN = re.compile(r'\s+')
@@ -392,35 +389,22 @@ def _existing_admission_keys(
 
 
 def _capacity(school_id: int, valid_count: int) -> dict[str, int | bool]:
+    """Enrollment counts for the import review screen.
+
+    Retired plan ceilings: there is no per-plan student cap anymore — imported
+    students enrol freely and consume paid access only when activated. `allowed`
+    stays None (no ceiling) and `exceeds` False so old clients keep rendering.
+    """
     active_students = Student.objects.filter(
         school_id=school_id,
         status=Student.Status.ACTIVE,
     ).count()
-    subscription = (
-        SchoolSubscription.objects
-        .filter(
-            school_id=school_id,
-            status__in=[
-                SchoolSubscription.Status.ACTIVE,
-                SchoolSubscription.Status.TRIAL,
-                SchoolSubscription.Status.PENDING,
-            ],
-        )
-        .select_related('plan')
-        .first()
-    )
-    allowed = (
-        subscription.plan.max_students
-        if subscription and subscription.plan
-        else DEFAULT_CAPACITY
-    )
     after_import = active_students + valid_count
     return {
         'activeStudents': active_students,
-        'allowed': allowed,
+        'allowed': None,
         'afterImport': after_import,
-        # `allowed is None` means the plan has no ceiling, so importing is fine.
-        'exceeds': allowed is not None and after_import > allowed,
+        'exceeds': False,
     }
 
 

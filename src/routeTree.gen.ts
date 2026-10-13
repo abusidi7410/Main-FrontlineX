@@ -35,7 +35,6 @@ import { Route as AppReportsRouteImport } from './routes/_app.reports'
 import { Route as AppResultsRouteImport } from './routes/_app.results'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppStaffRouteImport } from './routes/_app.staff'
-import { Route as AppSubscriptionRouteImport } from './routes/_app.subscription'
 import { Route as AppSyncRouteImport } from './routes/_app.sync'
 import { Route as AppTimetableRouteImport } from './routes/_app.timetable'
 import { Route as AppUssdRouteImport } from './routes/_app.ussd'
@@ -47,11 +46,9 @@ import { Route as AppPlatformActivityRouteImport } from './routes/_app.platform.
 import { Route as AppPlatformAnalyticsRouteImport } from './routes/_app.platform.analytics'
 import { Route as AppPlatformAuditRouteImport } from './routes/_app.platform.audit'
 import { Route as AppPlatformPaymentsRouteImport } from './routes/_app.platform.payments'
-import { Route as AppPlatformPlansRouteImport } from './routes/_app.platform.plans'
 import { Route as AppPlatformSchoolsRouteImport } from './routes/_app.platform.schools'
 import { Route as AppPlatformSecurityRouteImport } from './routes/_app.platform.security'
 import { Route as AppPlatformSettingsRouteImport } from './routes/_app.platform.settings'
-import { Route as AppPlatformSubscriptionsRouteImport } from './routes/_app.platform.subscriptions'
 import { Route as AppPlatformSupportRouteImport } from './routes/_app.platform.support'
 import { Route as AppStaffIndexRouteImport } from './routes/_app.staff.index'
 import { Route as AppStaffStaffIdRouteImport } from './routes/_app.staff.$staffId'
@@ -194,11 +191,6 @@ const AppStaffRoute = AppStaffRouteImport.update({
   path: '/staff',
   getParentRoute: () => AppRoute,
 } as any)
-const AppSubscriptionRoute = AppSubscriptionRouteImport.update({
-  id: '/subscription',
-  path: '/subscription',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppSyncRoute = AppSyncRouteImport.update({
   id: '/sync',
   path: '/sync',
@@ -254,11 +246,6 @@ const AppPlatformPaymentsRoute = AppPlatformPaymentsRouteImport.update({
   path: '/platform/payments',
   getParentRoute: () => AppRoute,
 } as any)
-const AppPlatformPlansRoute = AppPlatformPlansRouteImport.update({
-  id: '/platform/plans',
-  path: '/platform/plans',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppPlatformSchoolsRoute = AppPlatformSchoolsRouteImport.update({
   id: '/platform/schools',
   path: '/platform/schools',
@@ -274,12 +261,6 @@ const AppPlatformSettingsRoute = AppPlatformSettingsRouteImport.update({
   path: '/platform/settings',
   getParentRoute: () => AppRoute,
 } as any)
-const AppPlatformSubscriptionsRoute =
-  AppPlatformSubscriptionsRouteImport.update({
-    id: '/platform/subscriptions',
-    path: '/platform/subscriptions',
-    getParentRoute: () => AppRoute,
-  } as any)
 const AppPlatformSupportRoute = AppPlatformSupportRouteImport.update({
   id: '/platform/support',
   path: '/platform/support',
@@ -369,7 +350,6 @@ export interface FileRoutesByFullPath {
   '/results': typeof AppResultsRoute
   '/settings': typeof AppSettingsRoute
   '/staff': typeof AppStaffRouteWithChildren
-  '/subscription': typeof AppSubscriptionRoute
   '/sync': typeof AppSyncRoute
   '/timetable': typeof AppTimetableRoute
   '/ussd': typeof AppUssdRoute
@@ -379,11 +359,9 @@ export interface FileRoutesByFullPath {
   '/platform/analytics': typeof AppPlatformAnalyticsRoute
   '/platform/audit': typeof AppPlatformAuditRoute
   '/platform/payments': typeof AppPlatformPaymentsRoute
-  '/platform/plans': typeof AppPlatformPlansRoute
   '/platform/schools': typeof AppPlatformSchoolsRoute
   '/platform/security': typeof AppPlatformSecurityRoute
   '/platform/settings': typeof AppPlatformSettingsRoute
-  '/platform/subscriptions': typeof AppPlatformSubscriptionsRoute
   '/platform/support': typeof AppPlatformSupportRoute
   '/staff/$staffId': typeof AppStaffStaffIdRouteWithChildren
   '/staff/new': typeof AppStaffNewRoute
@@ -424,7 +402,6 @@ export interface FileRoutesByTo {
   '/reports': typeof AppReportsRoute
   '/results': typeof AppResultsRoute
   '/settings': typeof AppSettingsRoute
-  '/subscription': typeof AppSubscriptionRoute
   '/sync': typeof AppSyncRoute
   '/timetable': typeof AppTimetableRoute
   '/ussd': typeof AppUssdRoute
@@ -434,11 +411,9 @@ export interface FileRoutesByTo {
   '/platform/analytics': typeof AppPlatformAnalyticsRoute
   '/platform/audit': typeof AppPlatformAuditRoute
   '/platform/payments': typeof AppPlatformPaymentsRoute
-  '/platform/plans': typeof AppPlatformPlansRoute
   '/platform/schools': typeof AppPlatformSchoolsRoute
   '/platform/security': typeof AppPlatformSecurityRoute
   '/platform/settings': typeof AppPlatformSettingsRoute
-  '/platform/subscriptions': typeof AppPlatformSubscriptionsRoute
   '/platform/support': typeof AppPlatformSupportRoute
   '/staff/new': typeof AppStaffNewRoute
   '/students/import': typeof AppStudentsImportRoute
@@ -480,7 +455,6 @@ export interface FileRoutesById {
   '/_app/results': typeof AppResultsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/staff': typeof AppStaffRouteWithChildren
-  '/_app/subscription': typeof AppSubscriptionRoute
   '/_app/sync': typeof AppSyncRoute
   '/_app/timetable': typeof AppTimetableRoute
   '/_app/ussd': typeof AppUssdRoute
@@ -490,11 +464,9 @@ export interface FileRoutesById {
   '/_app/platform/analytics': typeof AppPlatformAnalyticsRoute
   '/_app/platform/audit': typeof AppPlatformAuditRoute
   '/_app/platform/payments': typeof AppPlatformPaymentsRoute
-  '/_app/platform/plans': typeof AppPlatformPlansRoute
   '/_app/platform/schools': typeof AppPlatformSchoolsRoute
   '/_app/platform/security': typeof AppPlatformSecurityRoute
   '/_app/platform/settings': typeof AppPlatformSettingsRoute
-  '/_app/platform/subscriptions': typeof AppPlatformSubscriptionsRoute
   '/_app/platform/support': typeof AppPlatformSupportRoute
   '/_app/staff/$staffId': typeof AppStaffStaffIdRouteWithChildren
   '/_app/staff/new': typeof AppStaffNewRoute
@@ -538,7 +510,6 @@ export interface FileRouteTypes {
     | '/results'
     | '/settings'
     | '/staff'
-    | '/subscription'
     | '/sync'
     | '/timetable'
     | '/ussd'
@@ -548,11 +519,9 @@ export interface FileRouteTypes {
     | '/platform/analytics'
     | '/platform/audit'
     | '/platform/payments'
-    | '/platform/plans'
     | '/platform/schools'
     | '/platform/security'
     | '/platform/settings'
-    | '/platform/subscriptions'
     | '/platform/support'
     | '/staff/$staffId'
     | '/staff/new'
@@ -593,7 +562,6 @@ export interface FileRouteTypes {
     | '/reports'
     | '/results'
     | '/settings'
-    | '/subscription'
     | '/sync'
     | '/timetable'
     | '/ussd'
@@ -603,11 +571,9 @@ export interface FileRouteTypes {
     | '/platform/analytics'
     | '/platform/audit'
     | '/platform/payments'
-    | '/platform/plans'
     | '/platform/schools'
     | '/platform/security'
     | '/platform/settings'
-    | '/platform/subscriptions'
     | '/platform/support'
     | '/staff/new'
     | '/students/import'
@@ -648,7 +614,6 @@ export interface FileRouteTypes {
     | '/_app/results'
     | '/_app/settings'
     | '/_app/staff'
-    | '/_app/subscription'
     | '/_app/sync'
     | '/_app/timetable'
     | '/_app/ussd'
@@ -658,11 +623,9 @@ export interface FileRouteTypes {
     | '/_app/platform/analytics'
     | '/_app/platform/audit'
     | '/_app/platform/payments'
-    | '/_app/platform/plans'
     | '/_app/platform/schools'
     | '/_app/platform/security'
     | '/_app/platform/settings'
-    | '/_app/platform/subscriptions'
     | '/_app/platform/support'
     | '/_app/staff/$staffId'
     | '/_app/staff/new'
@@ -873,13 +836,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppStaffRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/subscription': {
-      id: '/_app/subscription'
-      path: '/subscription'
-      fullPath: '/subscription'
-      preLoaderRoute: typeof AppSubscriptionRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/sync': {
       id: '/_app/sync'
       path: '/sync'
@@ -957,13 +913,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPlatformPaymentsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/platform/plans': {
-      id: '/_app/platform/plans'
-      path: '/platform/plans'
-      fullPath: '/platform/plans'
-      preLoaderRoute: typeof AppPlatformPlansRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/platform/schools': {
       id: '/_app/platform/schools'
       path: '/platform/schools'
@@ -983,13 +932,6 @@ declare module '@tanstack/react-router' {
       path: '/platform/settings'
       fullPath: '/platform/settings'
       preLoaderRoute: typeof AppPlatformSettingsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/platform/subscriptions': {
-      id: '/_app/platform/subscriptions'
-      path: '/platform/subscriptions'
-      fullPath: '/platform/subscriptions'
-      preLoaderRoute: typeof AppPlatformSubscriptionsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/platform/support': {
@@ -1142,7 +1084,6 @@ interface AppRouteChildren {
   AppResultsRoute: typeof AppResultsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppStaffRoute: typeof AppStaffRouteWithChildren
-  AppSubscriptionRoute: typeof AppSubscriptionRoute
   AppSyncRoute: typeof AppSyncRoute
   AppTimetableRoute: typeof AppTimetableRoute
   AppUssdRoute: typeof AppUssdRoute
@@ -1152,11 +1093,9 @@ interface AppRouteChildren {
   AppPlatformAnalyticsRoute: typeof AppPlatformAnalyticsRoute
   AppPlatformAuditRoute: typeof AppPlatformAuditRoute
   AppPlatformPaymentsRoute: typeof AppPlatformPaymentsRoute
-  AppPlatformPlansRoute: typeof AppPlatformPlansRoute
   AppPlatformSchoolsRoute: typeof AppPlatformSchoolsRoute
   AppPlatformSecurityRoute: typeof AppPlatformSecurityRoute
   AppPlatformSettingsRoute: typeof AppPlatformSettingsRoute
-  AppPlatformSubscriptionsRoute: typeof AppPlatformSubscriptionsRoute
   AppPlatformSupportRoute: typeof AppPlatformSupportRoute
   AppStudentsStudentIdRoute: typeof AppStudentsStudentIdRouteWithChildren
   AppStudentsImportRoute: typeof AppStudentsImportRoute
@@ -1186,7 +1125,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppResultsRoute: AppResultsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppStaffRoute: AppStaffRouteWithChildren,
-  AppSubscriptionRoute: AppSubscriptionRoute,
   AppSyncRoute: AppSyncRoute,
   AppTimetableRoute: AppTimetableRoute,
   AppUssdRoute: AppUssdRoute,
@@ -1196,11 +1134,9 @@ const AppRouteChildren: AppRouteChildren = {
   AppPlatformAnalyticsRoute: AppPlatformAnalyticsRoute,
   AppPlatformAuditRoute: AppPlatformAuditRoute,
   AppPlatformPaymentsRoute: AppPlatformPaymentsRoute,
-  AppPlatformPlansRoute: AppPlatformPlansRoute,
   AppPlatformSchoolsRoute: AppPlatformSchoolsRoute,
   AppPlatformSecurityRoute: AppPlatformSecurityRoute,
   AppPlatformSettingsRoute: AppPlatformSettingsRoute,
-  AppPlatformSubscriptionsRoute: AppPlatformSubscriptionsRoute,
   AppPlatformSupportRoute: AppPlatformSupportRoute,
   AppStudentsStudentIdRoute: AppStudentsStudentIdRouteWithChildren,
   AppStudentsImportRoute: AppStudentsImportRoute,

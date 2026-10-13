@@ -1,5 +1,4 @@
 import { useNavigate, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import { ApiRequestError } from "@/api/client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState, type Dispatch, type SetStateAction, type ReactNode } from "react";
@@ -8,7 +7,6 @@ import { z } from "zod";
 import { toast } from "sonner";
 import {
   AlertCircle,
-  Check,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -28,18 +26,11 @@ import {
 } from "@/components/ui/select";
 import { useSession } from "@/auth/session";
 import { HOME_BY_ROLE } from "@/permissions/navigation";
-import { SUBSCRIPTION_TIERS } from "@/constants/plans";
 import { NIGERIAN_STATES, lgasForState } from "@/constants/nigeria";
 import { emailField, ngPhone, passwordField, requiredText } from "@/lib/validation";
 import { getCurrentPosition, geolocationSupported } from "@/lib/geolocation";
-import { dateFmt, naira } from "@/lib/format";
-import {
-  registerSchool,
-  getSubscriptionPlans,
-  startSubscriptionCheckout,
-} from "@/services/school.service";
+import { registerSchool } from "@/services/school.service";
 import { cn } from "@/lib/utils";
-import type { SubscriptionTier } from "@/types";
 
 const loginSchema = z.object({
   identifier: z.string().trim().min(1, { message: "Enter your email address or phone number" }),
@@ -78,50 +69,6 @@ function toSchoolTypeCode(label: string): string {
   }
 }
 
-/**
- * Catalogue rows come in two shapes: the current `{id (code), label, …}`
- * and the legacy `{id (number), name, min_students, monthly_price, …}`.
- * Normalise either into the picker shape so registration prices always
- * render — and check out — against a real catalogue row.
- */
-function toPickerTier(row: unknown): SubscriptionTier | null {
-  if (!row || typeof row !== "object") return null;
-  const record = row as Record<string, unknown>;
-  const code = record["code"];
-  const name = record["name"];
-  const rawId = record["id"];
-  const id =
-    (typeof code === "string" && code) ||
-    (typeof rawId === "string" && rawId) ||
-    (typeof name === "string" && name) ||
-    (typeof rawId === "number" ? String(rawId) : "");
-  if (!id) return null;
-  const label =
-    (typeof record["label"] === "string" && record["label"]) ||
-    SUBSCRIPTION_TIERS.find((t) => t.id === id)?.label ||
-    (typeof name === "string" && name) ||
-    id;
-  const num = (value: unknown, fallback = 0) => {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
-  };
-  const maxRaw = record["maxStudents"] ?? record["max_students"] ?? null;
-  const features = Array.isArray(record["features"])
-    ? record["features"].map((f) => String(f))
-    : [];
-  return {
-    id,
-    label,
-    minStudents: num(record["minStudents"] ?? record["min_students"]),
-    maxStudents: maxRaw === null || maxRaw === undefined ? null : num(maxRaw),
-    monthlyPrice: num(record["monthlyPrice"] ?? record["monthly_price"]),
-    aiCredits: num(record["aiCredits"] ?? record["ai_credits"]),
-    storageGb: num(record["storageGb"] ?? record["storage_gb"] ?? record["storage"]),
-    smsAllowance: num(record["smsAllowance"] ?? record["sms_allowance"]),
-    features,
-  };
-}
-
 const schoolSchema = z.object({
   name: requiredText("School name"),
   type: requiredText("School type"),
@@ -149,9 +96,7 @@ type AdminValues = z.input<typeof adminSchema>;
 const STEPS = [
   "School information",
   "Administrator account",
-  "Choose subscription",
-  "Payment",
-  "Verification",
+  "Review & create",
   "School activated",
 ];
 
@@ -439,16 +384,10 @@ function RegisterContent({
   setStep,
   schoolData,
   adminData,
-  tierId,
-  setTierId,
-  tier,
-  tiers,
   onSchoolSubmit,
   onAdminSubmit,
   submitting,
   createSchool,
-  payBy,
-  pendingActivation,
   onShowLogin,
 }: {
   schoolForm: UseFormReturn<SchoolValues>;
@@ -457,16 +396,10 @@ function RegisterContent({
   setStep: Dispatch<SetStateAction<number>>;
   schoolData: SchoolValues | null;
   adminData: AdminValues | null;
-  tierId: string;
-  setTierId: (id: string) => void;
-  tier: SubscriptionTier;
-  tiers: SubscriptionTier[];
   onSchoolSubmit: (values: SchoolValues) => void;
   onAdminSubmit: (values: AdminValues) => void;
   submitting: boolean;
   createSchool: () => void;
-  payBy: string | null;
-  pendingActivation: boolean;
   onShowLogin: () => void;
 }) {
   const { field: nameField } = useController({ control: schoolForm.control, name: "name" });
@@ -917,7 +850,7 @@ function RegisterContent({
           />
           <div className="flex flex-col items-center gap-2.5 pt-2">
             <button type="submit" className="auth-btn auth-btn-form">
-              Continue to subscription
+              Review details
             </button>
             <button
               type="button"
@@ -931,61 +864,6 @@ function RegisterContent({
       ) : null}
 
       {step === 2 ? (
-        <div className="space-y-4">
-          <Subtext>
-            Choose the tier that matches your current enrolment. You can change tier at any time and
-            grow within it during a billing period.
-          </Subtext>
-          <ul className="space-y-2.5">
-            {tiers.map((option) => {
-              const selected = option.id === tierId;
-              return (
-                <li key={option.id}>
-                  <button
-                    type="button"
-                    onClick={() => setTierId(option.id)}
-                    aria-pressed={selected}
-                    className="auth-tier"
-                  >
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="text-[13px] font-semibold" style={{ color: INK }}>
-                        {option.label}
-                      </span>
-                      {selected ? (
-                        <Check className="size-4" style={{ color: NAVY }} aria-hidden="true" />
-                      ) : null}
-                    </span>
-                    <span
-                      className="mt-0.5 block font-display text-[15px] font-semibold"
-                      style={{ color: NAVY }}
-                    >
-                      {naira(option.monthlyPrice)}
-                      <span className="text-[11px] font-normal" style={{ color: MUTED }}>
-                        {" "}
-                        /month
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="flex flex-col items-center gap-2.5 pt-1">
-            <button type="button" className="auth-btn auth-btn-form" onClick={() => setStep(3)}>
-              Continue
-            </button>
-            <button
-              type="button"
-              className="auth-btn-ghost auth-btn-form"
-              onClick={() => setStep(1)}
-            >
-              Back
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {step === 3 ? (
         <div className="space-y-4">
           <div className="auth-inset border border-[#E2DCCE] p-4">
             <h3
@@ -1007,18 +885,12 @@ function RegisterContent({
                   {adminData?.fullName}
                 </dd>
               </div>
-              <div className="flex justify-between gap-3">
-                <dt style={{ color: MUTED }}>Plan</dt>
-                <dd className="font-medium" style={{ color: INK }}>
-                  {tier.label}
-                </dd>
-              </div>
               <div className="flex justify-between gap-3 border-t border-border pt-2">
                 <dt className="font-medium" style={{ color: INK }}>
-                  Trial
+                  Billing
                 </dt>
                 <dd className="font-display text-base font-semibold" style={{ color: NAVY }}>
-                  Free trial, card required
+                  Prepaid wallet — fund anytime
                 </dd>
               </div>
             </dl>
@@ -1030,10 +902,9 @@ function RegisterContent({
               aria-hidden="true"
             />
             <p>
-              Your school and administrator account are created now. To start the free trial, sign
-              in and add a payment method — checkout covers your first month and the trial days are
-              added free on top. Complete payment
-              {payBy ? ` by ${dateFmt(payBy)}` : ""} to keep your school active.
+              Your school and administrator account are created now. After signing in, fund your
+              school wallet and activate students — access is charged per student per month, and
+              deposits stay available until a real charge occurs.
             </p>
           </div>
           <div className="flex flex-col items-center gap-2.5">
@@ -1058,7 +929,7 @@ function RegisterContent({
             <button
               type="button"
               className="auth-btn-ghost auth-btn-form"
-              onClick={() => setStep(2)}
+              onClick={() => setStep(1)}
             >
               Back
             </button>
@@ -1066,37 +937,19 @@ function RegisterContent({
         </div>
       ) : null}
 
-      {step === 5 ? (
+      {step === 3 ? (
         <div className="px-2 py-8 text-center">
           <CheckCircle2 className="mx-auto size-11" style={{ color: NAVY }} aria-hidden="true" />
-          {pendingActivation ? (
-            <>
-              <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
-                {schoolData?.name} registration received
-              </h3>
-              <p
-                className="mx-auto mt-2 max-w-[320px] text-[13px] leading-relaxed"
-                style={{ color: MUTED }}
-              >
-                Your school is registered and awaiting activation. Sign-in opens as soon as it is
-                activated — contact support if that takes longer than a day.
-              </p>
-            </>
-          ) : (
-            <>
-              <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
-                {schoolData?.name} is ready
-              </h3>
-              <p
-                className="mx-auto mt-2 max-w-[320px] text-[13px] leading-relaxed"
-                style={{ color: MUTED }}
-              >
-                {`Your ${tier.label} plan includes a free trial. Sign in and add a payment method to start it${
-                  payBy ? ` before ${dateFmt(payBy)}` : ""
-                } — checkout covers your first month and the trial days are added free on top.`}
-              </p>
-            </>
-          )}
+          <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
+            {schoolData?.name} is ready
+          </h3>
+          <p
+            className="mx-auto mt-2 max-w-[320px] text-[13px] leading-relaxed"
+            style={{ color: MUTED }}
+          >
+            Sign in, fund your school wallet, and activate students to begin — access is charged per
+            student per month.
+          </p>
           <div className="mt-6 flex flex-col items-center gap-2.5">
             <Link to="/login" className="auth-btn auth-btn-form">
               Sign in to your school
@@ -1126,12 +979,10 @@ function RegisterContent({
 export function AuthScreens({
   initialMode,
   redirectTo,
-  initialTier,
   initialServerError,
 }: {
   initialMode: "login" | "register";
   redirectTo?: string | undefined;
-  initialTier?: string | undefined;
   initialServerError?: string | undefined;
 }) {
   const { signIn, session, status } = useSession();
@@ -1177,36 +1028,7 @@ export function AuthScreens({
   const [step, setStep] = useState(0);
   const [schoolData, setSchoolData] = useState<SchoolValues | null>(null);
   const [adminData, setAdminData] = useState<AdminValues | null>(null);
-  const [tierId, setTierId] = useState(initialTier ?? "t400");
-  const [payBy, setPayBy] = useState<string | null>(null);
-  // True when the server registered the school but runs a backend from
-  // before self-serve checkout existed: the school waits on manual
-  // activation instead of a payment screen.
-  const [pendingActivation, setPendingActivation] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
-  // Prices come from the Platform Manager's catalogue, not from a hardcoded
-  // list: what you price there is what a registering school sees and pays.
-  // The bundled tiers are only a fallback for when the catalogue cannot be
-  // reached (offline) or is empty.
-  const catalogue = useQuery({
-    queryKey: ["publicPlans"],
-    queryFn: getSubscriptionPlans,
-    staleTime: 10 * 60 * 1000,
-    retry: 1,
-  });
-  const catalogueTiers = (catalogue.data ?? [])
-    .map(toPickerTier)
-    .filter((t): t is SubscriptionTier => t !== null);
-  const tiers = catalogueTiers.length ? catalogueTiers : SUBSCRIPTION_TIERS;
-
-  useEffect(() => {
-    if (catalogueTiers.length && !catalogueTiers.some((t) => t.id === tierId)) {
-      const first = catalogueTiers[0];
-      if (first) setTierId(first.id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalogue.data, tierId]);
 
   const schoolForm = useForm<SchoolValues>({
     resolver: zodResolver(schoolSchema),
@@ -1229,59 +1051,21 @@ export function AuthScreens({
     defaultValues: { fullName: "", phone: "", email: "", password: "" },
   });
 
-  const tier =
-    tiers.find((t) => t.id === tierId) ??
-    SUBSCRIPTION_TIERS.find((t) => t.id === tierId) ??
-    tiers[0]!;
-
   const createSchool = async () => {
     if (!schoolData || !adminData) return;
     setSubmitting(true);
     try {
-      const result = await registerSchool({
+      await registerSchool({
         school: {
           ...schoolData,
           type: toSchoolTypeCode(schoolData.type),
           ...(schoolData.website ? { website: schoolData.website } : {}),
         },
         admin: adminData,
-        tierId,
       });
-      // New backend answers {requiresPayment, payBy}; a backend from before
-      // the card-first change answers {trial, trialEndsAt}; the oldest
-      // backends answer only {schoolId} — registered, pending manual
-      // activation, with no self-serve checkout to open. Accept all three so
-      // registration never dead-ends on a mixed deployment.
-      if (result.requiresPayment) {
-        setPayBy(result.payBy);
-        setPendingActivation(false);
-      } else if (result.trial) {
-        setPayBy(result.trialEndsAt ?? null);
-        setPendingActivation(false);
-      } else if (result.schoolId) {
-        setPayBy(null);
-        setPendingActivation(true);
-        setStep(5);
-        return;
-      } else {
-        throw new Error("The server did not set up this school. Please contact support.");
-      }
-      // The admin account was just created with these credentials, so sign in
-      // immediately and open Paystack checkout at once — the payment prompt
-      // appears right away instead of after a manual login. Anything failing
-      // here falls through to the sign-in-and-pay screen (step 5).
-      try {
-        await signIn(adminData.email, adminData.password);
-        const checkout = await startSubscriptionCheckout(tierId);
-        const destination = new URL(checkout.authorizationUrl);
-        if (destination.protocol !== "https:" || destination.hostname !== "checkout.paystack.com") {
-          throw new Error("Paystack returned an invalid checkout address.");
-        }
-        window.location.assign(destination.href);
-        return;
-      } catch {
-        setStep(5);
-      }
+      // No plan, no checkout: the school starts with an empty wallet. The
+      // success screen points at sign-in, then Wallet & Billing.
+      setStep(3);
     } catch (error) {
       // The register endpoint answers 400 with an `errors` object and no
       // top-level message — fold its field errors into the toast so a
@@ -1347,10 +1131,6 @@ export function AuthScreens({
                     setStep={setStep}
                     schoolData={schoolData}
                     adminData={adminData}
-                    tierId={tierId}
-                    setTierId={setTierId}
-                    tier={tier}
-                    tiers={tiers}
                     onSchoolSubmit={(values) => {
                       setSchoolData(values);
                       setStep(1);
@@ -1361,8 +1141,6 @@ export function AuthScreens({
                     }}
                     submitting={submitting}
                     createSchool={() => void createSchool()}
-                    payBy={payBy}
-                    pendingActivation={pendingActivation}
                     onShowLogin={toggle}
                   />
                 </section>
@@ -1446,10 +1224,6 @@ export function AuthScreens({
                   setStep={setStep}
                   schoolData={schoolData}
                   adminData={adminData}
-                  tierId={tierId}
-                  setTierId={setTierId}
-                  tier={tier}
-                  tiers={tiers}
                   onSchoolSubmit={(values) => {
                     setSchoolData(values);
                     setStep(1);
@@ -1460,8 +1234,6 @@ export function AuthScreens({
                   }}
                   submitting={submitting}
                   createSchool={() => void createSchool()}
-                  payBy={payBy}
-                  pendingActivation={pendingActivation}
                   onShowLogin={toggle}
                 />
               </div>

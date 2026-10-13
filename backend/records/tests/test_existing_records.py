@@ -17,7 +17,7 @@ from records.models import (
     StaffMember,
     Student,
 )
-from schools.models import School, SchoolSubscription, SubscriptionPlan
+from schools.models import School
 
 
 class AttendanceFinanceTests(TestCase):
@@ -529,20 +529,18 @@ class StudentImportTests(AttendanceFinanceTests):
         missing_header = self._analyse('first_name,last_name\nNia,Okoro\n')
         self.assertEqual(missing_header.status_code, 400)
 
-    def test_import_rejects_capacity_overflow_without_writes(self):
+    def test_import_has_no_plan_ceiling(self):
         self._auth(self.admin)
-        plan = SubscriptionPlan.objects.create(
-            name='small', min_students=1, max_students=2, monthly_price=100,
-        )
-        SchoolSubscription.objects.create(
-            school=self.school, plan=plan, status=SchoolSubscription.Status.ACTIVE,
-        )
         response = self._import(
             'first_name,last_name,admission_number,class,guardian_phone\n'
             'Nia,Okoro,ADM-003,JSS 1,08012345678\n',
         )
-        self.assertEqual(response.status_code, 400, response.content)
-        self.assertFalse(Student.objects.filter(admission_number='ADM-003').exists())
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(
+            Student.objects.filter(
+                school=self.school, admission_number='ADM-003',
+            ).exists(),
+        )
 
     @override_settings(STUDENT_IMPORT_MAX_ROWS=1)
     def test_analysis_enforces_row_limit(self):

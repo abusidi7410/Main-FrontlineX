@@ -131,12 +131,12 @@ function ImportStudentsPage() {
               >
                 <AlertTriangle className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden="true" />
                 <p className="text-sm">
-                  This import would take you to {numberFmt(analysis.capacity.afterImport)} students,
-                  above your plan limit of {numberFmt(analysis.capacity.allowed)}. Upgrade your plan
-                  to continue.{" "}
-                  <Link to="/subscription" className="font-medium text-primary hover:underline">
-                    View plans
-                  </Link>
+                  This import would take you to {numberFmt(analysis.capacity.afterImport)} students.
+                  Imported students use paid access only once activated — fund your{" "}
+                  <Link to="/wallet" className="font-medium text-primary hover:underline">
+                    wallet
+                  </Link>{" "}
+                  to cover them.
                 </p>
               </div>
             ) : null}

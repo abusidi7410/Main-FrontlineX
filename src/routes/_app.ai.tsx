@@ -1,14 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/common/page-header";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuthenticatedSession } from "@/auth/session";
-import { numberFmt } from "@/lib/format";
 import { AI_TOOLS, askAi, type AiMessage } from "@/services/ai.service";
-import { getSubscription } from "@/services/school.service";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/ai")({
@@ -33,7 +31,6 @@ export const Route = createFileRoute("/_app/ai")({
 
 function AiPage() {
   const { user, can } = useAuthenticatedSession();
-  const subscription = useQuery({ queryKey: ["subscription"], queryFn: getSubscription });
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<AiMessage[]>([]);
 
@@ -59,13 +56,6 @@ function AiPage() {
         title="AI assistant"
         description="Ask about your school in plain language. The assistant can only use data your role is permitted to see."
       />
-
-      {subscription.data ? (
-        <p className="text-sm text-muted-foreground">
-          AI credits used this month: {numberFmt(subscription.data.aiCreditsUsed)} of{" "}
-          {numberFmt(subscription.data.aiCreditsTotal)}
-        </p>
-      ) : null}
 
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {tools.map((tool) => (

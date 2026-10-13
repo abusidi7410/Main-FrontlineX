@@ -808,10 +808,6 @@ class StudentImportView(APIView):
                     request.user.school_id,
                     lock_existing=True,
                 )
-                if analysis.capacity['exceeds']:
-                    raise ValidationError({
-                        'capacity': 'This import would exceed the school student limit.',
-                    })
                 if not analysis.valid_rows:
                     raise ValidationError({
                         'file': 'The CSV file does not contain any valid student rows.',
@@ -1692,35 +1688,20 @@ class PaymentCancelView(APIView):
 # ── Subscription ───────────────────────────────────────────────────────────
 
 class SubscriptionView(APIView):
+    """Retired: fixed subscriptions are replaced by the prepaid wallet."""
+
     permission_classes = [IsAuthenticated, HasSchool]
 
     def get(self, request):
-        school_id = request.user.school_id
-        school = get_object_or_404(School, id=school_id)
-        active_students = Student.objects.filter(school_id=school_id, status=Student.Status.ACTIVE).count()
-        subscription = SchoolSubscription.objects.filter(
-            school_id=school_id, status__in=['active', 'trial', 'pending'],
-        ).first()
-        plan = subscription.plan if subscription and subscription.plan_id else None
-
-        max_students = plan.max_students if plan else 100
-        tier_id = plan.name if plan else 't100'
-        growth = max((max_students - active_students) if max_students else 0, 0)
-
-        return Response({
-            'tierId': tier_id,
-            'status': school.is_active and 'active' or 'pending_payment',
-            # Raw subscription state so the client can tell "no payment yet"
-            # (pending) from a live plan without guessing from dates.
-            'subscriptionStatus': subscription.status if subscription else 'none',
-            'activeStudents': active_students,
-            'growthAllowance': growth,
-            'renewalDate': (subscription.expires_at.isoformat() if subscription and subscription.expires_at else ''),
-            'aiCreditsUsed': 0,
-            'aiCreditsTotal': plan.ai_credits if plan else 500,
-            'storageUsedGb': 0,
-            'paymentMethod': None,
-        })
+        return Response(
+            {
+                'detail': (
+                    'Fixed subscriptions are retired. See Wallet & Billing '
+                    'for balance, student access and transaction history.'
+                ),
+            },
+            status=status.HTTP_410_GONE,
+        )
 
 
 # ── Results ───────────────────────────────────────────────────────────────
@@ -2284,6 +2265,46 @@ class ResultSheetCreateView(APIView):
 
 # ── Attendance ─────────────────────────────────────────────────────────────
 
+def _roster_billing_quote(school, rows, day) -> dict:
+    """Pre-submit wallet quote for the register screen (3 queries, bulk).
+
+    Tells the teacher BEFORE submit how many roster students still need paid
+    access, how many the wallet can cover, and the exact top-up shortfall —
+    so partial funds are never a surprise.
+    """
+    from billing import services as wallet_billing
+    empty = {
+        'balanceKobo': 0, 'priceKobo': 0, 'entitledCount': 0,
+        'unpaidCount': 0, 'coverableCount': 0, 'shortfallKobo': 0,
+    }
+    try:
+        pricing = wallet_billing.get_pricing()
+    except Exception:  # noqa: BLE001 - quote must never break the roster
+        return empty
+    if not pricing.enforce_student_access or not rows:
+        return empty
+    try:
+        student_ids = set(Student.objects.filter(
+            school_id=school.id,
+            public_id__in=[row.get('id') for row in rows],
+        ).values_list('id', flat=True))
+        covered = wallet_billing.students_with_access(student_ids, day)
+        wallet = wallet_billing.get_wallet(school)
+        unpaid = len(student_ids) - len(covered & student_ids)
+        price = pricing.student_price_kobo
+        coverable = min(unpaid, wallet.balance_kobo // price) if price else unpaid
+        return {
+            'balanceKobo': wallet.balance_kobo,
+            'priceKobo': price,
+            'entitledCount': len(covered & student_ids),
+            'unpaidCount': unpaid,
+            'coverableCount': coverable,
+            'shortfallKobo': max(0, unpaid * price - wallet.balance_kobo),
+        }
+    except Exception:  # noqa: BLE001 - quote must never break the roster
+        return empty
+
+
 class AttendanceRosterView(APIView):
     """The class register for one school day, resolved from Enrollment.
 
@@ -2355,6 +2376,7 @@ class AttendanceRosterView(APIView):
             # Whether THIS caller may submit, so the client shows the register as
             # read-only instead of offering a Save that the server will reject.
             'canSubmit': school_class is not None and can_submit,
+            'billing': _roster_billing_quote(school, rows, day),
         })
 
 
@@ -2415,6 +2437,12 @@ class AttendanceSubmitView(APIView):
             'skipped': result.skipped,
             'byStatus': result.by_status,
             'date': data['date'].isoformat(),
+            'billing': {
+                'activated': result.activated,
+                'skippedUnfunded': result.skipped_unfunded,
+                'chargedKobo': result.charged_kobo,
+                'shortfallKobo': result.shortfall_kobo,
+            },
         }, status=status.HTTP_201_CREATED)
 
 

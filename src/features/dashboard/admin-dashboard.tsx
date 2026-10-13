@@ -7,18 +7,16 @@ import { AttentionList } from "@/features/dashboard/attention-list";
 import { QuickActions } from "@/features/dashboard/quick-actions";
 import { SetupChecklist } from "@/features/dashboard/setup-checklist";
 import { useAuthenticatedSession } from "@/auth/session";
-import { tierById } from "@/constants/plans";
-import { compactNaira, dateFmt, greeting, numberFmt } from "@/lib/format";
+import { compactNaira, greeting, numberFmt } from "@/lib/format";
 import { getAttendanceOverview } from "@/services/attendance.service";
 import { getFinanceSummary } from "@/services/finance.service";
-import { getStaff, getResultSheets, getSubscription } from "@/services/school.service";
+import { getStaff, getResultSheets } from "@/services/school.service";
 import { getWallet } from "@/services/wallet.service";
 import { listStudents } from "@/services/students.service";
 
 export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
   const { user, school } = useAuthenticatedSession();
 
-  const subscription = useQuery({ queryKey: ["subscription"], queryFn: getSubscription });
   const wallet = useQuery({ queryKey: ["wallet"], queryFn: getWallet });
   const students = useQuery({
     queryKey: ["students", { pageSize: 1 }],
@@ -32,23 +30,20 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
     queryFn: () => getAttendanceOverview(),
   });
 
-  if (subscription.isError || students.isError || finance.isError) {
+  if (wallet.isError || students.isError || finance.isError) {
     return (
       <ErrorState
-        onRetry={() =>
-          void Promise.all([subscription.refetch(), students.refetch(), finance.refetch()])
-        }
+        onRetry={() => void Promise.all([wallet.refetch(), students.refetch(), finance.refetch()])}
       />
     );
   }
 
   const loading =
-    subscription.isPending || students.isPending || finance.isPending || attendance.isPending;
+    wallet.isPending || students.isPending || finance.isPending || attendance.isPending;
   const outstanding = finance.data?.outstanding ?? 0;
   const awaitingApproval =
     results.data?.filter((r) => r.status === "submitted" || r.status === "under_review").length ??
     0;
-  const tier = subscription.data ? tierById(subscription.data.tierId) : null;
   const attendanceSummary = attendance.data
     ? !attendance.data.isSchoolDay
       ? { value: "—", hint: "No register expected today" }
@@ -86,11 +81,11 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
           tone: "danger" as const,
         }
       : null,
-    subscription.data
+    wallet.data && wallet.data.balance < wallet.data.studentPrice
       ? {
-          id: "sub",
-          label: `Subscription renews on ${dateFmt(subscription.data.renewalDate)}`,
-          to: "/subscription",
+          id: "wallet",
+          label: `Wallet balance ${compactNaira(wallet.data.balance)} is below one student's monthly access`,
+          to: "/wallet",
         }
       : null,
   ].filter(Boolean) as { id: string; label: string; to: string }[];
@@ -114,7 +109,7 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
           <StatCard
             label="Active students"
             value={numberFmt(students.data?.count ?? 0)}
-            hint={tier ? `Tier: ${tier.label}` : ""}
+            hint="Enrolled this session"
           />
           <StatCard
             label="Staff"
@@ -169,27 +164,6 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
         }
       />
 
-      {subscription.data && tier ? (
-        <section className="fn-panel p-5" aria-labelledby="plan-heading">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 id="plan-heading" className="font-semibold">
-                Subscription and AI usage
-              </h2>
-              <p className="mt-1 text-muted-foreground">
-                {numberFmt(subscription.data.activeStudents)} active students · growth allowance{" "}
-                {subscription.data.growthAllowance} · AI credits{" "}
-                {numberFmt(subscription.data.aiCreditsUsed)} /{" "}
-                {numberFmt(subscription.data.aiCreditsTotal)}
-              </p>
-            </div>
-            <Button asChild variant="outline" size="lg" className="shrink-0">
-              <Link to="/subscription">Manage subscription</Link>
-            </Button>
-          </div>
-        </section>
-      ) : null}
-
       {wallet.data ? (
         <section className="fn-panel p-5" aria-labelledby="wallet-heading">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -198,9 +172,8 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
                 Wallet balance: {compactNaira(wallet.data.balance)}
               </h2>
               <p className="mt-1 text-muted-foreground">
-                Student access {compactNaira(wallet.data.studentPrice)} per student per month ·
-                SME alert {compactNaira(wallet.data.smsPrice)} each. Deposits stay available
-                until a real charge occurs.
+                Student access {compactNaira(wallet.data.studentPrice)} per student per month.
+                Deposits stay available until a real charge occurs.
               </p>
             </div>
             <Button asChild variant="outline" size="lg" className="shrink-0">

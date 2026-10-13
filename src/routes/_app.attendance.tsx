@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -27,9 +27,10 @@ import {
   submitAttendance,
   checkInStaff,
   getStaffAttendance,
+  type SubmitAttendanceBilling,
 } from "@/services/attendance.service";
 import { getAcademicStructure } from "@/services/academics.service";
-import { schoolToday } from "@/lib/format";
+import { naira, schoolToday } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 import { LocationMap } from "@/components/common/location-map";
@@ -101,13 +102,7 @@ const CHECK_IN_STATUS: Record<StaffAttendanceStatus, { label: string; className:
  * reading — the staff record and school are resolved from the caller's session
  * on the server, so this card cannot check anyone else in.
  */
-function StaffCheckInCard({
-  staffId,
-  school,
-}: {
-  staffId: string | null;
-  school: School | null;
-}) {
+function StaffCheckInCard({ staffId, school }: { staffId: string | null; school: School | null }) {
   const online = useOnlineStatus();
   const queryClient = useQueryClient();
   const date = today();
@@ -163,7 +158,8 @@ function StaffCheckInCard({
         <div>
           <h2 className="font-medium">My check-in</h2>
           <p className="text-xs text-muted-foreground">
-            Confirm you're on campus today{school?.attendanceRadius ? ` (within ${school.attendanceRadius} m)` : ""}.
+            Confirm you're on campus today
+            {school?.attendanceRadius ? ` (within ${school.attendanceRadius} m)` : ""}.
           </p>
         </div>
         <Button
@@ -264,6 +260,7 @@ function AttendancePage() {
   const [date, setDate] = useState(today);
   const [marks, setMarks] = useState<Record<string, AttendanceStatus>>({});
   const [search, setSearch] = useState("");
+  const [billingReport, setBillingReport] = useState<SubmitAttendanceBilling | null>(null);
 
   // A teacher opens the register on their own designated class instead of the
   // first class in the school; everyone else keeps the existing default. The
@@ -302,6 +299,7 @@ function AttendancePage() {
   // student to Present, so a teacher only ever touches the exceptions.
   useEffect(() => {
     if (!roster.data) return;
+    setBillingReport(null);
     if (roster.data.taken) {
       setMarks(roster.data.existing);
     } else {
@@ -337,8 +335,8 @@ function AttendancePage() {
         return { queued: true };
       }
       try {
-        await submitAttendance(submission);
-        return { queued: false };
+        const response = await submitAttendance(submission);
+        return { queued: false, billing: response.billing };
       } catch (error) {
         // A 409 means someone else already took this register. Queueing it would
         // only produce a second failure on sync, so surface it instead.
@@ -366,7 +364,16 @@ function AttendancePage() {
       if (result.queued) {
         toast.success("Saved on this device. It will sync automatically when you're back online.");
       } else {
-        toast.success(`Attendance submitted for ${className}${arm ? ` ${arm}` : ""}.`);
+        const billing: SubmitAttendanceBilling | undefined =
+          "billing" in result ? result.billing : undefined;
+        setBillingReport(billing ?? null);
+        if (billing && billing.skippedUnfunded.length > 0) {
+          toast.warning(
+            `Saved ${students.length - billing.skippedUnfunded.length} — ${billing.skippedUnfunded.length} need wallet top-up (${naira(billing.shortfallKobo / 100)} short).`,
+          );
+        } else {
+          toast.success(`Attendance submitted for ${className}${arm ? ` ${arm}` : ""}.`);
+        }
       }
       void roster.refetch();
       // Attendance feeds the students list percentage, the overview, and the
@@ -518,6 +525,55 @@ function AttendancePage() {
             Attendance for {className}
             {arm ? ` ${arm}` : ""} on {date} has already been recorded and is shown below. It can
             only be taken once per class per day.
+          </div>
+        ) : null}
+
+        {!locked && roster.data?.billing && roster.data.billing.unpaidCount > 0 ? (
+          <div
+            role="status"
+            className="rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm"
+          >
+            Wallet {naira(roster.data.billing.balanceKobo / 100)} covers{" "}
+            {roster.data.billing.coverableCount} of {roster.data.billing.unpaidCount} students still
+            needing access this month ({naira(roster.data.billing.priceKobo / 100)} each).
+            Submitting now marks the covered students; the rest are reported, not marked.{" "}
+            {roster.data.billing.shortfallKobo > 0 ? (
+              <>
+                Fund {naira(roster.data.billing.shortfallKobo / 100)} more to cover the class —{" "}
+                <Link to="/wallet" className="font-medium underline">
+                  Fund wallet
+                </Link>
+                .
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
+        {billingReport && billingReport.skippedUnfunded.length > 0 ? (
+          <div
+            role="status"
+            className="rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm"
+          >
+            <p>
+              Saved {billingReport.activated.length} newly activated ·{" "}
+              {billingReport.skippedUnfunded.length} still need top-up (
+              {naira(billingReport.shortfallKobo / 100)} short). Charged{" "}
+              {naira(billingReport.chargedKobo / 100)}.
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Not marked:{" "}
+              {billingReport.skippedUnfunded
+                .slice(0, 10)
+                .map((s) => s.studentName || s.admissionNumber)
+                .join(", ")}
+              {billingReport.skippedUnfunded.length > 10
+                ? ` and ${billingReport.skippedUnfunded.length - 10} more`
+                : ""}
+              .{" "}
+              <Link to="/wallet" className="font-medium underline">
+                Fund wallet
+              </Link>
+            </p>
           </div>
         ) : null}
 

@@ -18,8 +18,6 @@ export const ROLE_LABELS: Record<Role, string> = {
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   platform_manager: [
     "platform.manage",
-    "subscription.read",
-    "subscription.write",
     "audit.read",
     "reports.read",
     "ai.platform",
@@ -59,8 +57,6 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "communication.read",
     "communication.write",
     "reports.read",
-    "subscription.read",
-    "subscription.write",
     "settings.read",
     "settings.write",
     "audit.read",

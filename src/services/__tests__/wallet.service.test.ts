@@ -61,12 +61,12 @@ describe("wallet service routes", () => {
     expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(1);
   });
 
-  it("lists student access with an optional search", async () => {
+  it("lists student access with search and pagination", async () => {
     vi.mocked(apiFetch).mockResolvedValue({ results: [], count: 0 });
     await listStudentAccess("ada");
     const [path, options] = vi.mocked(apiFetch).mock.calls[0] as [string, { query: unknown }];
     expect(path).toBe("/billing/students");
-    expect(options.query).toEqual({ search: "ada" });
+    expect(options.query).toEqual({ search: "ada", page: 1, pageSize: 20 });
   });
 
   it("sends an alert with a single POST carrying the idempotency reference", async () => {

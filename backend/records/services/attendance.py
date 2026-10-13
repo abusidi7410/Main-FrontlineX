@@ -48,6 +48,20 @@ class RegisterResult:
     skipped: int = 0
     record_ids: list[int] = field(default_factory=list)
     by_status: dict[str, int] = field(default_factory=dict)
+    # Wallet billing breakdown (partial-funds honesty): students charged by
+    # this submit, students skipped for lack of funds, and the money figures.
+    activated: list[dict] = field(default_factory=list)
+    skipped_unfunded: list[dict] = field(default_factory=list)
+    charged_kobo: int = 0
+    shortfall_kobo: int = 0
+
+
+def _student_label(student) -> dict:
+    return {
+        'studentId': str(student.public_id),
+        'studentName': f'{student.first_name} {student.last_name}'.strip(),
+        'admissionNumber': student.admission_number or '',
+    }
 
 
 # ── School calendar ─────────────────────────────────────────────────────────
@@ -80,15 +94,14 @@ def class_teacher_for(
     return assignments.select_related('staff').first()
 
 
-def can_submit_for(user, school: School, class_obj: SchoolClass) -> bool:
+def can_submit_for(user, school: School, class_obj: SchoolClass, session=None) -> bool:
     """Whether `user` may submit `class_obj`'s register.
 
     School admins always may (they are the override/emergency path). A teacher
     may only submit for classes they are the designated class teacher of — being
     a subject teacher for the class is not enough (spec §attendance).
 
-    This issues its own query. Screens that already hold the `ClassTeacherAssignment`
-    should compare against that row instead, rather than paying twice.
+    Pass `session` when the caller already holds it to avoid re-querying.
     """
     if user.role == 'school_admin':
         return True
@@ -97,16 +110,18 @@ def can_submit_for(user, school: School, class_obj: SchoolClass) -> bool:
     staff = getattr(user, 'staff_profile', None)
     if staff is None or staff.status != 'active':
         return False
+    if session is None:
+        session = academic_service.current_session(school)
     return ClassTeacherAssignment.objects.filter(
         school=school,
         class_obj=class_obj,
         staff=staff,
-        academic_session=academic_service.current_session(school),
+        academic_session=session,
     ).exists()
 
 
-def require_can_submit(user, school: School, class_obj: SchoolClass) -> None:
-    if not can_submit_for(user, school, class_obj):
+def require_can_submit(user, school: School, class_obj: SchoolClass, session=None) -> None:
+    if not can_submit_for(user, school, class_obj, session):
         raise PermissionDenied(
             'Only this class\'s designated class teacher can submit its attendance register.'
         )
@@ -209,8 +224,8 @@ def existing_marks(
         school=school, date=day,
     ).filter(
         Q(class_obj=class_obj) | Q(class_obj__isnull=True, class_name=class_obj.name)
-    ).select_related('student')
-    return {str(record.student.public_id): record.status for record in queryset}
+    ).values('student__public_id', 'status')
+    return {str(row['student__public_id']): row['status'] for row in queryset}
 
 
 # ── Submission ──────────────────────────────────────────────────────────────
@@ -232,7 +247,10 @@ def submit_register(
     class. A register that already exists raises `DuplicateRegister` rather than
     creating a second one.
     """
-    require_can_submit(user, school, class_obj)
+    # One session lookup per submit: thread it into permission + roster so the
+    # same queries are not paid three times.
+    session = academic_service.current_session(school)
+    require_can_submit(user, school, class_obj, session)
     if not is_school_day(school, day):
         raise ValidationError({
             'date': f'{day.isoformat()} is not a school day for this school.',
@@ -251,7 +269,7 @@ def submit_register(
     roster = {
         str(enrollment.student.public_id): enrollment.student_id
         for enrollment in _active_enrollments(
-            school, class_obj, section, academic_service.current_session(school),
+            school, class_obj, section, session,
         )
     }
     if not roster:
@@ -264,30 +282,37 @@ def submit_register(
     valid_statuses = set(AttendanceRecord.Status.values)
     to_create = []
 
-    # Paid feature: first real use of a student in a billing period auto-debits
-    # the wallet once via ensure_student_access. Students whose wallet cannot
-    # cover the charge are skipped (and counted) so one broke student never
-    # blocks the whole class register.
+    # Paid feature: first real use of students in a billing period auto-debits
+    # the wallet once each, in roster order (what the teacher sees), via one
+    # batched charge. Students the wallet cannot cover are skipped and NAMED
+    # in the result — never silent — so the register stays truthful without
+    # blocking the covered students.
     from billing import services as wallet_billing
     allowed_ids = set(wallet_billing.students_with_access(set(roster.values()), day))
     if wallet_billing.get_pricing().enforce_student_access:
         from records.models import Student as _Student
         missing_ids = set(roster.values()) - allowed_ids
         if missing_ids:
+            # Roster order = the order the teacher sees on screen, so partial
+            # funds always cover the top of the visible list first.
+            roster_position = {sid: i for i, sid in enumerate(roster.values())}
+            ordered_missing = sorted(missing_ids, key=lambda sid: roster_position.get(sid, 0))
             students_by_id = {
                 s.id: s for s in _Student.objects.filter(
                     id__in=list(missing_ids), school=school,
                 )
             }
-            for sid in sorted(missing_ids):
-                student = students_by_id.get(sid)
-                if student is None:
-                    continue
-                try:
-                    wallet_billing.ensure_student_access(school, student, actor=user, on=day)
-                except Exception:  # noqa: BLE001 - broke/wrong-school students skip, never block register
-                    continue
-                allowed_ids.add(sid)
+            ordered = [students_by_id[sid] for sid in ordered_missing if sid in students_by_id]
+            batch = wallet_billing.ensure_many_student_access(
+                school, ordered, actor=user, on=day,
+            )
+            for student in batch['activated']:
+                allowed_ids.add(student.id)
+            pricing = wallet_billing.get_pricing()
+            result.activated = [_student_label(s) for s in batch['activated']]
+            result.skipped_unfunded = [_student_label(s) for s in batch['unfunded']]
+            result.charged_kobo = len(batch['activated']) * pricing.student_price_kobo
+            result.shortfall_kobo = len(batch['unfunded']) * pricing.student_price_kobo
 
     for item in records:
         raw_id = item.get('studentId')

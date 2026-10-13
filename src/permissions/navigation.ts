@@ -99,7 +99,7 @@ const SCHOOL_ADMIN: NavItem[] = [
     group: "Manage",
     children: [
       { label: "School Settings", to: "/settings" },
-      { label: "Subscription", to: "/subscription" },
+      { label: "Wallet & Billing", to: "/wallet" },
       { label: "Audit Logs", to: "/audit-logs" },
       { label: "USSD", to: "/ussd" },
     ],
@@ -314,20 +314,6 @@ const STUDENT: NavItem[] = [
 const PLATFORM: NavItem[] = [
   { label: "Overview", to: "/platform", icon: "home", group: "Platform", mobile: true },
   { label: "Schools", to: "/platform/schools", icon: "building", group: "Platform", mobile: true },
-  {
-    label: "Subscription Plans",
-    to: "/platform/plans",
-    icon: "receipt",
-    group: "Revenue",
-    mobile: true,
-  },
-  {
-    label: "Subscriptions",
-    to: "/platform/subscriptions",
-    icon: "creditCard",
-    group: "Revenue",
-    mobile: true,
-  },
   { label: "Payments & Revenue", to: "/platform/payments", icon: "wallet", group: "Revenue" },
   { label: "Activity", to: "/platform/activity", icon: "chart", group: "Operations" },
   {

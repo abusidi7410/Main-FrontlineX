@@ -451,65 +451,28 @@ class MessagingView(APIView):
         })
 
     def patch(self, request):
-        if request.user.role != 'school_admin':
-            return Response(
-                {'detail': 'Only the school administrator can change this setting.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        school = request.user.school
-        messaging, _ = SchoolMessaging.objects.get_or_create(school=school)
-        if 'schoolEnabled' in request.data:
-            messaging.school_enabled = bool(request.data.get('schoolEnabled'))
-            messaging.save(update_fields=['school_enabled', 'updated_at'])
-            audit(
-                request, 'messaging.school_setting', school.name,
-                f"SME alerts for the school switched {'on' if messaging.school_enabled else 'off'}.",
-                entity='school', entity_id=str(school.pk),
-            )
-        return Response({
-            'schoolEnabled': messaging.school_enabled,
-            'platformBlocked': messaging.platform_blocked,
-            **services.alert_gate(school),
-        })
+        return Response(
+            {'detail': 'SME messaging settings are disabled on this platform.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
 
 class AlertSendView(APIView):
-    """POST /billing/alerts/ {recipient, message, reference?} — bill and send."""
+    """POST /billing/alerts/ — retired: SME messaging is disabled platform-wide.
+
+    Kept as a 403 (not deleted) so old clients fail loudly instead of
+    silently. History stays readable via AlertListView; the ledger is untouched.
+    """
 
     permission_classes = [
         IsAuthenticated, HasSchool, require_permissions('communication.write'),
     ]
 
     def post(self, request):
-        school = request.user.school
-        try:
-            alert, created = services.request_alert(
-                school,
-                recipient=request.data.get('recipient', ''),
-                message=request.data.get('message', ''),
-                reference=(request.data.get('reference') or '').strip(),
-                actor=request.user,
-            )
-        except services.AlertBlocked as exc:
-            return Response(
-                {'detail': str(exc), 'reasonCode': exc.code},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        except services.InsufficientFunds as exc:
-            return Response(
-                {
-                    'detail': str(exc),
-                    'requiredKobo': exc.required_kobo,
-                    'availableKobo': exc.available_kobo,
-                },
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
-        audit(
-            request, 'messaging.alert.sent', school.name,
-            f'SME alert to {alert.recipient} ({alert.reference}).',
-            entity='sms_alert', entity_id=str(alert.pk),
+        return Response(
+            {'detail': 'SME messaging is disabled on this platform.', 'reasonCode': 'sms_disabled'},
+            status=status.HTTP_403_FORBIDDEN,
         )
-        return Response(SmsAlertSerializer(alert).data, status=status.HTTP_201_CREATED)
 
 
 class AlertListView(APIView):
