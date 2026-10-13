@@ -122,8 +122,16 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
       errors?: Record<string, string>;
       fieldErrors?: Record<string, string>;
     } | null;
+    const message = payload?.detail ?? payload?.message;
     const error = new ApiRequestError(
-      payload?.detail ?? payload?.message ?? FRIENDLY_ERROR,
+      // A non-JSON error page (proxy 502, crashed backend) carries no message:
+      // include the status so the report says *where* it failed, not just
+      // "something went wrong".
+      typeof message === "string" && message.trim() !== ""
+        ? message
+        : response.status >= 500
+          ? `The server failed to answer (HTTP ${response.status}). Please try again in a minute.`
+          : FRIENDLY_ERROR,
       response.status,
       undefined,
       payload?.fieldErrors ?? payload?.errors,
