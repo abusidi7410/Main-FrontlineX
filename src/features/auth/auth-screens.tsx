@@ -93,12 +93,7 @@ const adminSchema = z.object({
 type SchoolValues = z.input<typeof schoolSchema>;
 type AdminValues = z.input<typeof adminSchema>;
 
-const STEPS = [
-  "School information",
-  "Administrator account",
-  "Review & create",
-  "School activated",
-];
+const STEPS = ["School information", "Administrator account", "School activated"];
 
 const NAVY = "hsl(var(--primary))";
 const INK = "hsl(var(--foreground))";
@@ -387,7 +382,6 @@ function RegisterContent({
   onSchoolSubmit,
   onAdminSubmit,
   submitting,
-  createSchool,
   onShowLogin,
 }: {
   schoolForm: UseFormReturn<SchoolValues>;
@@ -399,7 +393,6 @@ function RegisterContent({
   onSchoolSubmit: (values: SchoolValues) => void;
   onAdminSubmit: (values: AdminValues) => void;
   submitting: boolean;
-  createSchool: () => void;
   onShowLogin: () => void;
 }) {
   const { field: nameField } = useController({ control: schoolForm.control, name: "name" });
@@ -849,8 +842,20 @@ function RegisterContent({
             field={adminPasswordField}
           />
           <div className="flex flex-col items-center gap-2.5 pt-2">
-            <button type="submit" className="auth-btn auth-btn-form">
-              Review details
+            <button
+              type="submit"
+              className="auth-btn auth-btn-form"
+              disabled={submitting}
+              aria-busy={submitting}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  Creating your school…
+                </>
+              ) : (
+                "Create school"
+              )}
             </button>
             <button
               type="button"
@@ -864,80 +869,6 @@ function RegisterContent({
       ) : null}
 
       {step === 2 ? (
-        <div className="space-y-4">
-          <div className="auth-inset border border-[#E2DCCE] p-4">
-            <h3
-              className="text-[12px] font-semibold uppercase tracking-[0.12em]"
-              style={{ color: NAVY }}
-            >
-              Order summary
-            </h3>
-            <dl className="mt-3 space-y-2 text-[13px]">
-              <div className="flex justify-between gap-3">
-                <dt style={{ color: MUTED }}>School</dt>
-                <dd className="truncate font-medium" style={{ color: INK }}>
-                  {schoolData?.name}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt style={{ color: MUTED }}>Administrator</dt>
-                <dd className="truncate font-medium" style={{ color: INK }}>
-                  {adminData?.fullName}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-3 border-t border-border pt-2">
-                <dt className="font-medium" style={{ color: INK }}>
-                  Billing
-                </dt>
-                <dd className="font-display text-base font-semibold" style={{ color: NAVY }}>
-                  Prepaid wallet — fund anytime
-                </dd>
-              </div>
-            </dl>
-          </div>
-          <div className="auth-inset flex gap-3 border border-border p-4 text-[12.5px] leading-relaxed text-muted-foreground">
-            <ShieldCheck
-              className="mt-0.5 size-4 shrink-0"
-              style={{ color: NAVY }}
-              aria-hidden="true"
-            />
-            <p>
-              Your school and administrator account are created now. After signing in, fund your
-              school wallet and activate students — access is charged per student per month, and
-              deposits stay available until a real charge occurs.
-            </p>
-          </div>
-          <div className="flex flex-col items-center gap-2.5">
-            <button
-              type="button"
-              className="auth-btn auth-btn-form"
-              onClick={createSchool}
-              disabled={submitting}
-              aria-busy={submitting}
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  Creating your school…
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="size-4" aria-hidden="true" /> Create school
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              className="auth-btn-ghost auth-btn-form"
-              onClick={() => setStep(1)}
-            >
-              Back
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {step === 3 ? (
         <div className="px-2 py-8 text-center">
           <CheckCircle2 className="mx-auto size-11" style={{ color: NAVY }} aria-hidden="true" />
           <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
@@ -1051,21 +982,20 @@ export function AuthScreens({
     defaultValues: { fullName: "", phone: "", email: "", password: "" },
   });
 
-  const createSchool = async () => {
-    if (!schoolData || !adminData) return;
+  const createSchool = async (schoolValues: SchoolValues, adminValues: AdminValues) => {
     setSubmitting(true);
     try {
       await registerSchool({
         school: {
-          ...schoolData,
-          type: toSchoolTypeCode(schoolData.type),
-          ...(schoolData.website ? { website: schoolData.website } : {}),
+          ...schoolValues,
+          type: toSchoolTypeCode(schoolValues.type),
+          ...(schoolValues.website ? { website: schoolValues.website } : {}),
         },
-        admin: adminData,
+        admin: adminValues,
       });
       // No plan, no checkout: the school starts with an empty wallet. The
       // success screen points at sign-in, then Wallet & Billing.
-      setStep(3);
+      setStep(2);
     } catch (error) {
       // The register endpoint answers 400 with an `errors` object and no
       // top-level message — fold its field errors into the toast so a
@@ -1137,10 +1067,9 @@ export function AuthScreens({
                     }}
                     onAdminSubmit={(values) => {
                       setAdminData(values);
-                      setStep(2);
+                      if (schoolData) void createSchool(schoolData, values);
                     }}
                     submitting={submitting}
-                    createSchool={() => void createSchool()}
                     onShowLogin={toggle}
                   />
                 </section>
@@ -1230,10 +1159,9 @@ export function AuthScreens({
                   }}
                   onAdminSubmit={(values) => {
                     setAdminData(values);
-                    setStep(2);
+                    if (schoolData) void createSchool(schoolData, values);
                   }}
                   submitting={submitting}
-                  createSchool={() => void createSchool()}
                   onShowLogin={toggle}
                 />
               </div>
