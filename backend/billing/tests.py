@@ -586,10 +586,11 @@ class AccessEnforcementTests(SchoolTestCase):
         self.assertEqual(result.skipped, 0)
         self.assertTrue(services.student_has_access(unpaid))
 
-    def test_attendance_skips_students_when_wallet_is_broke(self):
+    def test_attendance_with_empty_wallet_is_blocked_with_message(self):
         from records.services import attendance as attendance_service
         from records.models import AcademicSession, Enrollment
         from billing.models import Wallet
+        from billing import services as billing_services
         Wallet.objects.filter(school=self.school).update(balance_kobo=0)
         unpaid = self.make_student(admission_number='B2')
         Enrollment.objects.create(
@@ -602,23 +603,20 @@ class AccessEnforcementTests(SchoolTestCase):
             if attendance_service.is_school_day(self.school, day):
                 break
             day += timedelta(days=1)
-        result = attendance_service.submit_register(
-            user=self.admin, school=self.school, class_obj=self.jss1,
-            day=day,
-            records=[
-                {'studentId': str(unpaid.public_id), 'status': 'present'},
-            ],
-        )
-        self.assertEqual(result.saved, 0)
-        self.assertEqual(result.skipped, 1)
+        with self.assertRaises(billing_services.UnfundedStudents):
+            attendance_service.submit_register(
+                user=self.admin, school=self.school, class_obj=self.jss1,
+                day=day,
+                records=[
+                    {'studentId': str(unpaid.public_id), 'status': 'present'},
+                ],
+            )
 
-    def test_partial_funds_save_covered_and_name_the_rest(self):
+    def test_attendance_with_full_cover_marks_and_charges_once(self):
         from records.services import attendance as attendance_service
-        from records.models import Enrollment
+        from records.models import AcademicSession, Enrollment
         from billing.models import Wallet
-        # ₦300 covers 2 of 3 at ₦115.
-        Wallet.objects.filter(school=self.school).update(balance_kobo=30000)
-        students = [self.make_student(admission_number=f'P{i}') for i in range(3)]
+        students = [self.make_student(admission_number=f'F{i}') for i in range(2)]
         for student in students:
             Enrollment.objects.create(
                 school=self.school, student=student,
@@ -638,21 +636,83 @@ class AccessEnforcementTests(SchoolTestCase):
             ],
         )
         self.assertEqual(result.saved, 2)
-        self.assertEqual(result.skipped, 1)
+        self.assertEqual(result.skipped, 0)
         self.assertEqual(len(result.activated), 2)
-        self.assertEqual(len(result.skipped_unfunded), 1)
         self.assertEqual(result.charged_kobo, 23000)
-        self.assertEqual(result.shortfall_kobo, 11500)
         self.assertEqual(
-            Wallet.objects.get(school=self.school).balance_kobo, 7000,
+            Wallet.objects.get(school=self.school).balance_kobo, 50000 - 23000,
         )
-        # One ledger row per charged student, none for the unfunded one.
+
+    def test_result_recording_names_the_unpaid_student(self):
+        from records.models import Enrollment
+        from records.services import results as results_service
+        from billing.models import Wallet
+        from billing import services as billing_services
+        Wallet.objects.filter(school=self.school).update(balance_kobo=0)
+        student = self.make_student(admission_number='N1')
+        Enrollment.objects.create(
+            school=self.school, student=student,
+            academic_session=self.session, class_obj=self.jss1,
+            status=Enrollment.Status.ACTIVE,
+        )
+        sheet = results_service.create_sheet(
+            school=self.school, academic_session=self.session,
+            class_obj=self.jss1, subject='Mathematics',
+            assessment='First Term Test',
+        )
+        with self.assertRaises(billing_services.InsufficientFunds) as raised:
+            results_service.record_scores(
+                sheet, {str(student.public_id): 75},
+            )
+        self.assertIn('Test Student', raised.exception.detail['wallet'])
+        self.assertIn('Fund the wallet', raised.exception.detail['wallet'])
+
+    def test_partial_funds_block_submit_and_name_the_students(self):
+        from records.services import attendance as attendance_service
+        from records.models import Enrollment
+        from billing.models import Wallet
+        from billing import services as billing_services
+        # ₦300 covers 2 of 3 at ₦115 — fail closed: nothing marked, nothing charged.
+        Wallet.objects.filter(school=self.school).update(balance_kobo=30000)
+        students = [self.make_student(admission_number=f'P{i}') for i in range(3)]
+        for student in students:
+            Enrollment.objects.create(
+                school=self.school, student=student,
+                academic_session=self.session, class_obj=self.jss1,
+                status=Enrollment.Status.ACTIVE,
+            )
+        day = timezone.localdate()
+        for _ in range(14):
+            if attendance_service.is_school_day(self.school, day):
+                break
+            day += timedelta(days=1)
+        with self.assertRaises(billing_services.UnfundedStudents) as raised:
+            attendance_service.submit_register(
+                user=self.admin, school=self.school, class_obj=self.jss1,
+                day=day,
+                records=[
+                    {'studentId': str(s.public_id), 'status': 'present'} for s in students
+                ],
+            )
+        message = raised.exception.detail['students']
+        self.assertIn('no paid access', message)
+        self.assertIn('Nothing was marked', message)
+        self.assertIn('Fund', message)
+        self.assertEqual(raised.exception.detail['reasonCode'], 'wallet_topup_required')
+        self.assertEqual(int(raised.exception.detail['shortfallKobo']), 4500)
+        # Nothing charged, nothing created.
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, 30000,
+        )
+        self.assertFalse(
+            StudentEntitlement.objects.filter(school=self.school).exists(),
+        )
         self.assertEqual(
             WalletTransaction.objects.filter(
                 school=self.school,
                 category=WalletTransaction.Category.STUDENT_ACTIVATION,
             ).count(),
-            2,
+            0,
         )
 
     def test_batch_activation_is_idempotent_on_retry(self):
@@ -670,6 +730,57 @@ class AccessEnforcementTests(SchoolTestCase):
         self.assertEqual(
             StudentEntitlement.objects.filter(school=self.school).count(), 3,
         )
+
+    def test_create_student_blocked_until_wallet_funded(self):
+        from billing.models import Wallet
+        from records.models import Student
+        Wallet.objects.filter(school=self.school).update(balance_kobo=0)
+        payload = {
+            'firstName': 'Ada', 'lastName': 'Nwosu', 'gender': 'female',
+            'admissionNumber': 'SUA/JSS/2026/009001', 'className': 'JSS 1',
+            'arm': 'A', 'guardianName': 'Mrs Nwosu',
+            'guardianPhone': '+2348000001234', 'dateOfBirth': '2014-05-02',
+        }
+        blocked = self.client.post('/api/v1/students/', payload, format='json')
+        self.assertEqual(blocked.status_code, 402, blocked.content)
+        self.assertIn('wallet', blocked.data['detail'].lower())
+        self.assertFalse(
+            Student.objects.filter(
+                school=self.school, admission_number='SUA/JSS/2026/009001',
+            ).exists(),
+        )
+        services.credit_wallet(
+            self.school, 20000, category=WalletTransaction.Category.DEPOSIT,
+        )
+        allowed = self.client.post('/api/v1/students/', payload, format='json')
+        self.assertEqual(allowed.status_code, 201, allowed.content)
+
+    def test_import_commit_blocked_until_wallet_funded(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from billing.models import Wallet
+        from records.models import Student
+        Wallet.objects.filter(school=self.school).update(balance_kobo=0)
+        content = (
+            'first_name,last_name,admission_number,class,guardian_phone\n'
+            'Nia,Okoro,ADM-003,JSS 1,08012345678\n'
+        )
+
+        def _file():
+            return SimpleUploadedFile('s.csv', content.encode(), content_type='text/csv')
+
+        blocked = self.client.post(
+            '/api/v1/students/import/', {'file': _file()}, format='multipart',
+        )
+        self.assertEqual(blocked.status_code, 402, blocked.content)
+        self.assertIn('wallet', blocked.data['detail'].lower())
+        self.assertFalse(
+            Student.objects.filter(school=self.school, admission_number='ADM-003').exists(),
+        )
+        # The analysis preview stays readable so staff can fix the file first.
+        preview = self.client.post(
+            '/api/v1/students/import/analyse/', {'file': _file()}, format='multipart',
+        )
+        self.assertEqual(preview.status_code, 200, preview.content)
 
     def test_grace_period_keeps_access(self):
         from records.services import results as results_service

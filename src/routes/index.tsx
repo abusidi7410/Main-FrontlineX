@@ -10,8 +10,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BrandLockup } from "@/components/layout/brand";
-import { SUBSCRIPTION_TIERS } from "@/constants/plans";
-import { naira } from "@/lib/format";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -67,8 +65,6 @@ const FEATURES = [
 ];
 
 function LandingPage() {
-  const entryTier = SUBSCRIPTION_TIERS[0]!;
-
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-20 border-b border-border bg-background">
@@ -118,7 +114,7 @@ function LandingPage() {
             </Button>
           </div>
           <p className="mt-4 text-sm text-muted-foreground">
-            From {naira(entryTier.monthlyPrice)}/month for up to 100 students. Teachers, parents and
+            One prepaid wallet, pay per student per month — no subscriptions. Teachers, parents and
             students are invited by your school — no public sign-up.
           </p>
         </div>

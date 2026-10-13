@@ -277,7 +277,10 @@ class ManualAdjustmentView(APIView):
                     what='manual adjustment',
                 )
         except services.InsufficientFunds as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_402_PAYMENT_REQUIRED)
+            return Response(
+                {'detail': services.error_message(exc)},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         audit(
             request, 'wallet.adjustment', school.name,
             f'Manual wallet adjustment of ₦{amount_kobo / 100:,.2f}. Reason: {reason}.',

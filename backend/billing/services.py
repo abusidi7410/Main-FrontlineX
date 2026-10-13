@@ -35,6 +35,97 @@ class InsufficientFunds(ValidationError):
         })
 
 
+def _student_display_name(student) -> str:
+    return f'{student.first_name} {student.last_name}'.strip() or 'This student'
+
+
+def error_message(exc: Exception) -> str:
+    """Human-readable message out of a structured ValidationError.
+
+    `str(exc)` on a DRF ValidationError renders the raw detail dict
+    (`{'wallet': ErrorDetail(...)}`) — never show that to staff. Prefer the
+    named message key, else the first string value found.
+    """
+    detail = getattr(exc, 'detail', None)
+    if isinstance(detail, dict):
+        for key in ('wallet', 'students', 'student', 'detail', 'message'):
+            value = detail.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+            if value is not None and not isinstance(value, (dict, list)):
+                text = str(value).strip()
+                if text:
+                    return text
+        for value in detail.values():
+            if isinstance(value, str) and value.strip():
+                return value
+            if isinstance(value, list):
+                for item in value:
+                    text = str(item).strip()
+                    if text:
+                        return text
+    text = str(exc).strip()
+    return text or 'Something went wrong. Please try again.'
+
+
+def _short_name_list(students, limit: int = 10) -> str:
+    names = [_student_display_name(s) for s in students[:limit]]
+    extra = len(students) - len(names)
+    text = ', '.join(names)
+    if extra > 0:
+        text += f' and {extra} more'
+    return text or 'the affected students'
+
+
+def require_enrollment_funding(school, *, what: str = 'adding students') -> None:
+    """Block creating/importing students until the wallet is funded.
+
+    The wallet must cover at least one month of student access: a school that
+    cannot pay for a single activation may not grow the roster it cannot use.
+    Raises InsufficientFunds (callers answer 402) otherwise. No-op when
+    access enforcement is switched off.
+    """
+    pricing = get_pricing()
+    if not pricing.enforce_student_access:
+        return
+    wallet = get_wallet(school)
+    if wallet.balance_kobo < pricing.student_price_kobo:
+        raise InsufficientFunds(
+            pricing.student_price_kobo, wallet.balance_kobo,
+            f'{what} (fund your wallet first)',
+        )
+
+
+class UnfundedStudents(ValidationError):
+    """Raised when a whole-class operation cannot cover every unpaid student.
+
+    Fail-closed: the caller must save nothing and show this message, naming
+    the students and the exact top-up, so staff know to fund the wallet first.
+    """
+
+    def __init__(self, students, *, price_kobo: int, available_kobo: int, charged_kobo: int = 0):
+        self.student_ids = [s.id for s in students]
+        self.price_kobo = price_kobo
+        self.available_kobo = available_kobo
+        self.required_kobo = len(students) * price_kobo
+        self.shortfall_kobo = max(0, self.required_kobo - available_kobo)
+        self.charged_kobo = charged_kobo
+        super().__init__({
+            'students': (
+                f'{_short_name_list(students)} '
+                f'{"has" if len(students) == 1 else "have"} no paid access for this month '
+                f'(₦{price_kobo / 100:,.2f} per student). Nothing was marked. '
+                f'Fund ₦{self.shortfall_kobo / 100:,.2f} more into the school wallet '
+                f'(balance ₦{available_kobo / 100:,.2f}) and submit again.'
+            ),
+            'reasonCode': 'wallet_topup_required',
+            'requiredKobo': self.required_kobo,
+            'availableKobo': available_kobo,
+            'shortfallKobo': self.shortfall_kobo,
+            'priceKobo': price_kobo,
+        })
+
+
 def _ref(prefix: str) -> str:
     return f'{prefix}-{secrets.token_hex(8).upper()}'
 

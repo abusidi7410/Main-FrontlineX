@@ -419,6 +419,18 @@ class StudentListCreateView(APIView):
         school = request.user.school
         supplied = (request.data.get('admissionNumber') or '').strip()
 
+        try:
+            wallet_billing.require_enrollment_funding(school)
+        except wallet_billing.InsufficientFunds as exc:
+            return Response(
+                {
+                    'detail': wallet_billing.error_message(exc),
+                    'requiredKobo': exc.required_kobo,
+                    'availableKobo': exc.available_kobo,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
         with transaction.atomic():
             # The school comes from the session, never the request body, so a
             # crafted `schoolId` cannot create a student in another tenant.
@@ -799,6 +811,20 @@ class StudentImportView(APIView):
             parsed = parse_import_file(request.FILES.get('file'))
         except StudentImportError as exc:
             raise ValidationError({'file': str(exc)})
+
+        try:
+            wallet_billing.require_enrollment_funding(
+                request.user.school, what='importing students',
+            )
+        except wallet_billing.InsufficientFunds as exc:
+            return Response(
+                {
+                    'detail': wallet_billing.error_message(exc),
+                    'requiredKobo': exc.required_kobo,
+                    'availableKobo': exc.available_kobo,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
 
         try:
             with transaction.atomic():
@@ -2429,6 +2455,25 @@ class AttendanceSubmitView(APIView):
                     'existing': duplicate.existing,
                 },
                 status=status.HTTP_409_CONFLICT,
+            )
+        except wallet_billing.UnfundedStudents as exc:
+            # Fail-closed: nothing was marked or charged. The message names the
+            # students and the exact top-up so staff fund the wallet and retry.
+            detail = exc.detail
+            message = (
+                detail.get('students') if isinstance(detail, dict)
+                else str(detail)
+            )
+            return Response(
+                {
+                    'detail': message,
+                    'reasonCode': 'wallet_topup_required',
+                    'requiredKobo': exc.required_kobo,
+                    'availableKobo': exc.available_kobo,
+                    'shortfallKobo': exc.shortfall_kobo,
+                    'priceKobo': exc.price_kobo,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
         return Response({

@@ -282,19 +282,23 @@ def submit_register(
     valid_statuses = set(AttendanceRecord.Status.values)
     to_create = []
 
-    # Paid feature: first real use of students in a billing period auto-debits
-    # the wallet once each, in roster order (what the teacher sees), via one
-    # batched charge. Students the wallet cannot cover are skipped and NAMED
-    # in the result — never silent — so the register stays truthful without
-    # blocking the covered students.
+    # Paid feature: fail-closed. Every SUBMITTED student without paid access
+    # must be covered by the wallet BEFORE anything is marked: if the money
+    # cannot cover all of them, nothing is saved or charged and the teacher
+    # gets the names plus the exact top-up. No silent skips, no half register.
     from billing import services as wallet_billing
+    submitted_ids = {
+        roster[str(item.get('studentId'))]
+        for item in records
+        if str(item.get('studentId')) in roster
+    }
     allowed_ids = set(wallet_billing.students_with_access(set(roster.values()), day))
-    if wallet_billing.get_pricing().enforce_student_access:
+    pricing = wallet_billing.get_pricing()
+    if pricing.enforce_student_access:
         from records.models import Student as _Student
-        missing_ids = set(roster.values()) - allowed_ids
+        missing_ids = (set(roster.values()) - allowed_ids) & submitted_ids
         if missing_ids:
-            # Roster order = the order the teacher sees on screen, so partial
-            # funds always cover the top of the visible list first.
+            # Roster order = the order the teacher sees on screen.
             roster_position = {sid: i for i, sid in enumerate(roster.values())}
             ordered_missing = sorted(missing_ids, key=lambda sid: roster_position.get(sid, 0))
             students_by_id = {
@@ -303,16 +307,29 @@ def submit_register(
                 )
             }
             ordered = [students_by_id[sid] for sid in ordered_missing if sid in students_by_id]
+            wallet = wallet_billing.get_wallet(school)
+            if wallet.balance_kobo < len(ordered) * pricing.student_price_kobo:
+                raise wallet_billing.UnfundedStudents(
+                    ordered,
+                    price_kobo=pricing.student_price_kobo,
+                    available_kobo=wallet.balance_kobo,
+                )
             batch = wallet_billing.ensure_many_student_access(
                 school, ordered, actor=user, on=day,
             )
+            if batch['unfunded']:
+                # Lost a race with another charge between the check and the
+                # debit: still fail closed and say exactly what happened.
+                raise wallet_billing.UnfundedStudents(
+                    batch['unfunded'],
+                    price_kobo=pricing.student_price_kobo,
+                    available_kobo=wallet_billing.get_wallet(school).balance_kobo,
+                    charged_kobo=len(batch['activated']) * pricing.student_price_kobo,
+                )
             for student in batch['activated']:
                 allowed_ids.add(student.id)
-            pricing = wallet_billing.get_pricing()
             result.activated = [_student_label(s) for s in batch['activated']]
-            result.skipped_unfunded = [_student_label(s) for s in batch['unfunded']]
             result.charged_kobo = len(batch['activated']) * pricing.student_price_kobo
-            result.shortfall_kobo = len(batch['unfunded']) * pricing.student_price_kobo
 
     for item in records:
         raw_id = item.get('studentId')

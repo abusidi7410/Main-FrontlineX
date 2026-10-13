@@ -40,10 +40,21 @@ def _require_access(student) -> None:
 
     Auto-debits the school wallet once per billing period via
     `ensure_student_access`: the first real use activates the student.
-    Raises InsufficientFunds (fund-the-wallet path) when broke.
+    When the wallet cannot cover it, the failure names the student, the
+    price and the shortfall so staff know to fund the wallet — nothing is
+    recorded for that student.
     """
     from billing import services as wallet_billing
-    wallet_billing.ensure_student_access(student.school, student)
+    try:
+        wallet_billing.ensure_student_access(student.school, student)
+    except wallet_billing.InsufficientFunds as exc:
+        name = (
+            f'{student.first_name} {student.last_name}'.strip() or 'This student'
+        )
+        raise wallet_billing.InsufficientFunds(
+            exc.required_kobo, exc.available_kobo,
+            f'result recording for {name}',
+        ) from exc
 
 
 def grade_for(percentage: Decimal) -> str:

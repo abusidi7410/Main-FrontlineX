@@ -407,7 +407,7 @@ class StudentActivateView(APIView):
         except services.InsufficientFunds as exc:
             return Response(
                 {
-                    'detail': str(exc),
+                    'detail': services.error_message(exc),
                     'requiredKobo': exc.required_kobo,
                     'availableKobo': exc.available_kobo,
                 },

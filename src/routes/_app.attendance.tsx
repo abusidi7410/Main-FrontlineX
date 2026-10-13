@@ -261,6 +261,7 @@ function AttendancePage() {
   const [marks, setMarks] = useState<Record<string, AttendanceStatus>>({});
   const [search, setSearch] = useState("");
   const [billingReport, setBillingReport] = useState<SubmitAttendanceBilling | null>(null);
+  const [billingBlock, setBillingBlock] = useState<string | null>(null);
 
   // A teacher opens the register on their own designated class instead of the
   // first class in the school; everyone else keeps the existing default. The
@@ -300,6 +301,7 @@ function AttendancePage() {
   useEffect(() => {
     if (!roster.data) return;
     setBillingReport(null);
+    setBillingBlock(null);
     if (roster.data.taken) {
       setMarks(roster.data.existing);
     } else {
@@ -316,6 +318,7 @@ function AttendancePage() {
 
   const save = useMutation({
     mutationFn: async () => {
+      setBillingBlock(null);
       const submission = {
         // One register per class per school day, so this id is also the
         // offline-queue key: re-marking the same day replaces the pending entry.
@@ -356,6 +359,16 @@ function AttendancePage() {
       }
       if (error instanceof ApiRequestError && error.status === 403) {
         toast.error("Only this class's class teacher can submit its register.");
+        return;
+      }
+      if (error instanceof ApiRequestError && error.status === 402) {
+        // Fail-closed: nothing was marked. The message names the unpaid
+        // students and the exact top-up — fund the wallet and retry.
+        setBillingBlock(
+          error.message || "Some students have no paid access. Fund the wallet and try again.",
+        );
+        setBillingReport(null);
+        toast.error("Attendance blocked: unpaid students need wallet top-up.");
         return;
       }
       toast.error(error instanceof Error ? error.message : "Could not save attendance.");
@@ -536,7 +549,7 @@ function AttendancePage() {
             Wallet {naira(roster.data.billing.balanceKobo / 100)} covers{" "}
             {roster.data.billing.coverableCount} of {roster.data.billing.unpaidCount} students still
             needing access this month ({naira(roster.data.billing.priceKobo / 100)} each).
-            Submitting now marks the covered students; the rest are reported, not marked.{" "}
+            Submitting is blocked until every student is covered — nothing will be marked.{" "}
             {roster.data.billing.shortfallKobo > 0 ? (
               <>
                 Fund {naira(roster.data.billing.shortfallKobo / 100)} more to cover the class —{" "}
@@ -546,6 +559,19 @@ function AttendancePage() {
                 .
               </>
             ) : null}
+          </div>
+        ) : null}
+
+        {billingBlock ? (
+          <div
+            role="alert"
+            className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm"
+          >
+            <p className="font-medium">Attendance was not marked.</p>
+            <p className="mt-1 text-muted-foreground">{billingBlock}</p>
+            <Link to="/wallet" className="mt-2 inline-block font-medium underline">
+              Fund wallet
+            </Link>
           </div>
         ) : null}
 

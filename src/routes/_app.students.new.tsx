@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
@@ -53,6 +54,7 @@ export const Route = createFileRoute("/_app/students/new")({
 function NewStudentPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [fundingBlocked, setFundingBlocked] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: createStudent,
@@ -69,7 +71,14 @@ function NewStudentPage() {
       await invalidateEnrollmentQueries(queryClient, [["invoices"]]);
       void navigate({ to: "/students" });
     },
-    onError: (error) =>
+    onError: (error) => {
+      // A 402 means the wallet cannot cover even one activation: block with
+      // the funding message instead of a generic failure.
+      if (error instanceof ApiRequestError && error.status === 402) {
+        setFundingBlocked(error.message);
+        toast.error("Fund your wallet before adding students.");
+        return;
+      }
       // Surface the real reason. A duplicate admission number or a missing
       // guardian field is a specific, fixable problem - a generic message
       // made the form look broken with no indication of what to change.
@@ -77,7 +86,8 @@ function NewStudentPage() {
         error instanceof ApiRequestError
           ? describeFieldErrors(error)
           : "We couldn't save this student. Please check the details and try again.",
-      ),
+      );
+    },
   });
 
   return (
@@ -87,6 +97,19 @@ function NewStudentPage() {
           title="Add a student"
           description="Only the essentials now — you can complete the full profile later."
         />
+
+        {fundingBlocked ? (
+          <div
+            role="alert"
+            className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm"
+          >
+            <p className="font-medium">Student was not created.</p>
+            <p className="mt-1 text-muted-foreground">{fundingBlocked}</p>
+            <Link to="/wallet" className="mt-2 inline-block font-medium underline">
+              Fund wallet
+            </Link>
+          </div>
+        ) : null}
 
         <StudentForm
           defaultValues={{
@@ -102,15 +125,16 @@ function NewStudentPage() {
           }}
           submitLabel="Save student"
           isPending={mutation.isPending}
-          onSubmit={(values) =>
+          onSubmit={(values) => {
+            setFundingBlocked(null);
             // Drop the key entirely when blank so the server generates the
             // number instead of receiving an empty string.
             mutation.mutate(
               values.admissionNumber
                 ? values
                 : (({ admissionNumber: _omitted, ...rest }) => rest)(values),
-            )
-          }
+            );
+          }}
           cancelLink={
             <Button asChild type="button" variant="outline" className="h-12">
               <Link to="/students">Cancel</Link>

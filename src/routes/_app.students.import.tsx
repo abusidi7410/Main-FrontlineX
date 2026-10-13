@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { AlertTriangle, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
+import { ApiRequestError } from "@/api/client";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatCard } from "@/components/common/stat-card";
@@ -37,6 +38,7 @@ const TEMPLATE = "first_name,last_name,admission_number,class,guardian_phone\n";
 function ImportStudentsPage() {
   const [analysis, setAnalysis] = useState<ImportAnalysis | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fundingBlocked, setFundingBlocked] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const analyse = useMutation({
@@ -50,7 +52,10 @@ function ImportStudentsPage() {
   });
 
   const commit = useMutation({
-    mutationFn: commitImport,
+    mutationFn: async (file: File) => {
+      setFundingBlocked(null);
+      return commitImport(file);
+    },
     onSuccess: async (result) => {
       const skippedMessage = result.skipped ? ` ${result.skipped} rows were not imported.` : "";
       toast.success(`${result.imported} students imported successfully.${skippedMessage}`);
@@ -58,8 +63,14 @@ function ImportStudentsPage() {
       setSelectedFile(null);
       await queryClient.invalidateQueries({ queryKey: ["students"] });
     },
-    onError: () =>
-      toast.error("The import didn't complete. No students were added — please try again."),
+    onError: (error) => {
+      if (error instanceof ApiRequestError && error.status === 402) {
+        setFundingBlocked(error.message);
+        toast.error("Fund your wallet before importing students.");
+        return;
+      }
+      toast.error("The import didn't complete. No students were added — please try again.");
+    },
   });
 
   return (
@@ -79,6 +90,19 @@ function ImportStudentsPage() {
             </Button>
           }
         />
+
+        {fundingBlocked ? (
+          <div
+            role="alert"
+            className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm"
+          >
+            <p className="font-medium">Import was not started.</p>
+            <p className="mt-1 text-muted-foreground">{fundingBlocked}</p>
+            <Link to="/wallet" className="mt-2 inline-block font-medium underline">
+              Fund wallet
+            </Link>
+          </div>
+        ) : null}
 
         <div className="fn-panel space-y-3 p-5">
           <Label htmlFor="csv">CSV file</Label>
