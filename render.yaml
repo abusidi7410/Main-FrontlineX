@@ -58,7 +58,7 @@ services:
       - key: PAYSTACK_PUBLIC_KEY
         sync: false
       - key: PAYSTACK_CALLBACK_URL
-        value: https://frontlinex.ng/subscription
+        value: https://frontlinex.ng/wallet
       - key: JWT_ACCESS_TOKEN_MINUTES
         value: 30
       - key: JWT_REFRESH_TOKEN_DAYS

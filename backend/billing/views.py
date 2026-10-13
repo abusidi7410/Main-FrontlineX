@@ -172,9 +172,9 @@ class DepositCheckoutView(APIView):
 
 
 def _frontend_base() -> str:
-    return getattr(settings, 'PAYSTACK_CALLBACK_URL', 'https://frontlinex.ng/subscription').rsplit(
-        '/subscription', 1,
-    )[0] or 'https://frontlinex.ng'
+    raw = getattr(settings, 'PAYSTACK_CALLBACK_URL', 'https://frontlinex.ng/wallet')
+    base = raw.rsplit('/subscription', 1)[0] if '/subscription' in raw else raw.rsplit('/wallet', 1)[0]
+    return base or 'https://frontlinex.ng'
 
 
 def _confirm_deposit(deposit: WalletDeposit, request) -> Response:

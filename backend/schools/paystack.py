@@ -29,9 +29,9 @@ class PaystackConfigError(PaystackError):
 
 
 def _secret_key() -> str:
-    key = getattr(settings, 'PAYSTACK_SECRET_KEY', '') or ''
-    if not key:
-        raise PaystackConfigError('Online payments are not configured on this server yet.')
+    key = (getattr(settings, 'PAYSTACK_SECRET_KEY', '') or '').strip()
+    if not key or 'paste-' in key.lower() or 'placeholder' in key.lower() or 'your-' in key.lower() or key.lower().startswith(('sk_test_xxx', 'sk_live_xxx', 'test_', 'changeme', 'xxx')):
+        raise PaystackConfigError('Online payments are not configured on this server yet. Set a valid PAYSTACK_SECRET_KEY.')
     return key
 
 
@@ -100,8 +100,11 @@ def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
     the *only* thing that proves it came from Paystack. Compared in constant
     time so a signature cannot be guessed byte by byte.
     """
-    key = getattr(settings, 'PAYSTACK_SECRET_KEY', '') or ''
-    if not key or not signature:
+    if not signature:
+        return False
+    try:
+        key = _secret_key()
+    except PaystackConfigError:
         return False
     expected = hmac.new(key.encode('utf-8'), raw_body, hashlib.sha512).hexdigest()
     return hmac.compare_digest(expected, signature)

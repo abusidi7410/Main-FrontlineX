@@ -280,7 +280,7 @@ PAYSTACK_PUBLIC_KEY = env('PAYSTACK_PUBLIC_KEY', default='')
 PAYSTACK_BASE_URL = env('PAYSTACK_BASE_URL', default='https://api.paystack.co')
 PAYSTACK_CALLBACK_URL = env(
     'PAYSTACK_CALLBACK_URL',
-    default='https://frontlinex.ng/subscription',
+    default='https://frontlinex.ng/wallet',
 )
 
 
