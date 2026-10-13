@@ -376,6 +376,26 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
         )
         self.assertEqual(login_response.status_code, 200, login_response.content)
 
+    def test_registration_records_declared_student_count(self):
+        payload = self._payload()
+        payload['school']['expectedStudents'] = 250
+        response = self.client.post(
+            '/api/v1/schools/register/', payload, format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        school = School.objects.get(id=response.json()['schoolId'])
+        self.assertEqual(school.expected_students, 250)
+        self.assertEqual(response.json()['expectedStudents'], 250)
+
+    def test_registration_rejects_bad_student_count(self):
+        payload = self._payload()
+        payload['school']['expectedStudents'] = 0
+        response = self.client.post(
+            '/api/v1/schools/register/', payload, format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(School.objects.filter(email='new-academy@example.com').exists())
+
     def test_public_registration_rejection_explains_itself(self):
         payload = self._payload()
         payload['school']['type'] = 'Primary only'

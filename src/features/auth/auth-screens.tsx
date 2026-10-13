@@ -93,7 +93,12 @@ const adminSchema = z.object({
 type SchoolValues = z.input<typeof schoolSchema>;
 type AdminValues = z.input<typeof adminSchema>;
 
-const STEPS = ["School information", "Administrator account", "School activated"];
+const STEPS = [
+  "School information",
+  "Number of students",
+  "Administrator account",
+  "School activated",
+];
 
 const NAVY = "hsl(var(--primary))";
 const INK = "hsl(var(--foreground))";
@@ -379,6 +384,8 @@ function RegisterContent({
   setStep,
   schoolData,
   adminData,
+  studentCount,
+  setStudentCount,
   onSchoolSubmit,
   onAdminSubmit,
   submitting,
@@ -390,6 +397,8 @@ function RegisterContent({
   setStep: Dispatch<SetStateAction<number>>;
   schoolData: SchoolValues | null;
   adminData: AdminValues | null;
+  studentCount: string;
+  setStudentCount: (value: string) => void;
   onSchoolSubmit: (values: SchoolValues) => void;
   onAdminSubmit: (values: AdminValues) => void;
   submitting: boolean;
@@ -410,6 +419,7 @@ function RegisterContent({
 
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoMessage, setGeoMessage] = useState<string | null>(null);
+  const [countError, setCountError] = useState<string | null>(null);
   const schoolLatitude = schoolForm.watch("latitude");
   const schoolLongitude = schoolForm.watch("longitude");
   const schoolHasLocation = schoolLatitude != null && schoolLongitude != null;
@@ -744,13 +754,67 @@ function RegisterContent({
 
           <div className="flex justify-center pt-2">
             <button type="submit" className="auth-btn auth-btn-form">
-              Continue to administrator details
+              Continue
             </button>
           </div>
         </form>
       ) : null}
 
       {step === 1 ? (
+        <form
+          noValidate
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const count = Number(studentCount);
+            if (!Number.isInteger(count) || count < 1) {
+              setCountError("Enter the number of students in your school (at least 1).");
+              return;
+            }
+            setCountError(null);
+            setStep(2);
+          }}
+        >
+          <Subtext>
+            How many students are in {schoolData?.name ?? "your school"}? This is just so we know
+            the size of your school — no money or payment is involved here.
+          </Subtext>
+          <div className="space-y-1.5">
+            <label
+              htmlFor="student-count"
+              className="text-[12px] font-medium tracking-[0.02em]"
+              style={{ color: MUTED }}
+            >
+              Number of students <span style={{ color: TERRACOTTA }}>*</span>
+            </label>
+            <input
+              id="student-count"
+              inputMode="numeric"
+              placeholder="e.g. 250"
+              className={cn("auth-input", countError && "auth-input-err")}
+              aria-invalid={!!countError}
+              aria-describedby={countError ? "student-count-error" : undefined}
+              value={studentCount}
+              onChange={(event) => setStudentCount(event.target.value.replace(/[^0-9]/g, ""))}
+            />
+            <FieldError id="student-count-error" message={countError ?? ""} />
+          </div>
+          <div className="flex flex-col items-center gap-2.5 pt-2">
+            <button type="submit" className="auth-btn auth-btn-form">
+              Continue to administrator details
+            </button>
+            <button
+              type="button"
+              className="auth-btn-ghost auth-btn-form"
+              onClick={() => setStep(0)}
+            >
+              Back
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {step === 2 ? (
         <form
           noValidate
           className="space-y-4"
@@ -860,7 +924,7 @@ function RegisterContent({
             <button
               type="button"
               className="auth-btn-ghost auth-btn-form"
-              onClick={() => setStep(0)}
+              onClick={() => setStep(1)}
             >
               Back
             </button>
@@ -868,7 +932,7 @@ function RegisterContent({
         </form>
       ) : null}
 
-      {step === 2 ? (
+      {step === 3 ? (
         <div className="px-2 py-8 text-center">
           <CheckCircle2 className="mx-auto size-11" style={{ color: NAVY }} aria-hidden="true" />
           <h3 className="mt-4 font-display text-[22px] font-semibold" style={{ color: INK }}>
@@ -959,6 +1023,7 @@ export function AuthScreens({
   const [step, setStep] = useState(0);
   const [schoolData, setSchoolData] = useState<SchoolValues | null>(null);
   const [adminData, setAdminData] = useState<AdminValues | null>(null);
+  const [studentCount, setStudentCount] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const schoolForm = useForm<SchoolValues>({
@@ -982,20 +1047,36 @@ export function AuthScreens({
     defaultValues: { fullName: "", phone: "", email: "", password: "" },
   });
 
-  const createSchool = async (schoolValues: SchoolValues, adminValues: AdminValues) => {
+  const createSchool = async (
+    schoolValues: SchoolValues,
+    count: string,
+    adminValues: AdminValues,
+  ) => {
     setSubmitting(true);
     try {
+      const parsed = Number(count);
       await registerSchool({
         school: {
           ...schoolValues,
           type: toSchoolTypeCode(schoolValues.type),
           ...(schoolValues.website ? { website: schoolValues.website } : {}),
+          ...(Number.isInteger(parsed) && parsed >= 1 ? { expectedStudents: parsed } : {}),
         },
         admin: adminValues,
       });
-      // No plan, no checkout: the school starts with an empty wallet. The
-      // success screen points at sign-in, then Wallet & Billing.
-      setStep(2);
+      // Straight into the product: sign in with the just-created admin
+      // account and land on the dashboard. The wallet starts empty, so every
+      // paid action points at funding it.
+      try {
+        const next = await signIn(adminValues.email, adminValues.password);
+        await navigate({
+          to: HOME_BY_ROLE[next.user.role] as never,
+          replace: true,
+        });
+        return;
+      } catch {
+        setStep(3);
+      }
     } catch (error) {
       // The register endpoint answers 400 with an `errors` object and no
       // top-level message — fold its field errors into the toast so a
@@ -1061,13 +1142,15 @@ export function AuthScreens({
                     setStep={setStep}
                     schoolData={schoolData}
                     adminData={adminData}
+                    studentCount={studentCount}
+                    setStudentCount={setStudentCount}
                     onSchoolSubmit={(values) => {
                       setSchoolData(values);
                       setStep(1);
                     }}
                     onAdminSubmit={(values) => {
                       setAdminData(values);
-                      if (schoolData) void createSchool(schoolData, values);
+                      if (schoolData) void createSchool(schoolData, studentCount, values);
                     }}
                     submitting={submitting}
                     onShowLogin={toggle}
@@ -1153,13 +1236,15 @@ export function AuthScreens({
                   setStep={setStep}
                   schoolData={schoolData}
                   adminData={adminData}
+                  studentCount={studentCount}
+                  setStudentCount={setStudentCount}
                   onSchoolSubmit={(values) => {
                     setSchoolData(values);
                     setStep(1);
                   }}
                   onAdminSubmit={(values) => {
                     setAdminData(values);
-                    if (schoolData) void createSchool(schoolData, values);
+                    if (schoolData) void createSchool(schoolData, studentCount, values);
                   }}
                   submitting={submitting}
                   onShowLogin={toggle}

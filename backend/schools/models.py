@@ -42,6 +42,10 @@ class School(models.Model):
     is_active = models.BooleanField(default=False)
     current_session = models.CharField(max_length=20, default='2025/2026')
     current_term = models.CharField(max_length=50, default='First Term')
+    # Approximate enrolment declared by the administrator at registration.
+    # Planning info only: it never gates features or billing (wallet-paid
+    # access does that). Null when never declared.
+    expected_students = models.PositiveIntegerField(null=True, blank=True)
     classes = models.JSONField(default=list, blank=True)
     subjects = models.JSONField(default=list, blank=True)
     # ── Attendance calendar (spec §attendance) ──

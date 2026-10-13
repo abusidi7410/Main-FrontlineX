@@ -34,6 +34,18 @@ class SchoolRegistrationSerializer(serializers.Serializer):
             )
         if value.get('type') not in _SCHOOL_TYPE_CHOICES:
             raise serializers.ValidationError('Unsupported school type.')
+        expected = value.get('expectedStudents')
+        if expected is not None and expected != '':
+            try:
+                expected_count = int(expected)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    'Number of students must be a whole number.'
+                )
+            if expected_count < 1:
+                raise serializers.ValidationError(
+                    'Number of students must be at least 1.'
+                )
         # Coordinates are optional (a school may register before it can get a
         # GPS fix) but must arrive as a pair.
         has_lat = value.get('latitude') is not None
@@ -69,6 +81,15 @@ class SchoolRegistrationSerializer(serializers.Serializer):
             latitude = school_data.get('latitude')
             longitude = school_data.get('longitude')
             has_location = latitude is not None and longitude is not None
+            expected = school_data.get('expectedStudents')
+            try:
+                expected_students = (
+                    int(expected) if expected is not None and expected != '' else None
+                )
+            except (TypeError, ValueError):
+                expected_students = None
+            if expected_students is not None and expected_students < 1:
+                expected_students = None
             school = School.objects.create(
                 name=school_data['name'],
                 school_type=school_data['type'],
@@ -86,6 +107,7 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 gps_accuracy=school_data.get('gpsAccuracy') if has_location else None,
                 timezone=(school_data.get('timezone') or '').strip() or 'Africa/Lagos',
                 location_set_at=now if has_location else None,
+                expected_students=expected_students,
             )
 
             full_name = admin_data.get('fullName', '')
@@ -120,6 +142,7 @@ class SchoolRegistrationSerializer(serializers.Serializer):
             'requiresPayment': False,
             'trialDays': 0,
             'planName': '',
+            'expectedStudents': school.expected_students,
         }
 
 

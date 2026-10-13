@@ -39,6 +39,7 @@ export interface OnboardingPayload {
     longitude?: number | undefined;
     gpsAccuracy?: number | undefined;
     timezone?: string | undefined;
+    expectedStudents?: number | undefined;
   };
   admin: { fullName: string; phone: string; email: string; password: string };
 }
