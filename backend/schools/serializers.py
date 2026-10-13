@@ -1,5 +1,3 @@
-from datetime import timedelta
-
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework import serializers
@@ -11,17 +9,17 @@ _SCHOOL_TYPE_CHOICES = ['nursery', 'primary', 'secondary', 'mixed']
 
 
 class SchoolRegistrationSerializer(serializers.Serializer):
-    """Frontend OnboardingPayload: nested school + admin + tierId.
+    """Frontend OnboardingPayload: nested school + admin.
 
     ```json
-    { "school": {...}, "admin": {fullName, phone, email, password}, "tierId": "t400" }
+    { "school": {...}, "admin": {fullName, phone, email, password} }
     ```
-    Returns ``{schoolId, paymentRef}``.
+    Returns ``{schoolId, ...}``. The school starts with an empty wallet;
+    there are no plans, trials or checkout steps.
     """
 
     school = serializers.DictField()
     admin = serializers.DictField()
-    tierId = serializers.CharField(required=False, allow_blank=True)
 
     def validate_school(self, value):
         required = ['name', 'type', 'address', 'state', 'lga', 'phone', 'email']
@@ -60,7 +58,6 @@ class SchoolRegistrationSerializer(serializers.Serializer):
         return value
 
     def create(self, validated_data):
-        from django.conf import settings
         from django.db import transaction
 
         school_data = validated_data['school']
@@ -81,9 +78,8 @@ class SchoolRegistrationSerializer(serializers.Serializer):
                 phone=school_data['phone'],
                 email=school_data['email'],
                 website=school_data.get('website', ''),
-                # Created PENDING: the administrator can sign in straight away
-                # to set the school up and complete checkout, but the trial
-                # only starts once payment is verified (no card, no trial).
+                # Active straight away: the administrator signs in, funds the
+                # wallet, then adds students. No plans or trials.
                 is_active=True,
                 latitude=latitude if has_location else None,
                 longitude=longitude if has_location else None,

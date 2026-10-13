@@ -1440,6 +1440,19 @@ class PaymentListView(APIView):
         is_self_service = request.user.role == 'student' and request.user.student_profile_id is not None
         if not is_finance and not is_self_service:
             raise PermissionDenied('You do not have permission to record fee payments.')
+        try:
+            wallet_billing.require_enrollment_funding(
+                request.user.school, what='recording fee payments',
+            )
+        except wallet_billing.InsufficientFunds as exc:
+            return Response(
+                {
+                    'detail': wallet_billing.error_message(exc),
+                    'requiredKobo': exc.required_kobo,
+                    'availableKobo': exc.available_kobo,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         method = (request.data.get('method') or Payment.Method.CASH).strip()
         if method not in Payment.Method.values:
             raise ValidationError({'method': 'Invalid payment method.'})
@@ -1613,6 +1626,19 @@ class PaymentVerifyView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, CanWriteFinance]
 
     def post(self, request, pk):
+        try:
+            wallet_billing.require_enrollment_funding(
+                request.user.school, what='verifying fee payments',
+            )
+        except wallet_billing.InsufficientFunds as exc:
+            return Response(
+                {
+                    'detail': wallet_billing.error_message(exc),
+                    'requiredKobo': exc.required_kobo,
+                    'availableKobo': exc.available_kobo,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         with transaction.atomic():
             payment = get_object_or_404(
                 Payment.objects.select_for_update(), id=pk, school_id=request.user.school_id,

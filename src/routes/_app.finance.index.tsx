@@ -73,6 +73,7 @@ function PaymentsPage() {
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<Payment["method"]>("cash");
   const [reference, setReference] = useState("");
+  const [fundingBlocked, setFundingBlocked] = useState<string | null>(null);
 
   const selectedInvoice = (invoices.data?.results ?? []).find(
     (invoice) => invoice.id === invoiceId,
@@ -101,9 +102,15 @@ function PaymentsPage() {
       );
       setAmount("");
       setReference("");
+      setFundingBlocked(null);
       await refresh();
     },
     onError: (error) => {
+      if (error instanceof ApiRequestError && error.status === 402) {
+        setFundingBlocked(error.message);
+        toast.error("Fund your wallet before recording fee payments.");
+        return;
+      }
       toast.error(
         error instanceof ApiRequestError
           ? error.message
@@ -116,9 +123,15 @@ function PaymentsPage() {
     mutationFn: verifyPayment,
     onSuccess: async () => {
       toast.success("Payment verified.");
+      setFundingBlocked(null);
       await refresh();
     },
     onError: (error) => {
+      if (error instanceof ApiRequestError && error.status === 402) {
+        setFundingBlocked(error.message);
+        toast.error("Fund your wallet before verifying fee payments.");
+        return;
+      }
       toast.error(
         error instanceof ApiRequestError ? error.message : "Verification failed. Please try again.",
       );
@@ -165,6 +178,19 @@ function PaymentsPage() {
             </Button>
           }
         />
+
+        {fundingBlocked ? (
+          <div
+            role="alert"
+            className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm"
+          >
+            <p className="font-medium">Fee collection is paused.</p>
+            <p className="mt-1 text-muted-foreground">{fundingBlocked}</p>
+            <Link to="/wallet" className="mt-2 inline-block font-medium underline">
+              Fund wallet
+            </Link>
+          </div>
+        ) : null}
 
         {can("finance.write") ? (
           <form

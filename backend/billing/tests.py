@@ -782,6 +782,46 @@ class AccessEnforcementTests(SchoolTestCase):
         )
         self.assertEqual(preview.status_code, 200, preview.content)
 
+    def test_record_fee_payment_blocked_until_wallet_funded(self):
+        from billing.models import Wallet
+        from records.models import Invoice, Payment
+        Wallet.objects.filter(school=self.school).update(balance_kobo=0)
+        student = self.make_student(admission_number='F1')
+        invoice = self.make_invoice(student=student, total='50000')
+        blocked = self.client.post(
+            '/api/v1/payments/',
+            {'invoiceId': str(invoice.id), 'amount': '10000', 'method': 'cash'},
+            format='json',
+        )
+        self.assertEqual(blocked.status_code, 402, blocked.content)
+        self.assertIn('wallet', blocked.data['detail'].lower())
+        self.assertFalse(Payment.objects.filter(invoice=invoice).exists())
+        services.credit_wallet(
+            self.school, 20000, category=WalletTransaction.Category.DEPOSIT,
+        )
+        allowed = self.client.post(
+            '/api/v1/payments/',
+            {'invoiceId': str(invoice.id), 'amount': '10000', 'method': 'cash'},
+            format='json',
+        )
+        self.assertEqual(allowed.status_code, 201, allowed.content)
+
+    def test_verify_fee_payment_blocked_until_wallet_funded(self):
+        from billing.models import Wallet
+        from records.models import Payment
+        Wallet.objects.filter(school=self.school).update(balance_kobo=0)
+        student = self.make_student(admission_number='F2')
+        invoice = self.make_invoice(student=student, total='50000')
+        payment = Payment.objects.create(
+            school=self.school, invoice=invoice, amount=10000,
+            method=Payment.Method.BANK_TRANSFER, status=Payment.Status.PENDING,
+            reference='FEE-001',
+        )
+        blocked = self.client.post(f'/api/v1/payments/{payment.id}/verify/')
+        self.assertEqual(blocked.status_code, 402, blocked.content)
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.PENDING)
+
     def test_grace_period_keeps_access(self):
         from records.services import results as results_service
         today = timezone.localdate()
