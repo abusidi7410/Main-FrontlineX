@@ -124,7 +124,7 @@ export async function listStudentAccess(
   count: number;
   page: number;
   pageSize: number;
-  summary: { active: number; needAttention: number };
+  summary: { active: number; needAttention: number; expiringSoon: number; gracePeriod: number };
 }> {
   return apiFetch("/billing/students", {
     query: { ...(search ? { search } : {}), page, pageSize },

@@ -11,13 +11,17 @@ import { compactNaira, greeting, numberFmt } from "@/lib/format";
 import { getAttendanceOverview } from "@/services/attendance.service";
 import { getFinanceSummary } from "@/services/finance.service";
 import { getStaff, getResultSheets } from "@/services/school.service";
-import { getWallet } from "@/services/wallet.service";
+import { getWallet, listStudentAccess } from "@/services/wallet.service";
 import { listStudents } from "@/services/students.service";
 
 export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
   const { user, school } = useAuthenticatedSession();
 
   const wallet = useQuery({ queryKey: ["wallet"], queryFn: getWallet });
+  const access = useQuery({
+    queryKey: ["wallet", "students", "", 1],
+    queryFn: () => listStudentAccess(undefined, 1, 1),
+  });
   const students = useQuery({
     queryKey: ["students", { pageSize: 1 }],
     queryFn: () => listStudents({ pageSize: 1 }),
@@ -88,6 +92,20 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
           to: "/wallet",
         }
       : null,
+    (access.data?.summary.needAttention ?? 0) > 0
+      ? {
+          id: "activation",
+          label: `${access.data?.summary.needAttention} students awaiting activation`,
+          to: "/wallet",
+        }
+      : null,
+    (access.data?.summary.expiringSoon ?? 0) > 0
+      ? {
+          id: "expiring",
+          label: `${access.data?.summary.expiringSoon} students' access expires soon`,
+          to: "/wallet",
+        }
+      : null,
   ].filter(Boolean) as { id: string; label: string; to: string }[];
 
   return (
@@ -115,6 +133,18 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
             label="Staff"
             value={numberFmt(staff.data?.length ?? 0)}
             hint="Teachers and administrative staff"
+          />
+          <StatCard
+            label="Active paid students"
+            value={numberFmt(access.data?.summary.active ?? 0)}
+            tone="success"
+            hint="Paid access this month"
+          />
+          <StatCard
+            label="Awaiting activation"
+            value={numberFmt(access.data?.summary.needAttention ?? 0)}
+            tone={(access.data?.summary.needAttention ?? 0) > 0 ? "warning" : "success"}
+            hint="Need wallet funding to activate"
           />
           <StatCard
             label="Registers submitted today"
@@ -173,6 +203,9 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
               </h2>
               <p className="mt-1 text-muted-foreground">
                 Student access {compactNaira(wallet.data.studentPrice)} per student per month.
+                {wallet.data.balance < wallet.data.studentPrice
+                  ? ` Your wallet holds ${compactNaira(wallet.data.balance)}. Fund your wallet to activate students.`
+                  : ` You can activate ${Math.floor(wallet.data.balance / wallet.data.studentPrice)} students with your current balance.`}{" "}
                 Deposits stay available until a real charge occurs.
               </p>
             </div>

@@ -198,8 +198,10 @@ function WalletBalanceCard({
             {naira(wallet.balance)}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Student access {naira(wallet.studentPrice)} per student per month · SME alert{" "}
-            {naira(wallet.smsPrice)} each
+            Student access {naira(wallet.studentPrice)} per student per month ·{" "}
+            {wallet.balance < wallet.studentPrice
+              ? "Insufficient balance. Fund your wallet to activate students."
+              : `You can activate ${Math.floor(wallet.balance / wallet.studentPrice)} students with your current balance.`}
             {wallet.autoRenew ? " · renewals automatic while funded" : ""}
           </p>
         </div>

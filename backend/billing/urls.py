@@ -25,4 +25,5 @@ urlpatterns = [
     ),
     path('platform/messaging/', platform_views.MessagingOverviewView.as_view()),
     path('platform/adjustments/', platform_views.ManualAdjustmentView.as_view()),
+    path('platform/complimentary/', platform_views.ComplimentaryAccessView.as_view()),
 ]

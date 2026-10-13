@@ -9,7 +9,7 @@ import { ARMS } from "@/constants/reference";
 import { ApiRequestError } from "@/api/client";
 import { createStudent } from "@/services/students.service";
 import { StudentForm } from "@/features/students/student-form";
-import { naira } from "@/lib/format";
+import { naira, dateFmt } from "@/lib/format";
 import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 
 /**
@@ -58,16 +58,15 @@ function NewStudentPage() {
 
   const mutation = useMutation({
     mutationFn: createStudent,
-    onSuccess: async ({ student, invoiceTotal, registrationFeeConfigured }) => {
-      toast.success(
-        `${student.firstName} ${student.lastName} registered in ${student.className}${student.arm}.`,
-        {
-          description: registrationFeeConfigured
+    onSuccess: async ({ student, invoiceTotal, registrationFeeConfigured, access }) => {
+      toast.success(`${student.firstName} ${student.lastName} activated successfully.`, {
+        description: access
+          ? `Charged ${naira(access.amountKobo / 100)} for one month. Access expires on ${dateFmt(access.periodEnd)}. Wallet balance: ${naira(access.walletBalanceKobo / 100)}.${registrationFeeConfigured ? ` Registration invoice of ${naira(Number(invoiceTotal) || 0)} also raised.` : ""}`
+          : registrationFeeConfigured
             ? `One-time registration invoice of ${naira(Number(invoiceTotal) || 0)} raised. Regular school fees are billed separately.`
             : "No registration fee applies, so the student is active. Regular school fees can be billed separately.",
-          duration: 8000,
-        },
-      );
+        duration: 9000,
+      });
       await invalidateEnrollmentQueries(queryClient, [["invoices"]]);
       void navigate({ to: "/students" });
     },

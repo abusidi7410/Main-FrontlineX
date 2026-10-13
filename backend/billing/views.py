@@ -352,6 +352,8 @@ class StudentAccessListView(APIView):
                 1 for s in statuses.values()
                 if s in ('GracePeriod', 'Expired', 'NeverActivated')
             ),
+            'expiringSoon': sum(1 for s in statuses.values() if s == 'ExpiringSoon'),
+            'gracePeriod': sum(1 for s in statuses.values() if s == 'GracePeriod'),
         }
         count = len(student_ids)
         start = (page - 1) * page_size

@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from django.core.management import call_command
 from django.db import IntegrityError
-from django.test import TestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
@@ -750,10 +750,32 @@ class AccessEnforcementTests(SchoolTestCase):
             ).exists(),
         )
         services.credit_wallet(
-            self.school, 20000, category=WalletTransaction.Category.DEPOSIT,
+            self.school, 50000, category=WalletTransaction.Category.DEPOSIT,
         )
         allowed = self.client.post('/api/v1/students/', payload, format='json')
         self.assertEqual(allowed.status_code, 201, allowed.content)
+        # Atomic charge-at-creation: ₦115 debited once, entitlement created
+        # with the record, access receipt returned.
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, 50000 - 11500,
+        )
+        student = Student.objects.get(
+            school=self.school, admission_number='SUA/JSS/2026/009001',
+        )
+        entitlement = StudentEntitlement.objects.get(student=student)
+        self.assertEqual(entitlement.amount_kobo, 11500)
+        self.assertIsNotNone(entitlement.wallet_transaction)
+        access = allowed.data['access']
+        self.assertEqual(access['amountKobo'], 11500)
+        self.assertEqual(access['walletBalanceKobo'], 50000 - 11500)
+        self.assertTrue(access['periodEnd'])
+        # Second create for another student keeps charging exactly once each.
+        payload2 = dict(payload, admissionNumber='SUA/JSS/2026/009002')
+        allowed2 = self.client.post('/api/v1/students/', payload2, format='json')
+        self.assertEqual(allowed2.status_code, 201, allowed2.content)
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, 50000 - 23000,
+        )
 
     def test_import_commit_blocked_until_wallet_funded(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -822,6 +844,157 @@ class AccessEnforcementTests(SchoolTestCase):
         payment.refresh_from_db()
         self.assertEqual(payment.status, Payment.Status.PENDING)
 
+    def _import_csv(self, rows):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        content = (
+            'first_name,last_name,admission_number,class,guardian_phone\n' + rows
+        )
+        return SimpleUploadedFile('s.csv', content.encode(), content_type='text/csv')
+
+    def test_import_preview_shows_exact_cost(self):
+        preview = self.client.post(
+            '/api/v1/students/import/analyse/',
+            {'file': self._import_csv(
+                'Nia,Okoro,IMP-001,JSS 1,08012345678\n'
+                'Mia,Okoro,IMP-002,JSS 1,08012345678\n'
+            )},
+            format='multipart',
+        )
+        self.assertEqual(preview.status_code, 200, preview.content)
+        billing_quote = preview.data['billing']
+        self.assertEqual(billing_quote['newCount'], 2)
+        self.assertEqual(billing_quote['priceKobo'], 11500)
+        self.assertEqual(billing_quote['totalCostKobo'], 23000)
+
+    def test_import_commit_charges_once_each_atomically(self):
+        from billing.models import Wallet
+        from records.models import Student
+        preview = self.client.post(
+            '/api/v1/students/import/analyse/',
+            {'file': self._import_csv(
+                'Nia,Okoro,IMP-001,JSS 1,08012345678\n'
+                'Mia,Okoro,IMP-002,JSS 1,08012345678\n'
+            )},
+            format='multipart',
+        )
+        committed = self.client.post(
+            '/api/v1/students/import/',
+            {'file': self._import_csv(
+                'Nia,Okoro,IMP-001,JSS 1,08012345678\n'
+                'Mia,Okoro,IMP-002,JSS 1,08012345678\n'
+            )},
+            format='multipart',
+        )
+        self.assertEqual(committed.status_code, 200, committed.content)
+        self.assertEqual(committed.data['imported'], 2)
+        self.assertEqual(committed.data['billing']['chargedKobo'], 23000)
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, 50000 - 23000,
+        )
+        for number in ('IMP-001', 'IMP-002'):
+            student = Student.objects.get(
+                school=self.school, admission_number=number,
+            )
+            entitlement = StudentEntitlement.objects.get(student=student)
+            self.assertEqual(entitlement.amount_kobo, 11500)
+            self.assertIsNotNone(entitlement.wallet_transaction)
+
+    def test_import_commit_with_shortfall_imports_nothing(self):
+        from billing.models import Wallet
+        from records.models import Student
+        Wallet.objects.filter(school=self.school).update(balance_kobo=10000)
+        content = self._import_csv(
+            'Nia,Okoro,IMP-001,JSS 1,08012345678\n'
+            'Mia,Okoro,IMP-002,JSS 1,08012345678\n'
+        )
+        preview = self.client.post(
+            '/api/v1/students/import/analyse/', {'file': content}, format='multipart',
+        )
+        self.assertEqual(preview.data['billing']['shortfallKobo'], 23000 - 10000)
+        committed = self.client.post(
+            '/api/v1/students/import/',
+            {'file': self._import_csv(
+                'Nia,Okoro,IMP-001,JSS 1,08012345678\n'
+                'Mia,Okoro,IMP-002,JSS 1,08012345678\n'
+            )},
+            format='multipart',
+        )
+        self.assertEqual(committed.status_code, 402, committed.content)
+        self.assertFalse(
+            Student.objects.filter(school=self.school).exists(),
+        )
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, 10000,
+        )
+        self.assertFalse(
+            StudentEntitlement.objects.filter(school=self.school).exists(),
+        )
+
+    def test_complimentary_grant_gives_access_without_charging(self):
+        from billing.models import Wallet
+        platform = User.objects.create_user(
+            email='platform@example.com', password='Strong-Pass-1!',
+            first_name='Platform', last_name='Manager',
+            role=User.Role.PLATFORM_MANAGER, school=None,
+            is_active=True, is_verified=True,
+        )
+        self.client.force_authenticate(platform)
+        student = self.make_student(admission_number='C1')
+        granted = self.client.post(
+            '/api/v1/billing/platform/complimentary/',
+            {
+                'schoolId': str(self.school.pk),
+                'studentId': str(student.public_id),
+                'reason': 'Flood relief, September intake',
+            },
+            format='json',
+        )
+        self.assertEqual(granted.status_code, 201, granted.content)
+        entitlement = StudentEntitlement.objects.get(student=student)
+        self.assertEqual(entitlement.amount_kobo, 0)
+        self.assertTrue(entitlement.is_complimentary)
+        self.assertEqual(entitlement.comp_reason, 'Flood relief, September intake')
+        # Wallet untouched, no ledger row invented.
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, 50000,
+        )
+        self.assertFalse(
+            WalletTransaction.objects.filter(student=student).exists(),
+        )
+        self.assertTrue(services.student_has_access(student))
+        # Repeating is a no-op, and reason stays required.
+        again = self.client.post(
+            '/api/v1/billing/platform/complimentary/',
+            {
+                'schoolId': str(self.school.pk),
+                'studentId': str(student.public_id),
+                'reason': 'Flood relief, September intake',
+            },
+            format='json',
+        )
+        self.assertEqual(again.status_code, 200, again.content)
+        self.assertFalse(again.data['created'])
+        noreason = self.client.post(
+            '/api/v1/billing/platform/complimentary/',
+            {'schoolId': str(self.school.pk), 'studentId': str(student.public_id)},
+            format='json',
+        )
+        self.assertEqual(noreason.status_code, 400, noreason.content)
+
+    def test_school_admin_cannot_grant_complimentary(self):
+        student = self.make_student(admission_number='C2')
+        denied = self.client.post(
+            '/api/v1/billing/platform/complimentary/',
+            {
+                'schoolId': str(self.school.pk),
+                'studentId': str(student.public_id),
+                'reason': 'Trying it on',
+            },
+            format='json',
+        )
+        self.assertEqual(denied.status_code, 403, denied.content)
+        self.assertFalse(StudentEntitlement.objects.filter(student=student).exists())
+
     def test_grace_period_keeps_access(self):
         from records.services import results as results_service
         today = timezone.localdate()
@@ -840,3 +1013,82 @@ class EntitlementModelTests(TestCase):
     def test_school_admin_role_value_exists(self):
         self.assertTrue(User.Role.SCHOOL_ADMIN)
         self.assertTrue(hasattr(School, 'wallet'))
+
+
+class ConcurrentActivationTests(TransactionTestCase):
+    """Two simultaneous activations of one student charge exactly once.
+
+    TransactionTestCase (no wrapping atomic) so both threads genuinely race
+    on Postgres row locks; the loser reuses the winner's entitlement.
+    """
+
+    def setUp(self):
+        from records.models import AcademicSession
+        self.school = School.objects.create(
+            name='Race Academy', slug='race-academy', address='1 Race Road',
+            state='Lagos', lga='Ikeja', phone='+2348000000099',
+            email='race@example.com', is_active=True,
+        )
+        self.admin = User.objects.create_user(
+            email='race-admin@example.com', password='Strong-Pass-1!',
+            first_name='Race', last_name='Admin',
+            role=User.Role.SCHOOL_ADMIN, school=self.school, is_active=True,
+        )
+        self.session = AcademicSession.objects.create(
+            school=self.school, name='2026/2027', start_year=2026, end_year=2027,
+            is_current=True,
+        )
+        services.credit_wallet(
+            self.school, 50000, category=WalletTransaction.Category.DEPOSIT,
+        )
+        self.student = Student.objects.create(
+            school=self.school, admission_number='RACE-001',
+            first_name='Race', last_name='Case', gender='male',
+            class_name='JSS 1',
+        )
+
+    def test_concurrent_activations_charge_once(self):
+        import threading
+        from billing import services as billing_services
+        from billing.models import Wallet as WalletModel
+        school_id = self.school.id
+        student_id = self.student.id
+        admin_id = self.admin.id
+        barrier = threading.Barrier(2)
+        outcomes = []
+
+        def _activate():
+            from accounts.models import User as UserModel
+            from billing.models import Wallet as WalletModel
+            from records.models import Student as StudentModel
+            from schools.models import School as SchoolModel
+            barrier.wait(timeout=30)
+            school = SchoolModel.objects.get(pk=school_id)
+            student = StudentModel.objects.get(pk=student_id)
+            admin = UserModel.objects.get(pk=admin_id)
+            entitlement, created = billing_services.activate_student(
+                school, student, actor=admin,
+            )
+            outcomes.append(created)
+            return created
+
+        threads = [threading.Thread(target=_activate) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        self.assertEqual(sorted(outcomes), [False, True])
+        self.assertEqual(
+            StudentEntitlement.objects.filter(student_id=student_id).count(), 1,
+        )
+        self.assertEqual(
+            WalletModel.objects.get(school_id=school_id).balance_kobo,
+            50000 - 11500,
+        )
+        self.assertEqual(
+            WalletTransaction.objects.filter(
+                school_id=school_id,
+                category=WalletTransaction.Category.STUDENT_ACTIVATION,
+            ).count(),
+            1,
+        )

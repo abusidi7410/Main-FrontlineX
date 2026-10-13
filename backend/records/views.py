@@ -329,6 +329,7 @@ class StudentPromotionView(APIView):
         student = get_object_or_404(
             Student, public_id=public_refs.required_public_id(pk), school_id=school.id,
         )
+        _require_student_access(student)
 
         to_session = get_object_or_404(
             AcademicSession.objects.filter(school_id=school.id),
@@ -431,40 +432,56 @@ class StudentListCreateView(APIView):
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
-        with transaction.atomic():
-            # The school comes from the session, never the request body, so a
-            # crafted `schoolId` cannot create a student in another tenant.
-            if supplied:
-                serializer = StudentSerializer(
-                    data=request.data, context={'request': request},
-                )
-                serializer.is_valid(raise_exception=True)
-                extra = {'school': school, 'status': Student.Status.PENDING_PAYMENT}
-            else:
-                # Default path: the server issues the number.
-                number = _issue_admission_number(school, request.data.get('className', ''))
-                serializer = StudentSerializer(
-                    data={**request.data, 'admissionNumber': number},
-                    context={'request': request},
-                )
-                serializer.is_valid(raise_exception=True)
-                extra = {
-                    'school': school,
-                    'status': Student.Status.PENDING_PAYMENT,
-                    'admission_number': number,
-                    'admission_number_source': (
-                        Student.AdmissionNumberSource.SYSTEM_GENERATED
-                    ),
-                    'admission_year': _admission_year(school),
-                }
-            try:
-                student = serializer.save(**extra)
-            except IntegrityError:
-                # A concurrent request took this number between validation and
-                # insert. Report it as a normal field error, not a 500.
-                raise ValidationError({
-                    'admissionNumber': 'That admission number has just been taken. Please try again.',
-                })
+        try:
+            with transaction.atomic():
+                # The school comes from the session, never the request body, so a
+                # crafted `schoolId` cannot create a student in another tenant.
+                if supplied:
+                    serializer = StudentSerializer(
+                        data=request.data, context={'request': request},
+                    )
+                    serializer.is_valid(raise_exception=True)
+                    extra = {'school': school, 'status': Student.Status.PENDING_PAYMENT}
+                else:
+                    # Default path: the server issues the number.
+                    number = _issue_admission_number(school, request.data.get('className', ''))
+                    serializer = StudentSerializer(
+                        data={**request.data, 'admissionNumber': number},
+                        context={'request': request},
+                    )
+                    serializer.is_valid(raise_exception=True)
+                    extra = {
+                        'school': school,
+                        'status': Student.Status.PENDING_PAYMENT,
+                        'admission_number': number,
+                        'admission_number_source': (
+                            Student.AdmissionNumberSource.SYSTEM_GENERATED
+                        ),
+                        'admission_year': _admission_year(school),
+                    }
+                try:
+                    student = serializer.save(**extra)
+                except IntegrityError:
+                    # A concurrent request took this number between validation and
+                    # insert. Report it as a normal field error, not a 500.
+                    raise ValidationError({
+                        'admissionNumber': 'That admission number has just been taken. Please try again.',
+                    })
+
+                # Paid activation, atomically with the record: the wallet is
+                # debited exactly once and the entitlement is created in the
+                # same transaction as the student, so a charge can never exist
+                # without its record (or vice versa). InsufficientFunds aborts
+                # everything and is answered 402 below. Skipped only when
+                # access enforcement is off (non-production/test mode).
+                pricing = wallet_billing.get_pricing()
+                entitlement = None
+                wallet = wallet_billing.get_wallet(school)
+                if pricing.enforce_student_access:
+                    entitlement, _ = wallet_billing.activate_student(
+                        school, student, actor=request.user,
+                    )
+                    wallet = wallet_billing.get_wallet(school)
 
             # Registration is billed separately from recurring school fees.
             invoice = billing_service.create_invoice_from_school_fees(
@@ -490,10 +507,28 @@ class StudentListCreateView(APIView):
                 student.status = Student.Status.ACTIVE
                 student.save(update_fields=['status'])
                 billing_service.activate_registration(student, actor=request.user)
+        except wallet_billing.InsufficientFunds as exc:
+            return Response(
+                {
+                    'detail': wallet_billing.error_message(exc),
+                    'requiredKobo': exc.required_kobo,
+                    'availableKobo': exc.available_kobo,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         data = dict(serializer.data)
         data['invoiceId'] = str(invoice.id) if invoice else ''
         data['invoiceTotal'] = str(invoice.total) if invoice else ''
         data['registrationFeeConfigured'] = invoice is not None
+        data['access'] = (
+            {
+                'amountKobo': entitlement.amount_kobo,
+                'periodStart': entitlement.period_start.isoformat(),
+                'periodEnd': entitlement.period_end.isoformat(),
+                'walletBalanceKobo': wallet.balance_kobo,
+            }
+            if entitlement is not None else None
+        )
         log_audit(
             request, 'student.register', target='Student',
             detail=f'{student.first_name} {student.last_name} ({student.admission_number}) - {student.class_name}',
@@ -692,6 +727,9 @@ class StudentTransferView(APIView):
         session_id = request.data.get('sessionId')
 
         if to_class_id or to_section_id:
+            # Within-school class assignment is a paid feature; leaving the
+            # school entirely is not gated.
+            _require_student_access(student)
             return self._transfer_within_school(
                 request, student, to_class_id, to_section_id, session_id,
             )
@@ -789,6 +827,36 @@ class StudentTransferView(APIView):
         return Response(payload)
 
 
+def _import_billing_quote(school, new_count: int) -> dict:
+    """Preview cost for an import commit (no writes).
+
+    Every valid new row will be charged one month of access at commit; rows
+    that duplicate existing students are skipped and never charged.
+    """
+    from billing import services as wallet_billing
+    pricing = wallet_billing.get_pricing()
+    if not pricing.enforce_student_access:
+        return {
+            'priceKobo': pricing.student_price_kobo, 'newCount': new_count,
+            'totalCostKobo': 0, 'balanceKobo': 0, 'shortfallKobo': 0,
+            'coverableCount': new_count,
+        }
+    wallet = wallet_billing.get_wallet(school)
+    total = new_count * pricing.student_price_kobo
+    coverable = (
+        min(new_count, wallet.balance_kobo // pricing.student_price_kobo)
+        if pricing.student_price_kobo else new_count
+    )
+    return {
+        'priceKobo': pricing.student_price_kobo,
+        'newCount': new_count,
+        'totalCostKobo': total,
+        'balanceKobo': wallet.balance_kobo,
+        'shortfallKobo': max(0, total - wallet.balance_kobo),
+        'coverableCount': coverable,
+    }
+
+
 class StudentImportAnalysisView(APIView):
     permission_classes = [IsAuthenticated, HasSchool, CanImportStudents]
     parser_classes = [MultiPartParser]
@@ -799,7 +867,9 @@ class StudentImportAnalysisView(APIView):
         except StudentImportError as exc:
             raise ValidationError({'file': str(exc)})
         analysis = analyse_import(parsed, request.user.school_id)
-        return Response(analysis.as_dict())
+        data = analysis.as_dict()
+        data['billing'] = _import_billing_quote(request.user.school, analysis.valid)
+        return Response(data)
 
 
 class StudentImportView(APIView):
@@ -838,6 +908,22 @@ class StudentImportView(APIView):
                     raise ValidationError({
                         'file': 'The CSV file does not contain any valid student rows.',
                     })
+                school = request.user.school
+                pricing = wallet_billing.get_pricing()
+                enforce = pricing.enforce_student_access
+                total_cost = (
+                    len(analysis.valid_rows) * pricing.student_price_kobo
+                    if enforce else 0
+                )
+                if enforce:
+                    # Fail-closed: the whole import needs full funding up
+                    # front — never a partial import with surprise debits.
+                    wallet = wallet_billing.get_wallet(school)
+                    if wallet.balance_kobo < total_cost:
+                        raise wallet_billing.InsufficientFunds(
+                            total_cost, wallet.balance_kobo,
+                            f'importing {len(analysis.valid_rows)} new students',
+                        )
                 students = [
                     Student(
                         school_id=request.user.school_id,
@@ -890,16 +976,46 @@ class StudentImportView(APIView):
                         guardian_name=student.guardian_name,
                         guardian_phone=student.guardian_phone,
                     )
+                charged_kobo = 0
+                if enforce:
+                    # One monthly charge per new student, batched: a single
+                    # wallet lock and bulk ledger rows. Any failure rolls back
+                    # the students above too — no orphans, no partial debits.
+                    batch = wallet_billing.ensure_many_student_access(
+                        school, students, actor=request.user,
+                    )
+                    if batch['unfunded']:
+                        raise wallet_billing.InsufficientFunds(
+                            total_cost,
+                            wallet_billing.get_wallet(school).balance_kobo,
+                            f'importing {len(analysis.valid_rows)} new students',
+                        )
+                    charged_kobo = len(batch['activated']) * pricing.student_price_kobo
         except IntegrityError as exc:
             raise ValidationError({
                 'file': 'An admission number was imported by another user. Please re-run the import.',
             }) from exc
+        except wallet_billing.InsufficientFunds as exc:
+            return Response(
+                {
+                    'detail': wallet_billing.error_message(exc),
+                    'requiredKobo': exc.required_kobo,
+                    'availableKobo': exc.available_kobo,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
 
+        wallet = wallet_billing.get_wallet(request.user.school)
         return Response({
             'imported': len(students),
             'skipped': analysis.rejected,
             'invalid': analysis.invalid,
             'duplicates': analysis.duplicate_count,
+            'billing': {
+                'chargedKobo': charged_kobo,
+                'priceKobo': wallet_billing.get_pricing().student_price_kobo,
+                'balanceKobo': wallet.balance_kobo,
+            },
         })
 
 
@@ -1860,7 +1976,19 @@ class MyPublishedResultsView(APIView):
             'sheet__term',
             'sheet__subject',
         )
-        return Response(_paginate(queryset, request, _MyPublishedResultSerializer))
+        # Paid access applies to self-service too: entries for students
+        # without active access are withheld (never leaked), and the response
+        # says how many, so the portal can point at the school office.
+        withheld = 0
+        pricing = wallet_billing.get_pricing()
+        if pricing.enforce_student_access:
+            student_ids = set(queryset.values_list('student_id', flat=True).distinct())
+            allowed = wallet_billing.students_with_access(student_ids)
+            withheld = len(student_ids - allowed)
+            queryset = queryset.filter(student_id__in=allowed)
+        data = _paginate(queryset, request, _MyPublishedResultSerializer)
+        data['withheldForActivation'] = withheld
+        return Response(data)
 
 
 class ParentPortalAccess(BasePermission):
@@ -1925,6 +2053,7 @@ class ParentChildAttendanceView(APIView):
 
     def get(self, request, student_id):
         child = policy_service.require_linked_child(request.user, student_id)
+        _require_student_access(child)
         params = request.query_params
         session = parent_portal_service.current_session_for(child)
         data = parent_portal_service.attendance_for(
@@ -1950,6 +2079,7 @@ class ParentChildPromotionView(APIView):
 
     def get(self, request, student_id):
         child = policy_service.require_linked_child(request.user, student_id)
+        _require_student_access(child)
         return Response(parent_portal_service.promotion_for(child))
 
 
@@ -1965,6 +2095,7 @@ class ReportCardView(APIView):
 
     def get(self, request, student_id):
         student = self._student_for(request.user, student_id)
+        _require_student_access(student)
         session = None
         session_id = request.query_params.get('sessionId')
         if session_id:

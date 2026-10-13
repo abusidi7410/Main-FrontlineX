@@ -135,6 +135,14 @@ class StudentEntitlement(models.Model):
     period_start = models.DateField()
     period_end = models.DateField()
     amount_kobo = models.PositiveBigIntegerField()
+    # Complimentary access: granted free by a platform manager (reason +
+    # granter recorded, never a fake payment). amount stays 0.
+    is_complimentary = models.BooleanField(default=False)
+    comp_reason = models.CharField(max_length=255, blank=True, default='')
+    granted_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='granted_complimentary_access',
+    )
     wallet_transaction = models.ForeignKey(
         WalletTransaction, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='entitlements',

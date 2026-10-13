@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { AlertTriangle, FileSpreadsheet } from "lucide-react";
+import { FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { ApiRequestError } from "@/api/client";
 import { PageHeader } from "@/components/common/page-header";
@@ -10,7 +10,7 @@ import { StatCard } from "@/components/common/stat-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { numberFmt } from "@/lib/format";
+import { naira, numberFmt } from "@/lib/format";
 import { analyseImportFile, commitImport, type ImportAnalysis } from "@/services/students.service";
 
 export const Route = createFileRoute("/_app/students/import")({
@@ -58,7 +58,10 @@ function ImportStudentsPage() {
     },
     onSuccess: async (result) => {
       const skippedMessage = result.skipped ? ` ${result.skipped} rows were not imported.` : "";
-      toast.success(`${result.imported} students imported successfully.${skippedMessage}`);
+      toast.success(`${result.imported} students imported and activated.${skippedMessage}`, {
+        description: `Charged ${naira(result.billing.chargedKobo / 100)} for one month each. Wallet balance: ${naira(result.billing.balanceKobo / 100)}.`,
+        duration: 9000,
+      });
       setAnalysis(null);
       setSelectedFile(null);
       await queryClient.invalidateQueries({ queryKey: ["students"] });
@@ -148,19 +151,40 @@ function ImportStudentsPage() {
               />
             </div>
 
-            {analysis.capacity.exceeds ? (
+            {analysis.billing && analysis.valid > 0 ? (
               <div
-                role="alert"
-                className="flex items-start gap-3 rounded-xl border border-warning/30 bg-warning-soft p-4"
+                role="status"
+                className="flex items-start gap-3 rounded-xl border border-border bg-muted/40 p-4"
               >
-                <AlertTriangle className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden="true" />
+                <FileSpreadsheet
+                  className="mt-0.5 size-5 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
                 <p className="text-sm">
-                  This import would take you to {numberFmt(analysis.capacity.afterImport)} students.
-                  Imported students use paid access only once activated — fund your{" "}
-                  <Link to="/wallet" className="font-medium text-primary hover:underline">
-                    wallet
-                  </Link>{" "}
-                  to cover them.
+                  Importing will activate {numberFmt(analysis.billing.newCount)} new students at{" "}
+                  {naira(analysis.billing.priceKobo / 100)} each — total{" "}
+                  {naira(analysis.billing.totalCostKobo / 100)}. Wallet balance:{" "}
+                  {naira(analysis.billing.balanceKobo / 100)}.
+                  {analysis.billing.shortfallKobo > 0 ? (
+                    <>
+                      {" "}
+                      Short by {naira(analysis.billing.shortfallKobo / 100)} — nothing will be
+                      imported until you{" "}
+                      <Link to="/wallet" className="font-medium text-primary hover:underline">
+                        fund your wallet
+                      </Link>
+                      .
+                    </>
+                  ) : (
+                    <>
+                      {" "}
+                      Resulting balance:{" "}
+                      {naira(
+                        (analysis.billing.balanceKobo - analysis.billing.totalCostKobo) / 100,
+                      )}
+                      .
+                    </>
+                  )}
                 </p>
               </div>
             ) : null}
@@ -209,12 +233,7 @@ function ImportStudentsPage() {
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button
                 className="h-12 text-base"
-                disabled={
-                  !selectedFile ||
-                  analysis.valid === 0 ||
-                  analysis.capacity.exceeds ||
-                  commit.isPending
-                }
+                disabled={!selectedFile || analysis.valid === 0 || commit.isPending}
                 onClick={() => {
                   if (selectedFile) commit.mutate(selectedFile);
                 }}

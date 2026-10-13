@@ -514,6 +514,49 @@ def ensure_many_student_access(school, students, *, actor=None, on: date | None 
     return {'activated': activated, 'already': already, 'unfunded': unfunded}
 
 
+def grant_complimentary_access(school, student, *, reason: str, actor=None):
+    """Platform-authorized free access for one student, one rolling month.
+
+    No wallet movement, no fake deposit: a zero-amount entitlement flagged
+    complimentary with the written reason and the granting manager recorded.
+    Returns (entitlement, created); already-covered students return the live
+    entitlement with created=False and no new row.
+    """
+    from records.models import Student
+
+    from .models import StudentEntitlement
+    reason = (reason or '').strip()
+    if not reason:
+        raise ValidationError({'reason': 'A written reason is required for complimentary access.'})
+    if student.school_id != school.id:
+        raise ValidationError({'student': 'That student belongs to another school.'})
+    today = timezone.localdate()
+    with transaction.atomic():
+        student = Student.objects.select_for_update(of=('self',)).get(pk=student.pk)
+        existing = live_entitlement(student, today)
+        if existing is not None:
+            return existing, False
+        period_end = today + timedelta(days=_period_days())
+        try:
+            with transaction.atomic():
+                entitlement = StudentEntitlement.objects.create(
+                    student=student,
+                    school=school,
+                    period_start=today,
+                    period_end=period_end,
+                    amount_kobo=0,
+                    is_complimentary=True,
+                    comp_reason=reason,
+                    granted_by=actor if getattr(actor, 'id', None) else None,
+                )
+        except IntegrityError:
+            existing = live_entitlement(student, today)
+            if existing is None:  # pragma: no cover - defensive
+                raise
+            return existing, False
+    return entitlement, True
+
+
 # ── SME alerts ─────────────────────────────────────────────────────────
 
 class AlertBlocked(ValidationError):

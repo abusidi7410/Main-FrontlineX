@@ -35,6 +35,7 @@ import {
   deletePlatformSchool,
   getPlatformSchool,
   getSchoolMessaging,
+  grantComplimentaryAccess,
   listPlatformPlans,
   listPlatformSchools,
   setSchoolStatus,
@@ -706,6 +707,8 @@ function ManageSchoolDialog({
 
             <SubscriptionControls school={school} schoolId={schoolId as string} />
 
+            <ComplimentaryControls schoolId={schoolId as string} />
+
             <MessagingControls schoolId={schoolId as string} schoolName={school.name} />
 
             <form onSubmit={submit} className="space-y-4">
@@ -1119,6 +1122,77 @@ function SubscriptionControls({
           </p>
         </div>
       </div>
+    </section>
+  );
+}
+
+/**
+ * Per-student complimentary access (wallet model): a free one-month
+ * entitlement with a written reason. No wallet movement, no fake payment —
+ * the grant, reason and granter are recorded and audited.
+ */
+function ComplimentaryControls({ schoolId }: { schoolId: string }) {
+  const [studentId, setStudentId] = useState("");
+  const [reason, setReason] = useState("");
+
+  const grant = useMutation({
+    mutationFn: () =>
+      grantComplimentaryAccess({
+        schoolId,
+        studentId: studentId.trim(),
+        reason: reason.trim(),
+      }),
+    onSuccess: (result) => {
+      toast.success(
+        result.created
+          ? `Complimentary access granted through ${result.periodEnd}.`
+          : "That student already has active access — no grant made.",
+      );
+      setStudentId("");
+      setReason("");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Complimentary grant failed."),
+  });
+
+  return (
+    <section className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
+      <div>
+        <h3 className="font-medium">Complimentary student access</h3>
+        <p className="text-sm text-muted-foreground">
+          Free one-month access for one student. Needs the student&apos;s ID from the school
+          roster and a written reason — both kept in the audit log.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="comp-student">Student ID</Label>
+          <Input
+            id="comp-student"
+            className="h-10"
+            placeholder="Student public ID"
+            value={studentId}
+            onChange={(e) => setStudentId(e.target.value)}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="comp-reason">Reason (required)</Label>
+          <Input
+            id="comp-reason"
+            className="h-10"
+            placeholder="e.g. Flood relief — September intake"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+      </div>
+      <Button
+        size="sm"
+        disabled={!studentId.trim() || !reason.trim() || grant.isPending}
+        onClick={() => grant.mutate()}
+      >
+        {grant.isPending ? "Granting…" : "Grant complimentary access"}
+      </Button>
     </section>
   );
 }

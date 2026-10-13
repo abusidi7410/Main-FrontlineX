@@ -57,30 +57,42 @@ export interface StudentInput {
   guardianPhone: string;
 }
 
+export interface AccessReceipt {
+  amountKobo: number;
+  periodStart: string;
+  periodEnd: string;
+  walletBalanceKobo: number;
+}
+
 export interface RegistrationOutcome {
   student: Student;
   /** The one-time registration invoice, absent when no registration fee applies. */
   invoiceId: string;
   invoiceTotal: string;
   registrationFeeConfigured: boolean;
+  /** The paid monthly access granted atomically with the record. */
+  access: AccessReceipt | null;
 }
 
 export async function createStudent(input: StudentInput): Promise<RegistrationOutcome> {
   // SECURITY: Backend must verify permission students.write and schoolId match.
   // Registration may raise a one-time registration invoice; regular school
   // fees are billed separately by term.
-  const { invoiceId, invoiceTotal, registrationFeeConfigured, ...student } = await apiFetch<
-    Student & {
-      invoiceId?: string;
-      invoiceTotal?: string;
-      registrationFeeConfigured?: boolean;
-    }
-  >("/students", { method: "POST", body: input });
+  const { invoiceId, invoiceTotal, registrationFeeConfigured, access, ...student } =
+    await apiFetch<
+      Student & {
+        invoiceId?: string;
+        invoiceTotal?: string;
+        registrationFeeConfigured?: boolean;
+        access?: AccessReceipt | null;
+      }
+    >("/students", { method: "POST", body: input });
   return {
     student: student as Student,
     invoiceId: invoiceId ?? "",
     invoiceTotal: invoiceTotal ?? "",
     registrationFeeConfigured: Boolean(registrationFeeConfigured),
+    access: access ?? null,
   };
 }
 
@@ -129,6 +141,15 @@ export interface ImportRow {
   issues: string[];
 }
 
+export interface ImportBillingQuote {
+  priceKobo: number;
+  newCount: number;
+  totalCostKobo: number;
+  balanceKobo: number;
+  shortfallKobo: number;
+  coverableCount: number;
+}
+
 export interface ImportAnalysis {
   fileName: string;
   total: number;
@@ -142,6 +163,7 @@ export interface ImportAnalysis {
     afterImport: number;
     exceeds: boolean;
   };
+  billing?: ImportBillingQuote;
 }
 
 export async function analyseImportFile(file: File): Promise<ImportAnalysis> {
@@ -156,6 +178,7 @@ export async function commitImport(file: File): Promise<{
   skipped: number;
   invalid: number;
   duplicates: number;
+  billing: { chargedKobo: number; priceKobo: number; balanceKobo: number };
 }> {
   const formData = new FormData();
   formData.append("file", file, file.name);

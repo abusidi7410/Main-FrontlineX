@@ -82,9 +82,11 @@ class StudentListQueryCountTests(SecurityTestBase):
 
         The daily register resolves the class, its sections, the enrollment
         roster, today's existing marks and the class teacher — five lookups plus
-        the current session, all constant. The point of this test is that the
-        count does not move as students are added, so it measures at two sizes
-        and compares rather than trusting a single magic number.
+        the current session, plus a constant four for the wallet funding quote
+        (pricing, roster ids, one bulk entitlement lookup, wallet balance).
+        All bulk: the point of this test is that the count does not move as
+        students are added, so it measures at two sizes and compares rather
+        than trusting a single magic number.
         """
         from records.models import Enrollment
 
@@ -121,7 +123,7 @@ class StudentListQueryCountTests(SecurityTestBase):
             f'roster queries grew from {small_count} to {large_count} as the class filled',
         )
         self.assertLessEqual(
-            large_count, 6,
+            large_count, 11,
             f'roster issued {large_count} queries',
         )
 

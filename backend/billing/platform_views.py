@@ -1,4 +1,5 @@
 """Platform Manager billing controls: pricing, school messaging, margin overview."""
+
 from __future__ import annotations
 
 from django.db.models import Count, Q, Sum
@@ -10,7 +11,8 @@ from rest_framework.views import APIView
 
 from accounts.permissions import IsSuperAdmin
 from accounts.utils import audit, paginate
-from records.models import UsageRecord
+from records.models import Student, UsageRecord
+from records.services import public_refs
 from schools.models import School
 
 from .models import PlatformPricing, SchoolMessaging, SmsAlert, WalletTransaction
@@ -292,3 +294,62 @@ class ManualAdjustmentView(APIView):
             'reference': entry.reference,
             'balanceKobo': wallet.balance_kobo,
         }, status=status.HTTP_201_CREATED)
+
+
+class ComplimentaryAccessView(APIView):
+    """POST /billing/platform/complimentary/ — authorized free student access.
+
+    Body: {schoolId, studentId (public UUID), reason}. Creates a zero-amount
+    entitlement flagged complimentary — never a fake deposit or payment. Only
+    platform managers; every grant is audited with school, student, reason
+    and granter.
+    """
+
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def post(self, request):
+        school = School.objects.filter(pk=request.data.get('schoolId')).first()
+        if school is None:
+            return Response(
+                {'detail': 'School not found.'}, status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            public_id = public_refs.required_public_id(request.data.get('studentId') or '')
+        except Exception:
+            public_id = None
+        student = (
+            Student.objects.filter(public_id=public_id, school=school).first()
+            if public_id is not None else None
+        )
+        if student is None:
+            return Response(
+                {'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND,
+            )
+        reason = str(request.data.get('reason') or '').strip()
+        if not reason:
+            return Response(
+                {'detail': 'A written reason is required for complimentary access.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        entitlement, created = services.grant_complimentary_access(
+            school, student, reason=reason, actor=request.user,
+        )
+        name = f'{student.first_name} {student.last_name}'.strip() or str(student.pk)
+        audit(
+            request, 'wallet.access.complimentary', name,
+            f'Complimentary access {"granted" if created else "already active"} '
+            f'({entitlement.period_start} – {entitlement.period_end}). Reason: {reason}.',
+            severity='warning', entity='student', entity_id=str(student.pk),
+            after={
+                'schoolId': str(school.pk),
+                'reason': reason,
+                'periodStart': entitlement.period_start.isoformat(),
+                'periodEnd': entitlement.period_end.isoformat(),
+            },
+        )
+        return Response({
+            'created': created,
+            'periodStart': entitlement.period_start.isoformat(),
+            'periodEnd': entitlement.period_end.isoformat(),
+            'reason': entitlement.comp_reason,
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)

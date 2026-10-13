@@ -507,6 +507,11 @@ class StudentImportTests(AttendanceFinanceTests):
             'skipped': 2,
             'invalid': 1,
             'duplicates': 1,
+            'billing': {
+                'chargedKobo': 0,
+                'priceKobo': 11500,
+                'balanceKobo': 0,
+            },
         })
         imported = Student.objects.get(school=self.school, admission_number='ADM-003')
         self.assertEqual(imported.gender, Student.Gender.FEMALE)

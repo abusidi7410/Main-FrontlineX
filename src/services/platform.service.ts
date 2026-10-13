@@ -404,6 +404,14 @@ export async function createManualAdjustment(input: {
   return apiFetch("/billing/platform/adjustments", { method: "POST", body: input });
 }
 
+export async function grantComplimentaryAccess(input: {
+  schoolId: string;
+  studentId: string;
+  reason: string;
+}): Promise<{ created: boolean; periodStart: string; periodEnd: string; reason: string }> {
+  return apiFetch("/billing/platform/complimentary", { method: "POST", body: input });
+}
+
 // ── School users & read-only impersonation ──────────────────────────
 
 export interface PlatformSchoolUser {
