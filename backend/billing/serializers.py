@@ -38,7 +38,7 @@ class WalletDepositSerializer(serializers.ModelSerializer):
 class StudentAccessSerializer(serializers.Serializer):
     """Built from a dict in the view (student + entitlement + status)."""
 
-    studentId = serializers.CharField(source='student.pk')
+    studentId = serializers.SerializerMethodField()
     studentName = serializers.SerializerMethodField()
     admissionNumber = serializers.SerializerMethodField()
     status = serializers.CharField()
@@ -46,6 +46,12 @@ class StudentAccessSerializer(serializers.Serializer):
     periodStart = serializers.SerializerMethodField()
     periodEnd = serializers.SerializerMethodField()
     amountKobo = serializers.SerializerMethodField()
+
+    def get_studentId(self, obj):
+        # The activate endpoint resolves by public UUID (never the numeric pk:
+        # numeric ids 404 there by design), so the list must hand out the same
+        # identifier the action endpoint expects.
+        return str(obj['student'].public_id)
 
     def get_studentName(self, obj):
         student = obj['student']

@@ -314,22 +314,63 @@ class StudentAccessListView(APIView):
             students = students.filter(
                 models_Q_name(search),
             )
+        try:
+            page = max(int(request.query_params.get('page', 1)), 1)
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = int(request.query_params.get('pageSize', 20))
+        except (TypeError, ValueError):
+            page_size = 20
+        page_size = min(max(page_size, 1), 200)
+        # Bulk status: one entitlement query for the whole filtered set, so a
+        # school with hundreds of students costs ~3 queries, not N+1. The
+        # latest entitlement per student drives the status, which also lets
+        # expired/grace students report honestly instead of "NeverActivated".
+        student_ids = list(students.values_list('id', flat=True))
+        latest_by_student: dict[int, StudentEntitlement] = {}
+        if student_ids:
+            for entitlement in StudentEntitlement.objects.filter(
+                student_id__in=student_ids,
+            ).order_by('student_id', '-period_end', '-id'):
+                if entitlement.student_id not in latest_by_student:
+                    latest_by_student[entitlement.student_id] = entitlement
+        statuses: dict[int, str] = {}
+        for sid in student_ids:
+            entitlement = latest_by_student.get(sid)
+            if entitlement is None:
+                statuses[sid] = 'NeverActivated'
+            else:
+                statuses[sid] = services.entitlement_status(
+                    entitlement, grace_days=pricing.grace_days,
+                )
+        summary = {
+            'active': sum(
+                1 for s in statuses.values() if s in ('Active', 'ExpiringSoon')
+            ),
+            'needAttention': sum(
+                1 for s in statuses.values()
+                if s in ('GracePeriod', 'Expired', 'NeverActivated')
+            ),
+        }
+        count = len(student_ids)
+        start = (page - 1) * page_size
+        page_students = list(students[start:start + page_size])
         payload = []
-        for student in students:
-            entitlement = services.live_entitlement(student)
+        for student in page_students:
+            entitlement = latest_by_student.get(student.id)
             payload.append(StudentAccessSerializer(
                 {
                     'student': student,
                     'entitlement': entitlement,
-                    'status': (
-                        services.entitlement_status(
-                            entitlement, grace_days=pricing.grace_days,
-                        ) if entitlement else 'NeverActivated'
-                    ),
+                    'status': statuses[student.id],
                     'priceKobo': pricing.student_price_kobo,
                 },
             ).data)
-        return Response({'results': payload, 'count': len(payload)})
+        return Response({
+            'results': payload, 'count': count, 'page': page,
+            'pageSize': page_size, 'summary': summary,
+        })
 
 
 def models_Q_name(search):

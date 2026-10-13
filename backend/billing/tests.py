@@ -222,6 +222,24 @@ class StudentBillingTests(SchoolTestCase):
             WalletTransaction.objects.filter(school=self.school).count(), before,
         )
 
+    def test_student_list_returns_public_ids_usable_for_activation(self):
+        student = self.make_student(admission_number='W1')
+        listed = self.client.get('/api/v1/billing/students/')
+        self.assertEqual(listed.status_code, 200)
+        row = next(
+            r for r in listed.data['results']
+            if r['admissionNumber'] == 'W1'
+        )
+        # The list id must be the public UUID the activate endpoint expects —
+        # numeric pks 404 there, which used to break wallet activation.
+        self.assertEqual(row['studentId'], str(student.public_id))
+        self.assertIn('summary', listed.data)
+        activated = self.client.post(
+            f"/api/v1/billing/students/{row['studentId']}/activate/",
+        )
+        self.assertEqual(activated.status_code, 200, activated.data)
+        self.assertTrue(activated.data['created'])
+
     def test_duplicate_period_is_rejected_by_the_database(self):
         student = self.make_student(admission_number='W1')
         self._activate(student)

@@ -115,11 +115,20 @@ export async function verifyDeposit(reference: string): Promise<DepositVerificat
   return apiFetch(`/billing/deposits/verify/${encodeURIComponent(reference)}`);
 }
 
-export async function listStudentAccess(search?: string): Promise<{
+export async function listStudentAccess(
+  search?: string,
+  page = 1,
+  pageSize = 20,
+): Promise<{
   results: StudentAccess[];
   count: number;
+  page: number;
+  pageSize: number;
+  summary: { active: number; needAttention: number };
 }> {
-  return apiFetch("/billing/students", { query: search ? { search } : {} });
+  return apiFetch("/billing/students", {
+    query: { ...(search ? { search } : {}), page, pageSize },
+  });
 }
 
 export async function activateStudent(studentId: string): Promise<{

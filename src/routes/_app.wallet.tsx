@@ -240,9 +240,10 @@ function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof ge
   const debounced = useDebounced(search, 300);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [activatingId, setActivatingId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
   const list = useQuery({
-    queryKey: ["wallet", "students", debounced],
-    queryFn: () => listStudentAccess(debounced || undefined),
+    queryKey: ["wallet", "students", debounced, page],
+    queryFn: () => listStudentAccess(debounced || undefined, page, 20),
   });
 
   const activate = async (student: StudentAccess) => {
@@ -251,6 +252,7 @@ function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof ge
       const result = await activateStudent(student.studentId);
       await queryClient.invalidateQueries({ queryKey: ["wallet"] });
       await queryClient.invalidateQueries({ queryKey: ["wallet", "students"] });
+      await queryClient.invalidateQueries({ queryKey: ["wallet", "transactions"] });
       setConfirmId(null);
       if (result.created) {
         toast.success(`${student.studentName} activated until ${dateFmt(result.periodEnd)}.`);
@@ -267,10 +269,10 @@ function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof ge
   };
 
   const rows = list.data?.results ?? [];
-  const active = rows.filter((r) => ["Active", "ExpiringSoon"].includes(r.status)).length;
-  const needAttention = rows.filter((r) =>
-    ["GracePeriod", "Expired", "NeverActivated"].includes(r.status),
-  ).length;
+  const totalCount = list.data?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalCount / (list.data?.pageSize ?? 20)));
+  const active = list.data?.summary.active ?? 0;
+  const needAttention = list.data?.summary.needAttention ?? 0;
 
   return (
     <section className="space-y-3">
@@ -296,7 +298,10 @@ function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof ge
             placeholder="Search by name or admission number"
             aria-label="Search students"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
           />
         </div>
         {list.isError ? (
@@ -373,6 +378,29 @@ function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof ge
               ))}
             </TableBody>
           </Table>
+          <div className="flex items-center justify-between pt-1">
+            <p className="text-sm text-muted-foreground">
+              Page {page} of {totalPages} · {totalCount} students
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         )}
       </div>
     </section>
