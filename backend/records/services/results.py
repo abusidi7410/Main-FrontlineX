@@ -36,9 +36,14 @@ def _now():
 
 
 def _require_access(student) -> None:
-    """Paid feature gate for result recording (no-op when unenforced)."""
+    """Paid feature gate for result recording (no-op when unenforced).
+
+    Auto-debits the school wallet once per billing period via
+    `ensure_student_access`: the first real use activates the student.
+    Raises InsufficientFunds (fund-the-wallet path) when broke.
+    """
     from billing import services as wallet_billing
-    wallet_billing.check_student_access(student)
+    wallet_billing.ensure_student_access(student.school, student)
 
 
 def grade_for(percentage: Decimal) -> str:

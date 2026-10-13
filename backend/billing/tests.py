@@ -560,9 +560,10 @@ class AccessEnforcementTests(SchoolTestCase):
         allowed = self.client.get(f'/api/v1/students/{student.public_id}/')
         self.assertEqual(allowed.status_code, 200)
 
-    def test_result_recording_is_blocked_for_unpaid_student(self):
+    def test_result_recording_auto_activates_and_debits_once(self):
         from records.models import Enrollment
         from records.services import results as results_service
+        from billing.models import Wallet
         student = self.make_student(admission_number='B1')
         Enrollment.objects.create(
             school=self.school, student=student,
@@ -574,20 +575,46 @@ class AccessEnforcementTests(SchoolTestCase):
             class_obj=self.jss1, subject='Mathematics',
             assessment='First Term Test',
         )
-        with self.assertRaises(ValidationError) as raised:
-            results_service.record_scores(
-                sheet, {str(student.public_id): 75},
-            )
-        self.assertEqual(
-            raised.exception.detail['reasonCode'], 'student_access_required',
-        )
-        services.activate_student(self.school, student, actor=self.admin)
+        before = Wallet.objects.get(school=self.school).balance_kobo
         updated = results_service.record_scores(
             sheet, {str(student.public_id): 75},
         )
         self.assertEqual(updated, 1)
+        # Auto-debited exactly once: second write reuses the entitlement.
+        pricing = PlatformPricing.objects.get(pk=1)
+        after = Wallet.objects.get(school=self.school).balance_kobo
+        self.assertEqual(before - after, pricing.student_price_kobo)
+        updated_again = results_service.record_scores(
+            sheet, {str(student.public_id): 80},
+        )
+        self.assertEqual(updated_again, 1)
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, after,
+        )
 
-    def test_attendance_skips_unpaid_students(self):
+    def test_result_recording_without_funds_reports_insufficient(self):
+        from records.models import Enrollment
+        from records.services import results as results_service
+        from billing.models import Wallet
+        from billing import services as billing_services
+        Wallet.objects.filter(school=self.school).update(balance_kobo=0)
+        student = self.make_student(admission_number='B1')
+        Enrollment.objects.create(
+            school=self.school, student=student,
+            academic_session=self.session, class_obj=self.jss1,
+            status=Enrollment.Status.ACTIVE,
+        )
+        sheet = results_service.create_sheet(
+            school=self.school, academic_session=self.session,
+            class_obj=self.jss1, subject='Mathematics',
+            assessment='First Term Test',
+        )
+        with self.assertRaises(billing_services.InsufficientFunds):
+            results_service.record_scores(
+                sheet, {str(student.public_id): 75},
+            )
+
+    def test_attendance_auto_activates_funded_students(self):
         from records.services import attendance as attendance_service
         from records.models import AcademicSession, Enrollment
         paid = self.make_student(admission_number='B1')
@@ -613,7 +640,35 @@ class AccessEnforcementTests(SchoolTestCase):
                 {'studentId': str(unpaid.public_id), 'status': 'present'},
             ],
         )
-        self.assertEqual(result.saved, 1)
+        # Funded wallet: the unpaid student is auto-activated, both saved.
+        self.assertEqual(result.saved, 2)
+        self.assertEqual(result.skipped, 0)
+        self.assertTrue(services.student_has_access(unpaid))
+
+    def test_attendance_skips_students_when_wallet_is_broke(self):
+        from records.services import attendance as attendance_service
+        from records.models import AcademicSession, Enrollment
+        from billing.models import Wallet
+        Wallet.objects.filter(school=self.school).update(balance_kobo=0)
+        unpaid = self.make_student(admission_number='B2')
+        Enrollment.objects.create(
+            school=self.school, student=unpaid,
+            academic_session=self.session, class_obj=self.jss1,
+            status=Enrollment.Status.ACTIVE,
+        )
+        day = timezone.localdate()
+        for _ in range(14):
+            if attendance_service.is_school_day(self.school, day):
+                break
+            day += timedelta(days=1)
+        result = attendance_service.submit_register(
+            user=self.admin, school=self.school, class_obj=self.jss1,
+            day=day,
+            records=[
+                {'studentId': str(unpaid.public_id), 'status': 'present'},
+            ],
+        )
+        self.assertEqual(result.saved, 0)
         self.assertEqual(result.skipped, 1)
 
     def test_grace_period_keeps_access(self):

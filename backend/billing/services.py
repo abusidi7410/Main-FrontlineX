@@ -310,6 +310,26 @@ def check_student_access(student, on: date | None = None) -> None:
     raise StudentAccessRequired(student, pricing.student_price_kobo, wallet.balance_kobo)
 
 
+def ensure_student_access(school, student, *, actor=None, on: date | None = None):
+    """Auto-debit workflow: grant access, charging the wallet once if needed.
+
+    Read paths must keep using `check_student_access` (viewing must never
+    charge). Write paths (result recording, attendance, ...) call this so the
+    first real use of a student in a billing period debits the configured
+    `student_price_kobo` exactly once via `activate_student` (atomic +
+    idempotent under concurrency). Returns (entitlement, created).
+    Raises InsufficientFunds when the wallet cannot cover the charge, and
+    StudentAccessRequired is never raised here — callers surface the
+    InsufficientFunds message with a fund-the-wallet path instead.
+    """
+    pricing = get_pricing()
+    if not pricing.enforce_student_access:
+        return live_entitlement(student, on), False
+    if student_has_access(student, on):
+        return live_entitlement(student, on), False
+    return activate_student(school, student, actor=actor)
+
+
 # ── SME alerts ─────────────────────────────────────────────────────────
 
 class AlertBlocked(ValidationError):

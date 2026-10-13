@@ -264,11 +264,30 @@ def submit_register(
     valid_statuses = set(AttendanceRecord.Status.values)
     to_create = []
 
-    # Paid feature: students without access are skipped, never recorded. The
-    # skipped counter reports them, so the register stays truthful without
-    # blocking the whole class for one unpaid student.
+    # Paid feature: first real use of a student in a billing period auto-debits
+    # the wallet once via ensure_student_access. Students whose wallet cannot
+    # cover the charge are skipped (and counted) so one broke student never
+    # blocks the whole class register.
     from billing import services as wallet_billing
-    allowed_ids = wallet_billing.students_with_access(set(roster.values()), day)
+    allowed_ids = set(wallet_billing.students_with_access(set(roster.values()), day))
+    if wallet_billing.get_pricing().enforce_student_access:
+        from records.models import Student as _Student
+        missing_ids = set(roster.values()) - allowed_ids
+        if missing_ids:
+            students_by_id = {
+                s.id: s for s in _Student.objects.filter(
+                    id__in=list(missing_ids), school=school,
+                )
+            }
+            for sid in sorted(missing_ids):
+                student = students_by_id.get(sid)
+                if student is None:
+                    continue
+                try:
+                    wallet_billing.ensure_student_access(school, student, actor=user, on=day)
+                except Exception:  # noqa: BLE001 - broke/wrong-school students skip, never block register
+                    continue
+                allowed_ids.add(sid)
 
     for item in records:
         raw_id = item.get('studentId')
