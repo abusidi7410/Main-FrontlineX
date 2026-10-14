@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -140,6 +140,7 @@ function AccountsPage() {
   const accounts = useQuery({
     queryKey: ["accounts", { search: debouncedSearch, role, status, page }],
     queryFn: () => listAccounts({ search: debouncedSearch, role, status, page }),
+    placeholderData: keepPreviousData,
   });
   const stats = useQuery({ queryKey: ["account-stats"], queryFn: getAccountStats });
 

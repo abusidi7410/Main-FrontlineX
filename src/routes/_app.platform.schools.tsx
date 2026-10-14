@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Building2, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -109,6 +109,7 @@ function PlatformSchoolsPage() {
     queryKey: ["platform", "schools", debounced, status, page],
     queryFn: () =>
       listPlatformSchools(debounced, status === "all" ? "" : status, page, 20),
+    placeholderData: keepPreviousData,
   });
 
   const mutation = useMutation({

@@ -44,6 +44,7 @@ import type {
 } from "@/types";
 import { cn } from "@/lib/utils";
 import { schoolToday } from "@/lib/format";
+import { useDebounced } from "@/hooks/use-debounced";
 import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 
 const STATUSES: AttendanceStatus[] = ["present", "absent", "late", "excused"];
@@ -419,15 +420,16 @@ function StaffAttendanceRecords({ initialDate }: { initialDate: string }) {
   const [date, setDate] = useState(initialDate);
   const [status, setStatus] = useState<StaffAttendanceStatus | "all">("all");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounced(search, 300);
   useEffect(() => setDate(initialDate), [initialDate]);
 
   const query = useQuery({
-    queryKey: ["staff-attendance", "records", date, status, search],
+    queryKey: ["staff-attendance", "records", date, status, debouncedSearch],
     queryFn: () =>
       getStaffAttendance({
         date,
         ...(status === "all" ? {} : { status: [status] }),
-        ...(search.trim() ? { search: search.trim() } : {}),
+        ...(debouncedSearch.trim() ? { search: debouncedSearch.trim() } : {}),
         pageSize: 100,
       }),
   });

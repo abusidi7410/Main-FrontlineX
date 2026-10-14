@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Pencil, Plus } from "lucide-react";
@@ -77,6 +77,7 @@ function ResultsPage() {
   const query = useQuery({
     queryKey: ["results", page],
     queryFn: () => getResultSheetPage(page),
+    placeholderData: keepPreviousData,
   });
   const [openId, setOpenId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);

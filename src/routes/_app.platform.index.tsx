@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
   Activity,
@@ -688,6 +688,7 @@ function SchoolTransactionsSection() {
         page,
         pageSize: 10,
       }),
+    placeholderData: keepPreviousData,
   });
   const summary = query.data?.summary;
 

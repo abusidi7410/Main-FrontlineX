@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -241,6 +241,7 @@ function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof ge
   const list = useQuery({
     queryKey: ["wallet", "students", debounced, page],
     queryFn: () => listStudentAccess(debounced || undefined, page, 20),
+    placeholderData: keepPreviousData,
   });
 
   const activate = async (student: StudentAccess) => {
@@ -395,6 +396,7 @@ function TransactionsSection() {
   const query = useQuery({
     queryKey: ["wallet", "transactions", category, page],
     queryFn: () => listWalletTransactions(page, 20, category === "all" ? undefined : category),
+    placeholderData: keepPreviousData,
   });
 
   return (
