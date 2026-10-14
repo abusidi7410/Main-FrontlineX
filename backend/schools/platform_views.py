@@ -193,12 +193,21 @@ def _overview_rows(now, range_days, auth_school_id):
         "COUNT(DISTINCT CASE WHEN p.status = 'failed' AND p.created_at >= %s THEN p.id END) AS failed_payments",
     ]
     payment_params = [payment_cutoff]
+    wallet_columns = []
+    wallet_params = []
     for index, (start, end) in enumerate(month_buckets):
         payment_columns.append(
             "COALESCE(SUM(CASE WHEN p.status = 'verified' AND p.created_at >= %s "
             "AND p.created_at < %s THEN p.amount ELSE 0 END), 0) AS revenue_{}".format(index)
         )
         payment_params.extend([start, end])
+        # Wallet-first revenue: successful deposit credits, stored in kobo.
+        wallet_columns.append(
+            "COALESCE(SUM(CASE WHEN w.direction = 'credit' AND w.category = 'deposit' "
+            "AND w.status = 'success' AND w.created_at >= %s "
+            "AND w.created_at < %s THEN w.amount_kobo ELSE 0 END), 0) AS wallet_{}".format(index)
+        )
+        wallet_params.extend([start, end])
 
     active_school_columns = ', '.join(
         'COALESCE(lr.active_school_{}, 0) AS active_school_{}'.format(index, index)
@@ -206,6 +215,13 @@ def _overview_rows(now, range_days, auth_school_id):
     )
     revenue_columns = ', '.join(
         'COALESCE(pr.revenue_{}, 0) AS revenue_{}'.format(index, index)
+        for index in range(len(month_buckets))
+    )
+    wallet_output_columns = ', '.join(
+        'wallet_{}'.format(index) for index in range(len(month_buckets))
+    )
+    wallet_rollup_columns = ', '.join(
+        'COALESCE(wr.wallet_{}, 0) AS wallet_{}'.format(index, index)
         for index in range(len(month_buckets))
     )
     active_school_output_columns = ', '.join(
@@ -222,9 +238,16 @@ def _overview_rows(now, range_days, auth_school_id):
 
     sql = """
 WITH student_counts AS (
-    SELECT school_id, COUNT(*) AS students
+    SELECT school_id,
+        COUNT(CASE WHEN status = 'active' THEN 1 END) AS students,
+        COUNT(*) AS total_students
     FROM records_student
-    WHERE status = 'active'
+    GROUP BY school_id
+),
+user_counts AS (
+    SELECT school_id, COUNT(*) AS users
+    FROM accounts_user
+    WHERE school_id IS NOT NULL
     GROUP BY school_id
 ),
 login_rollup AS (
@@ -236,6 +259,11 @@ login_rollup AS (
 payment_rollup AS (
     SELECT school_id, {payment_columns}
     FROM records_payment p
+    GROUP BY school_id
+),
+wallet_rollup AS (
+    SELECT school_id, {wallet_columns}
+    FROM billing_wallettransaction w
     GROUP BY school_id
 ),
 school_rollup AS (
@@ -262,17 +290,22 @@ school_rollup AS (
             ELSE 0
         END AS mrr,
         COALESCE(sc.students, 0) AS students,
+        COALESCE(sc.total_students, 0) AS total_students,
+        COALESCE(uc.users, 0) AS users,
         lr.last_active,
         COALESCE(lr.active_logins_24h, 0) AS active_logins_24h,
         COALESCE(pr.failed_payments, 0) AS failed_payments,
         {active_school_columns},
-        {revenue_columns}
+        {revenue_columns},
+        {wallet_rollup_columns}
     FROM schools_school s
     LEFT JOIN schools_schoolsubscription ss ON ss.school_id = s.id
     LEFT JOIN schools_subscriptionplan plan ON plan.id = ss.plan_id
     LEFT JOIN student_counts sc ON sc.school_id = s.id
+    LEFT JOIN user_counts uc ON uc.school_id = s.id
     LEFT JOIN login_rollup lr ON lr.school_id = s.id
     LEFT JOIN payment_rollup pr ON pr.school_id = s.id
+    LEFT JOIN wallet_rollup wr ON wr.school_id = s.id
     {scope_clause}
 )
 SELECT
@@ -281,6 +314,8 @@ SELECT
     state,
     plan,
     students,
+    total_students,
+    users,
     mrr,
     status,
     last_active,
@@ -288,7 +323,8 @@ SELECT
     failed_payments,
     active_logins_24h,
     {active_school_output_columns},
-    {revenue_output_columns}
+    {revenue_output_columns},
+    {wallet_output_columns}
 FROM school_rollup
 ORDER BY
     CASE status
@@ -302,13 +338,16 @@ ORDER BY
 """.format(
         login_columns=', '.join(login_columns),
         payment_columns=', '.join(payment_columns),
+        wallet_columns=', '.join(wallet_columns),
         active_school_columns=active_school_columns,
         revenue_columns=revenue_columns,
+        wallet_rollup_columns=wallet_rollup_columns,
         active_school_output_columns=active_school_output_columns,
         revenue_output_columns=revenue_output_columns,
+        wallet_output_columns=wallet_output_columns,
         scope_clause=scope_clause,
     )
-    params = login_params + payment_params + scope_params
+    params = login_params + payment_params + wallet_params + scope_params
     with connection.cursor() as cursor:
         cursor.execute(sql, params)
         columns = [column[0] for column in cursor.description]
@@ -320,10 +359,13 @@ def _overview_payload(rows, range_days):
     mrr = 0.0
     active_logins = 0
     failed_payments = 0
+    total_users = 0
+    total_students = 0
     at_risk = []
     month_count = 6
     active_school_totals = [0] * month_count
     revenue_trend = [0.0] * month_count
+    wallet_trend = [0.0] * month_count
     now = timezone.now()
     renewal_cutoff = now + timedelta(days=range_days)
 
@@ -334,10 +376,15 @@ def _overview_payload(rows, range_days):
         mrr += float(row['mrr'] or 0)
         active_logins += int(row['active_logins_24h'] or 0)
         failed_payments += int(row['failed_payments'] or 0)
+        total_users += int(row['users'] or 0)
+        total_students += int(row['total_students'] or 0)
         for index in range(month_count):
             if int(row[f'active_school_{index}'] or 0) > 0:
                 active_school_totals[index] += 1
             revenue_trend[index] += float(row[f'revenue_{index}'] or 0)
+            # Wallet ledger is kobo; the API speaks naira like every other
+            # money figure on this payload.
+            wallet_trend[index] += float(row[f'wallet_{index}'] or 0) / 100
         if status in {'grace', 'suspended', 'pending_payment'}:
             renewal_date = _overview_datetime(row['renewal_date'])
             last_active = _overview_datetime(row['last_active'])
@@ -357,6 +404,10 @@ def _overview_payload(rows, range_days):
     return {
         'mrr': round(mrr, 2),
         'mrrTrend': [round(value, 2) for value in revenue_trend],
+        'walletDepositsTrend': [round(value, 2) for value in wallet_trend],
+        'walletDepositsTotal': round(sum(wallet_trend), 2),
+        'totalUsers': total_users,
+        'totalStudents': total_students,
         'schoolsByStatus': status_counts,
         'activeSchools': status_counts['active'],
         'activeSchoolsTrend': active_school_totals,

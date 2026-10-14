@@ -585,6 +585,10 @@ export type PlatformOverviewRange = "7d" | "30d" | "90d";
 export interface PlatformOverview {
   mrr: number;
   mrrTrend: number[];
+  walletDepositsTrend: number[];
+  walletDepositsTotal: number;
+  totalUsers: number;
+  totalStudents: number;
   schoolsByStatus: Record<SchoolStatus, number>;
   activeSchools: number;
   activeSchoolsTrend: number[];

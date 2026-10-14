@@ -317,6 +317,13 @@ class PlatformOverviewTests(TestCase):
             reference='OV-PAY-002',
         )
         Payment.objects.filter(id=failed_payment.id).update(created_at=self.now - timedelta(days=3))
+        from billing import services as wallet_services
+        from billing.models import WalletTransaction
+        wallet_services.credit_wallet(
+            self.active_school, 250000,
+            category=WalletTransaction.Category.DEPOSIT,
+            description='Overview wallet deposit',
+        )
         self.client = APIClient()
         self.client.force_authenticate(self.platform)
 
@@ -364,6 +371,10 @@ class PlatformOverviewTests(TestCase):
         self.assertEqual(payload['schoolsByStatus']['pending_payment'], 1)
         self.assertEqual(len(payload['mrrTrend']), 6)
         self.assertEqual(len(payload['atRiskSchools']), 2)
+        self.assertEqual(payload['totalUsers'], 1)
+        self.assertEqual(payload['totalStudents'], 2)
+        self.assertEqual(len(payload['walletDepositsTrend']), 6)
+        self.assertEqual(payload['walletDepositsTotal'], 2500.0)
         at_risk_by_name = {row['name']: row for row in payload['atRiskSchools']}
         self.assertEqual(at_risk_by_name['Overview Pending']['failedPayments'], 1)
 

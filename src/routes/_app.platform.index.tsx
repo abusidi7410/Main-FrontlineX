@@ -87,7 +87,8 @@ const STATUS_META: { status: SchoolStatus; label: string; color: string }[] = [
 ];
 
 const REVENUE_CHART_CONFIG = {
-  revenue: { label: "Revenue", color: "var(--primary)" },
+  revenue: { label: "Subscriptions", color: "var(--primary)" },
+  wallet: { label: "Wallet deposits", color: "var(--success)" },
 };
 
 function isPlatformRange(value: string): value is PlatformOverviewRange {
@@ -180,6 +181,9 @@ function downloadOverview(data: PlatformOverviewData) {
     ["Platform overview", `Last ${data.rangeDays} days`],
     ["Metric", "Value"],
     ["Monthly recurring revenue", data.mrr],
+    ["Wallet deposits collected (6 mo)", data.walletDepositsTotal],
+    ["Registered users", data.totalUsers],
+    ["Registered students", data.totalStudents],
     ["Active schools", data.activeSchools],
     ["Active logins (24h)", data.activeLogins24h],
     ["Failed payments", data.failedPayments],
@@ -284,16 +288,18 @@ function PlatformOverview() {
   const data = query.data;
 
   const revenueData = useMemo(() => {
-    const values = data?.mrrTrend ?? [];
+    const subscriptions = data?.mrrTrend ?? [];
+    const wallet = data?.walletDepositsTrend ?? [];
     const now = new Date();
-    return values.map((value, index) => {
-      const month = new Date(now.getFullYear(), now.getMonth() - (values.length - 1 - index), 1);
+    return subscriptions.map((value, index) => {
+      const month = new Date(now.getFullYear(), now.getMonth() - (subscriptions.length - 1 - index), 1);
       return {
         month: month.toLocaleDateString("en-NG", { month: "short" }),
         revenue: value,
+        wallet: wallet[index] ?? 0,
       };
     });
-  }, [data?.mrrTrend]);
+  }, [data?.mrrTrend, data?.walletDepositsTrend]);
 
   const statusData = useMemo(
     () =>
@@ -389,16 +395,40 @@ function PlatformOverview() {
               />
             </div>
 
+            <div className="grid gap-4 md:grid-cols-3">
+              <StatCard
+                label="Wallet deposits collected"
+                value={naira(data.walletDepositsTotal)}
+                tone="success"
+                icon={<WalletCards className="size-5" aria-hidden="true" />}
+                hint="Verified deposits across all schools, last 6 months"
+              />
+              <StatCard
+                label="Registered users"
+                value={numberFmt(data.totalUsers)}
+                icon={<UsersRound className="size-5" aria-hidden="true" />}
+                hint="Every account with a school"
+              />
+              <StatCard
+                label="Registered students"
+                value={numberFmt(data.totalStudents)}
+                icon={<Building2 className="size-5" aria-hidden="true" />}
+                hint="All statuses, every school"
+              />
+            </div>
+
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.9fr)]">
               <section className="fn-panel min-w-0 border border-border/60 p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 className="font-medium">Revenue</h2>
-                    <p className="mt-1 text-sm text-muted-foreground">Last 6 months</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Last 6 months · verified money only
+                    </p>
                   </div>
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success">
                     <Activity className="size-3.5" aria-hidden="true" />
-                    Verified payments
+                    Subscriptions + wallet deposits
                   </span>
                 </div>
                 <ChartContainer config={REVENUE_CHART_CONFIG} className="mt-5 h-[280px] w-full">
@@ -422,13 +452,22 @@ function PlatformOverview() {
                       cursor={{ fill: "var(--muted)" }}
                       content={
                         <ChartTooltipContent
-                          formatter={(value) => [naira(Number(value)), "Revenue"]}
+                          formatter={(value, name) => [
+                            naira(Number(value)),
+                            name === "wallet" ? "Wallet deposits" : "Subscriptions",
+                          ]}
                         />
                       }
                     />
                     <Bar
                       dataKey="revenue"
                       fill="var(--color-revenue)"
+                      radius={[7, 7, 2, 2]}
+                      maxBarSize={42}
+                    />
+                    <Bar
+                      dataKey="wallet"
+                      fill="var(--color-wallet)"
                       radius={[7, 7, 2, 2]}
                       maxBarSize={42}
                     />
