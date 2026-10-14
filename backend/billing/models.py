@@ -85,6 +85,8 @@ class WalletTransaction(models.Model):
             models.Index(fields=['school', 'category']),
             models.Index(fields=['school', 'status']),
             models.Index(fields=['student', '-created_at']),
+            # Transaction lists filter school + category, newest first.
+            models.Index(fields=['school', 'category', '-created_at']),
         ]
 
     def save(self, *args, **kwargs):

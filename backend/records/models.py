@@ -322,6 +322,11 @@ class StaffMember(models.Model):
 
     class Meta:
         ordering = ['full_name']
+        indexes = [
+            # Staff directory is always school-scoped, ordered by name.
+            models.Index(fields=['school', 'full_name']),
+            models.Index(fields=['school', 'status']),
+        ]
 
     def __str__(self):
         return self.full_name
@@ -676,6 +681,8 @@ class Invoice(models.Model):
             models.Index(fields=['school', 'student']),
             models.Index(fields=['school', 'academic_session']),
             models.Index(fields=['school', '-created_at']),
+            # Invoice list + generation filter live rows per term, newest first.
+            models.Index(fields=['school', 'term', 'is_cancelled', '-created_at']),
         ]
 
     def __str__(self):
@@ -782,6 +789,8 @@ class Payment(models.Model):
             models.Index(fields=['school', 'status']),
             models.Index(fields=['invoice', 'status']),
             models.Index(fields=['school', '-created_at']),
+            # Finance summary filters verified payments per school over time.
+            models.Index(fields=['school', 'status', 'created_at']),
         ]
 
     def __str__(self):

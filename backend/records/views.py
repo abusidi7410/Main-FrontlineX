@@ -1250,37 +1250,49 @@ class InvoiceGenerateView(APIView):
         students = Student.objects.filter(
             school_id=school.id, class_name=class_name, status=Student.Status.ACTIVE,
         )
+        # One lookup for the whole class instead of one per student: the old
+        # loop held a row lock on every student while issuing N invoice
+        # lookups + N creates inside a single long transaction, which timed
+        # out on large classes. The student lock guarded nothing (students are
+        # never written here); live-invoice uniqueness is decided by this one
+        # read plus the partial unique constraint.
+        roster = dict(
+            students.order_by('id').values_list('id', 'admission_number'),
+        )
+        existing = {
+            invoice.student_id: invoice
+            for invoice in Invoice.objects.filter(
+                school_id=school.id, student_id__in=list(roster),
+                term=term, is_cancelled=False,
+            )
+        }
         generated = updated = 0
+        to_create = []
         with transaction.atomic():
-            for student in students.select_for_update():
-                # A cancelled invoice is history, not a live charge. Looking it
-                # up here meant the overwrite branch below would rewrite a
-                # cancelled invoice's amounts and leave it cancelled, so the
-                # student was silently never re-billed.
-                invoice = Invoice.objects.filter(
-                    school_id=school.id, student_id=student.id, term=term,
-                    is_cancelled=False,
-                ).first()
-                if invoice:
+            for student_id, admission_number in roster.items():
+                invoice = existing.get(student_id)
+                if invoice is not None:
                     if overwrite:
                         policy_service.assert_invoice_rewritable(
                             invoice,
-                            f'Invoice for {student.admission_number} ({term})',
+                            f'Invoice for {admission_number} ({term})',
                         )
                         invoice.items = items
                         invoice.total = total
                         invoice.save(update_fields=['items', 'total'])
                         updated += 1
                     continue
-                Invoice.objects.create(
+                to_create.append(Invoice(
                     school_id=school.id,
-                    student_id=student.id,
+                    student_id=student_id,
                     term=term,
                     total=total,
                     paid=0,
                     items=items,
-                )
-                generated += 1
+                ))
+            if to_create:
+                Invoice.objects.bulk_create(to_create)
+                generated = len(to_create)
         return Response({
             'generated': generated,
             'updated': updated,
@@ -1668,24 +1680,34 @@ class FinanceSummaryView(APIView):
 
     def get(self, request):
         school = request.user.school
-        invoices = Invoice.objects.filter(
-            school_id=request.user.school_id,
-        ).filter(
+        invoice_filter = (
             Q(term=school.current_term)
-            | Q(source=Invoice.Source.ADMISSION, term=''),
-        ).select_related('student')
+            | Q(source=Invoice.Source.ADMISSION, term='')
+        )
+        base_invoices = Invoice.objects.filter(
+            school_id=request.user.school_id,
+        ).filter(invoice_filter)
         payments = Payment.objects.filter(school_id=request.user.school_id)
         if request.user.role == 'student':
             student_id = request.user.student_profile_id
-            invoices = invoices.filter(student_id=student_id)
+            base_invoices = base_invoices.filter(student_id=student_id)
             payments = payments.filter(invoice__student_id=student_id)
 
-        invoice_totals = invoices.aggregate(total=Sum('total'), paid=Sum('paid'))
-        today = timezone.localdate()
+        # Aggregates run on the base filter without the student join: the
+        # join is only needed for the three recent rows below, and dragging
+        # it through the totals loads every student row for nothing.
+        invoice_totals = base_invoices.aggregate(total=Sum('total'), paid=Sum('paid'))
+        midnight = timezone.localtime(timezone.now()).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        day_start, day_end = midnight, midnight + timedelta(days=1)
         payment_totals = payments.aggregate(
             collected_today=Sum(
                 'amount',
-                filter=Q(status=Payment.Status.VERIFIED, created_at__date=today),
+                filter=Q(
+                    status=Payment.Status.VERIFIED,
+                    created_at__gte=day_start, created_at__lt=day_end,
+                ),
             ),
             pending_count=Count('id', filter=Q(status=Payment.Status.PENDING)),
             cash_today=Sum(
@@ -1693,7 +1715,7 @@ class FinanceSummaryView(APIView):
                 filter=Q(
                     status=Payment.Status.VERIFIED,
                     method=Payment.Method.CASH,
-                    created_at__date=today,
+                    created_at__gte=day_start, created_at__lt=day_end,
                 ),
             ),
         )
@@ -1712,7 +1734,9 @@ class FinanceSummaryView(APIView):
             'collectedToday': float(payment_totals['collected_today'] or 0),
             'pendingPaymentCount': payment_totals['pending_count'],
             'cashToday': float(payment_totals['cash_today'] or 0),
-            'recentInvoices': InvoiceSerializer(invoices.order_by('-id')[:3], many=True).data,
+            'recentInvoices': InvoiceSerializer(
+                base_invoices.select_related('student').order_by('-id')[:3], many=True,
+            ).data,
             'recentPayments': PaymentSerializer(
                 recent_payments, many=True, context={'request': request},
             ).data,
