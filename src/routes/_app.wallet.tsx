@@ -47,7 +47,7 @@ export const Route = createFileRoute("/_app/wallet")({
       { title: "Wallet & Billing — Frontline Nexus" },
       {
         name: "description",
-        content: "Prepaid wallet, per-student access, SME alerts and transaction history.",
+        content: "Prepaid wallet, per-student access and transaction history.",
       },
       { property: "og:title", content: "Wallet & Billing — Frontline Nexus" },
       { name: "robots", content: "noindex" },
@@ -61,7 +61,6 @@ const TX_CATEGORIES = [
   "deposit",
   "student_activation",
   "student_renewal",
-  "sms_alert",
   "refund",
   "adjustment",
 ] as const;
@@ -429,7 +428,7 @@ function TransactionsSection() {
       ) : query.data.results.length === 0 ? (
         <EmptyState
           title="No transactions yet"
-          description="Deposits, activations, renewals, alerts and refunds appear here."
+          description="Deposits, activations, renewals and refunds appear here."
         />
       ) : (
         <>
