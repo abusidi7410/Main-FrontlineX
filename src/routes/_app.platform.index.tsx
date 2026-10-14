@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
-import { CardsSkeleton, ErrorState } from "@/components/common/states";
+import { CardsSkeleton, EmptyState, ErrorState, ListSkeleton } from "@/components/common/states";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatCard } from "@/components/common/stat-card";
@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -41,8 +42,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SUBSCRIPTION_TIERS } from "@/constants/plans";
-import { compactNaira, dateFmt, naira, numberFmt, titleCase } from "@/lib/format";
-import { getPlatformOverview } from "@/services/platform.service";
+import { useDebounced } from "@/hooks/use-debounced";
+import { cn } from "@/lib/utils";
+import { compactNaira, dateFmt, dateTimeFmt, naira, numberFmt, titleCase } from "@/lib/format";
+import { getPlatformOverview, listPlatformTransactions } from "@/services/platform.service";
 import type {
   AtRiskSchool,
   PlatformOverview as PlatformOverviewData,
@@ -639,6 +642,8 @@ function PlatformOverview() {
               </div>
             </section>
 
+            <SchoolTransactionsSection />
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="fn-panel flex items-center gap-3 border border-border/60 p-4">
                 <div className="fn-icon-tile size-9 text-info">
@@ -667,5 +672,185 @@ function PlatformOverview() {
         ) : null}
       </div>
     </PermissionGate>
+  );
+}
+
+const PLATFORM_TXN_CATEGORIES = [
+  "all",
+  "deposit",
+  "student_activation",
+  "student_renewal",
+  "sms_alert",
+  "refund",
+  "adjustment",
+] as const;
+
+function SchoolTransactionsSection() {
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState<(typeof PLATFORM_TXN_CATEGORIES)[number]>("all");
+  const [page, setPage] = useState(1);
+  const debounced = useDebounced(search, 300);
+  const query = useQuery({
+    queryKey: ["platform", "transactions", debounced, category, page],
+    queryFn: () =>
+      listPlatformTransactions({
+        ...(debounced ? { search: debounced } : {}),
+        ...(category === "all" ? {} : { category }),
+        page,
+        pageSize: 10,
+      }),
+  });
+  const summary = query.data?.summary;
+
+  return (
+    <section className="fn-panel space-y-4 border border-border/60 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-medium">School transactions</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Every wallet movement across all schools — deposits, access charges, renewals,
+            SME charges, refunds and adjustments.
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Input
+            className="h-10 sm:w-64"
+            placeholder="Search reference or school"
+            aria-label="Search transactions"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+          />
+          <Select
+            value={category}
+            onValueChange={(value) => {
+              setCategory(value as (typeof PLATFORM_TXN_CATEGORIES)[number]);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="h-10 sm:w-52" aria-label="Filter by category">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PLATFORM_TXN_CATEGORIES.map((c) => (
+                <SelectItem key={c} value={c}>
+                  {c === "all" ? "All categories" : c.replace(/_/g, " ")}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {summary ? (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="fn-panel flex items-center gap-3 border border-border/60 p-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Deposits in (filter)</p>
+              <p className="font-semibold tabular-nums text-success">
+                +{naira(summary.creditsKobo / 100)}
+              </p>
+            </div>
+          </div>
+          <div className="fn-panel flex items-center gap-3 border border-border/60 p-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Charges out (filter)</p>
+              <p className="font-semibold tabular-nums">
+                −{naira(summary.debitsKobo / 100)}
+              </p>
+            </div>
+          </div>
+          <div className="fn-panel flex items-center gap-3 border border-border/60 p-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Transactions (filter)</p>
+              <p className="font-semibold tabular-nums">{numberFmt(summary.count)}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {query.isError ? (
+        <ErrorState onRetry={() => void query.refetch()} />
+      ) : query.isPending ? (
+        <ListSkeleton />
+      ) : query.data.results.length === 0 ? (
+        <EmptyState
+          title="No transactions match"
+          description="Try a different reference, school name or category."
+        />
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[880px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>School</TableHead>
+                  <TableHead>Transaction</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {query.data.results.map((tx) => (
+                  <TableRow key={tx.id}>
+                    <TableCell className="whitespace-nowrap text-muted-foreground">
+                      {dateTimeFmt(tx.created_at)}
+                    </TableCell>
+                    <TableCell className="font-medium">{tx.schoolName}</TableCell>
+                    <TableCell>
+                      <p>{tx.description || tx.reference}</p>
+                      <p className="font-mono text-xs text-muted-foreground">{tx.reference}</p>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {tx.category.replace(/_/g, " ")}
+                    </TableCell>
+                    <TableCell
+                      className={cn(
+                        "text-right font-medium tabular-nums",
+                        tx.direction === "credit" ? "text-success" : "text-foreground",
+                      )}
+                    >
+                      {tx.direction === "credit" ? "+" : "−"}
+                      {naira(tx.amount_kobo / 100)}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge status={tx.status} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Page {query.data.page} of{" "}
+              {Math.max(1, Math.ceil(query.data.count / query.data.pageSize))}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page * query.data.pageSize >= query.data.count}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
   );
 }

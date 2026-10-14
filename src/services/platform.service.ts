@@ -305,6 +305,44 @@ export async function getPlatformProfit(month?: string): Promise<Record<string, 
   return apiFetch("/platform/profit", { query: { month } });
 }
 
+// ── School wallet transaction trace ───────────────────────────────
+
+export interface PlatformTransaction {
+  id: number;
+  reference: string;
+  direction: "credit" | "debit";
+  amount_kobo: number;
+  category: string;
+  status: string;
+  description: string;
+  created_at: string;
+  studentName: string;
+  admissionNumber: string;
+  schoolId: string;
+  schoolName: string;
+}
+
+export interface PlatformTransactionPage {
+  results: PlatformTransaction[];
+  count: number;
+  page: number;
+  pageSize: number;
+  summary: { count: number; creditsKobo: number; debitsKobo: number };
+}
+
+export async function listPlatformTransactions(params?: {
+  school?: string;
+  category?: string;
+  direction?: string;
+  status?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<PlatformTransactionPage> {
+  // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
+  return apiFetch("/billing/platform/transactions", { query: { ...(params ?? {}) } });
+}
+
 // ── Platform settings ───────────────────────────────────────────────
 
 export interface PlatformSettings {

@@ -469,6 +469,59 @@ class PlatformBillingTests(SchoolTestCase):
         self.assertIn('chargedKobo', response.data['alerts'])
         self.assertIn('unknownCostCount', response.data['alerts'])
 
+    def test_platform_transaction_trace_sees_every_school(self):
+        services.credit_wallet(
+            self.school, 50000, category=WalletTransaction.Category.DEPOSIT,
+            description='School A deposit',
+        )
+        services.credit_wallet(
+            self.other_school, 30000, category=WalletTransaction.Category.DEPOSIT,
+            description='School B deposit',
+        )
+        services.debit_wallet(
+            self.other_school, 11500,
+            category=WalletTransaction.Category.STUDENT_ACTIVATION,
+            description='School B activation', what='student access',
+        )
+        self._platform()
+        response = self.client.get('/api/v1/billing/platform/transactions/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['count'], 3)
+        names = {row['schoolName'] for row in response.data['results']}
+        self.assertEqual(names, {'Success Academy', 'Rival College'})
+        self.assertEqual(response.data['summary']['creditsKobo'], 80000)
+        self.assertEqual(response.data['summary']['debitsKobo'], 11500)
+
+    def test_platform_transaction_trace_filters_by_school(self):
+        services.credit_wallet(
+            self.school, 50000, category=WalletTransaction.Category.DEPOSIT,
+        )
+        services.credit_wallet(
+            self.other_school, 30000, category=WalletTransaction.Category.DEPOSIT,
+        )
+        self._platform()
+        response = self.client.get(
+            '/api/v1/billing/platform/transactions/',
+            {'school': str(self.other_school.pk)},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(
+            response.data['results'][0]['schoolName'], 'Rival College',
+        )
+        searched = self.client.get(
+            '/api/v1/billing/platform/transactions/', {'search': 'Rival'},
+        )
+        self.assertEqual(searched.data['count'], 1)
+
+    def test_platform_transaction_trace_is_platform_only(self):
+        self.auth(self.admin)
+        response = self.client.get('/api/v1/billing/platform/transactions/')
+        self.assertEqual(response.status_code, 403)
+        self.client.force_authenticate(user=None)
+        response = self.client.get('/api/v1/billing/platform/transactions/')
+        self.assertEqual(response.status_code, 401)
+
 
 class AccessEnforcementTests(SchoolTestCase):
     """Unpaid students are blocked from paid features until staff activate them.

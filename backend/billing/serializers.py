@@ -26,6 +26,26 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
         return obj.student.admission_number if obj.student else ''
 
 
+class PlatformTransactionSerializer(WalletTransactionSerializer):
+    """Wallet ledger rows with their owning school attached.
+
+    Platform-only: school staff keep the school-scoped serializer above so a
+    school can never enumerate another tenant's ledger through this shape.
+    """
+
+    schoolId = serializers.SerializerMethodField()
+    schoolName = serializers.SerializerMethodField()
+
+    class Meta(WalletTransactionSerializer.Meta):
+        fields = WalletTransactionSerializer.Meta.fields + ['schoolId', 'schoolName']
+
+    def get_schoolId(self, obj):
+        return str(obj.school_id)
+
+    def get_schoolName(self, obj):
+        return obj.school.name if obj.school_id else ''
+
+
 class WalletDepositSerializer(serializers.ModelSerializer):
     class Meta:
         model = WalletDeposit

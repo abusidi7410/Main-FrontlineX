@@ -16,7 +16,11 @@ from records.services import public_refs
 from schools.models import School
 
 from .models import PlatformPricing, SchoolMessaging, SmsAlert, WalletTransaction
-from .serializers import SmsAlertSerializer, WalletTransactionSerializer
+from .serializers import (
+    PlatformTransactionSerializer,
+    SmsAlertSerializer,
+    WalletTransactionSerializer,
+)
 from . import services
 
 
@@ -353,3 +357,69 @@ class ComplimentaryAccessView(APIView):
             'periodEnd': entitlement.period_end.isoformat(),
             'reason': entitlement.comp_reason,
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class PlatformTransactionListView(APIView):
+    """GET /billing/platform/transactions/ — every school's wallet ledger.
+
+    The platform manager's transaction trace: deposits in, access charges,
+    renewals, SME charges, refunds and manual adjustments, across all
+    schools, newest first. Filters: `school` (pk), `category`, `direction`,
+    `status`, `search` (reference, provider reference, description or school
+    name). The `summary` block totals the *filtered* set (not just the page)
+    so the dashboard chips stay truthful while paging.
+
+    Platform-only. School staff keep the school-scoped
+    `GET /billing/transactions/` which can never see another tenant.
+    """
+
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def get(self, request):
+        transactions = WalletTransaction.objects.select_related(
+            'school', 'student',
+        ).all()
+        school_id = (request.query_params.get('school') or '').strip()
+        if school_id:
+            transactions = transactions.filter(school_id=school_id)
+        category = (request.query_params.get('category') or '').strip()
+        if category:
+            transactions = transactions.filter(category=category)
+        direction = (request.query_params.get('direction') or '').strip()
+        if direction:
+            transactions = transactions.filter(direction=direction)
+        txn_status = (request.query_params.get('status') or '').strip()
+        if txn_status:
+            transactions = transactions.filter(status=txn_status)
+        search = (request.query_params.get('search') or '').strip()
+        if search:
+            transactions = transactions.filter(
+                Q(reference__icontains=search)
+                | Q(provider_reference__icontains=search)
+                | Q(description__icontains=search)
+                | Q(school__name__icontains=search),
+            )
+        totals = transactions.aggregate(
+            count=Count('id'),
+            creditsKobo=Sum(
+                'amount_kobo',
+                filter=Q(
+                    direction=WalletTransaction.Direction.CREDIT,
+                    status=WalletTransaction.Status.SUCCESS,
+                ),
+            ),
+            debitsKobo=Sum(
+                'amount_kobo',
+                filter=Q(
+                    direction=WalletTransaction.Direction.DEBIT,
+                    status=WalletTransaction.Status.SUCCESS,
+                ),
+            ),
+        )
+        page = paginate(transactions, request, PlatformTransactionSerializer)
+        page['summary'] = {
+            'count': totals['count'] or 0,
+            'creditsKobo': totals['creditsKobo'] or 0,
+            'debitsKobo': totals['debitsKobo'] or 0,
+        }
+        return Response(page)
