@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { ErrorState, ListSkeleton } from "@/components/common/states";
+import { TablePager } from "@/components/common/table-pager";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -345,30 +346,15 @@ function PaymentsPage() {
             ))}
           </ul>
         )}
-        {payments.data && payments.data.totalPages > 1 ? (
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              Page {payments.data.page} of {payments.data.totalPages}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                className="h-10"
-                disabled={paymentPage <= 1 || payments.isFetching}
-                onClick={() => setPaymentPage((current) => current - 1)}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                className="h-10"
-                disabled={paymentPage >= payments.data.totalPages || payments.isFetching}
-                onClick={() => setPaymentPage((current) => current + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
+        {payments.data ? (
+          <TablePager
+            page={payments.data.page}
+            pageSize={payments.data.pageSize}
+            count={payments.data.count}
+            onPageChange={setPaymentPage}
+            itemLabel="payments"
+            disabled={payments.isFetching}
+          />
         ) : null}
       </div>
     </PermissionGate>
