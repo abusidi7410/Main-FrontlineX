@@ -303,6 +303,12 @@ RATE_LIMIT_ENABLED = env.bool('RATE_LIMIT_ENABLED', default=False)
 # URL during tests. The limiter stays enabled but fails open (requests pass).
 if 'test' in sys.argv:
     RATE_LIMIT_REDIS_URL = None
+    # Password hashing dominates suite runtime (the app hasher runs 600k
+    # iterations) and is irrelevant to what the tests assert. MD5 keeps the
+    # suite fast; test-only, never touches production settings.
+    PASSWORD_HASHERS = [
+        'django.contrib.auth.hashers.MD5PasswordHasher',
+    ]
 
 RATE_LIMIT_ERROR_MESSAGE = 'Too many requests, please try again later'
 
