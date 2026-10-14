@@ -492,3 +492,82 @@ class ProfilePhotoAPITests(TestCase):
         )
         self.assertEqual(response.status_code, 503)
         self.assertIn('not configured', response.data['detail'])
+
+
+class ProfileAPITests(TestCase):
+    """Self-service profile edit: names, phone, and password change."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='profile-user@example.com', password='Strong-Pass-1!',
+            first_name='Ada', last_name='Test',
+            role=User.Role.TEACHER, school=None, is_active=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_patch_updates_name_and_phone(self):
+        response = self.client.patch(
+            '/api/v1/auth/profile/',
+            {'fullName': 'Ada Lovelace', 'phone': '+2348000000123'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['fullName'], 'Ada Lovelace')
+        self.assertEqual(response.data['phone'], '+2348000000123')
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, 'Ada')
+        self.assertEqual(self.user.last_name, 'Lovelace')
+        self.assertEqual(self.user.phone, '+2348000000123')
+
+    def test_patch_single_name_clears_last_name(self):
+        response = self.client.patch(
+            '/api/v1/auth/profile/', {'fullName': 'Ada'}, format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, 'Ada')
+        self.assertEqual(self.user.last_name, '')
+
+    def test_patch_requires_authentication(self):
+        anonymous = APIClient()
+        response = anonymous.patch(
+            '/api/v1/auth/profile/', {'fullName': 'Nobody'}, format='json',
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_change_password_with_correct_current(self):
+        response = self.client.post(
+            '/api/v1/auth/change-password/',
+            {'current': 'Strong-Pass-1!', 'next': 'New-Strong-2!'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('New-Strong-2!'))
+
+    def test_change_password_rejects_wrong_current(self):
+        response = self.client.post(
+            '/api/v1/auth/change-password/',
+            {'current': 'Wrong-Pass-9!', 'next': 'New-Strong-2!'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Strong-Pass-1!'))
+
+    def test_change_password_rejects_same_and_short_passwords(self):
+        same = self.client.post(
+            '/api/v1/auth/change-password/',
+            {'current': 'Strong-Pass-1!', 'next': 'Strong-Pass-1!'},
+            format='json',
+        )
+        self.assertEqual(same.status_code, 400)
+        short = self.client.post(
+            '/api/v1/auth/change-password/',
+            {'current': 'Strong-Pass-1!', 'next': 'short'},
+            format='json',
+        )
+        self.assertEqual(short.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Strong-Pass-1!'))

@@ -90,8 +90,8 @@ function ProfilePage() {
     setSaving(true);
     try {
       const updated = await updateProfile(parsed.data);
-      updateUser({ fullName: updated.fullName, phone: updated.phone });
-      setPhone(updated.phone);
+      updateUser({ fullName: updated.fullName, phone: updated.phone ?? "" });
+      setPhone(updated.phone ?? "");
       toast.success("Profile updated.");
     } catch {
       toast.error("We couldn't save your profile. Please try again.");
