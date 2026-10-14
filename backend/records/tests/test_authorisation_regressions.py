@@ -26,7 +26,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from records.models import StaffMember
-from schools.models import School, SubscriptionPlan
+from schools.models import School, SchoolSubscription, SubscriptionPlan
 
 
 def make_school(slug='sec-academy'):
@@ -182,18 +182,27 @@ class SubscriptionPlansAreNotPubliclyWritable(TestCase):
         self.assertTrue(SubscriptionPlan.objects.filter(id=self.plan.id).exists())
 
     def test_anonymous_can_still_list_and_retrieve_plans(self):
-        """Onboarding reads pricing before anyone has logged in."""
-        self.assertEqual(self.client.get('/api/v1/schools/plans/').status_code, 200)
-        self.assertEqual(
-            self.client.get(f'/api/v1/schools/plans/{self.plan.id}/').status_code, 200)
+        """Onboarding reads pricing before anyone has logged in.
 
-    def test_platform_manager_can_still_delete_plan(self):
+        The fixed-plan catalogue is retired in favour of the wallet: the list
+        stays public but is always empty, and detail reads are gone (404).
+        Rows are preserved for historical payments.
+        """
+        r = self.client.get('/api/v1/schools/plans/')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data, [])
+        self.assertEqual(
+            self.client.get(f'/api/v1/schools/plans/{self.plan.id}/').status_code, 404)
+
+    def test_platform_manager_cannot_delete_retired_plan(self):
+        """Plan writes are retired with the catalogue: delete is 404 and the
+        historical row is preserved."""
         user = User.objects.create_user(
             email='pm@plans-sec.com', password='Str0ng!Passw0rd', role='platform_manager')
         self.client.force_authenticate(user=user)
         r = self.client.delete(f'/api/v1/schools/plans/{self.plan.id}/')
-        self.assertEqual(r.status_code, 204)
-        self.assertFalse(SubscriptionPlan.objects.filter(id=self.plan.id).exists())
+        self.assertEqual(r.status_code, 404)
+        self.assertTrue(SubscriptionPlan.objects.filter(id=self.plan.id).exists())
 
 
 class ValidRoleConstantsAreUsed(TestCase):
@@ -226,14 +235,20 @@ class ValidRoleConstantsAreUsed(TestCase):
         self.assertIsNotNone(owner.school)
         self.assertFalse(owner.is_active)
         self.assertFalse(owner.school.is_active)
-        self.assertEqual(owner.school.subscription.status, 'pending')
+        # Subscriptions are retired in favour of the wallet: signup creates
+        # no subscription row.
+        self.assertFalse(
+            SchoolSubscription.objects.filter(school=owner.school).exists())
         self.assertNotIn('access', response.data)
         self.assertNotIn('refresh_token', response.cookies)
         login_response = self.client.post('/api/v1/auth/login/', {
             'identifier': owner.email,
             'password': 'Str0ng!Passw0rd',
         }, format='json')
-        self.assertEqual(login_response.status_code, 401)
+        # The owner is created inactive: login is refused with the
+        # deactivated message (403), not "invalid credentials" (401).
+        self.assertEqual(login_response.status_code, 403)
+        self.assertIn('deactivated', str(login_response.data).lower())
 
 
 class SuperuserBootstrapWorks(TestCase):

@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from django.core.management import call_command
 from django.db import IntegrityError
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings, skipUnlessDBFeature
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
@@ -1047,6 +1047,7 @@ class ConcurrentActivationTests(TransactionTestCase):
             class_name='JSS 1',
         )
 
+    @skipUnlessDBFeature('has_select_for_update')
     def test_concurrent_activations_charge_once(self):
         import threading
         from billing import services as billing_services
