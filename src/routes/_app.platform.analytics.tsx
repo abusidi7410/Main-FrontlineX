@@ -1,11 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatCard } from "@/components/common/stat-card";
 import { ErrorState, ListSkeleton } from "@/components/common/states";
 import { Progress } from "@/components/ui/progress";
-import { naira, numberFmt, percent } from "@/lib/format";
+import { numberFmt, percent } from "@/lib/format";
 import { listAllPlatformSchools } from "@/services/platform.service";
 
 export const Route = createFileRoute("/_app/platform/analytics")({
@@ -121,8 +121,11 @@ function PlatformAnalyticsPage() {
             </div>
 
             <p className="text-sm text-muted-foreground">
-              Platform revenue this month:{" "}
-              <span className="font-medium">{naira(schools.reduce((s, x) => s + x.mrr, 0))}</span>
+              Collected revenue lives on the{" "}
+              <Link to="/platform" className="font-medium text-primary hover:underline">
+                platform overview
+              </Link>
+              , calculated from verified wallet deposits — never estimated from plan prices.
             </p>
           </>
         )}

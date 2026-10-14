@@ -361,7 +361,8 @@ class PlatformOverviewTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(len(queries), 1, [query['sql'] for query in queries])
         payload = response.json()
-        self.assertEqual(payload['mrr'], 2500.0)
+        self.assertNotIn('mrr', payload)
+        self.assertNotIn('mrrTrend', payload)
         self.assertEqual(payload['activeLogins24h'], 1)
         self.assertEqual(payload['failedPayments'], 1)
         self.assertEqual(payload['upcomingRenewals'], 2)
@@ -369,14 +370,10 @@ class PlatformOverviewTests(TestCase):
         self.assertEqual(payload['schoolsByStatus']['trial'], 1)
         self.assertEqual(payload['schoolsByStatus']['suspended'], 1)
         self.assertEqual(payload['schoolsByStatus']['pending_payment'], 1)
-        self.assertEqual(len(payload['mrrTrend']), 6)
         self.assertEqual(len(payload['atRiskSchools']), 2)
-        self.assertEqual(payload['totalUsers'], 1)
-        self.assertEqual(payload['totalStudents'], 2)
-        self.assertEqual(len(payload['walletDepositsTrend']), 6)
-        self.assertEqual(payload['walletDepositsTotal'], 2500.0)
         at_risk_by_name = {row['name']: row for row in payload['atRiskSchools']}
         self.assertEqual(at_risk_by_name['Overview Pending']['failedPayments'], 1)
+        self.assertNotIn('mrr', at_risk_by_name['Overview Pending'])
 
     def test_overview_is_cached_for_the_requested_range(self):
         first = self.client.get('/api/v1/platform/overview/?range=7d')
@@ -384,6 +381,169 @@ class PlatformOverviewTests(TestCase):
         self.assertEqual(first.status_code, 200)
         self.assertEqual(first.json(), second.json())
         self.assertEqual(cache.get('platform:overview:7:all'), second.json())
+
+
+@override_settings(
+    CACHES={
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'platform-wallet-metrics-tests',
+        },
+    },
+)
+class PlatformWalletMetricsTests(TestCase):
+    """The overview money figures reconcile with the wallet ledger.
+
+    Deposits count only successful deposit credits; charges bucket by
+    category; pending/failed rows never move a total. Refunds and
+    reversals have their own series so deposits and charges are never
+    added together.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.now = timezone.now()
+        self.platform = User.objects.create_user(
+            email='wallet-platform@example.com', password='Strong-Pass-1!',
+            first_name='Wallet', last_name='Manager',
+            role=User.Role.PLATFORM_MANAGER, is_active=True,
+        )
+        self.school = School.objects.create(
+            name='Wallet Academy', slug='wallet-academy', address='1 Wallet Way',
+            state='Kano', lga='Kano Municipal', phone='+2348000000111',
+            email='wallet@example.com', is_active=True,
+        )
+        self.other_school = School.objects.create(
+            name='Wallet College', slug='wallet-college', address='2 Wallet Way',
+            state='Lagos', lga='Ikeja', phone='+2348000000112',
+            email='college@example.com', is_active=True,
+        )
+        for school in (self.school, self.other_school):
+            Student.objects.create(
+                school=school, admission_number=f'W-{school.slug}',
+                first_name='Ada', last_name='Test', gender='female',
+                class_name='SS1', status=Student.Status.ACTIVE,
+            )
+        User.objects.create_user(
+            email='wallet-admin@example.com', password='Strong-Pass-1!',
+            first_name='Wallet', last_name='Admin',
+            role=User.Role.SCHOOL_ADMIN, school=self.school, is_active=True,
+        )
+        from billing import services as wallet_services
+        from billing.models import WalletTransaction
+        self._wallet = wallet_services
+        self._Txn = WalletTransaction
+        self.client = APIClient()
+        self.client.force_authenticate(self.platform)
+
+    def tearDown(self):
+        cache.clear()
+
+    def _overview(self):
+        response = self.client.get('/api/v1/platform/overview/?range=30d')
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()
+
+    def _move_to_month(self, txn, months_ago):
+        target = self.now - timedelta(days=32 * months_ago + 1)
+        self._Txn.objects.filter(pk=txn.pk).update(created_at=target)
+
+    def test_deposits_total_counts_successful_deposits_only(self):
+        _, ok_txn = self._wallet.credit_wallet(
+            self.school, 250000,
+            category=self._Txn.Category.DEPOSIT, description='Good deposit',
+        )
+        pending = self._Txn.objects.create(
+            school=self.school, reference='W-PENDING-1',
+            direction=self._Txn.Direction.CREDIT, amount_kobo=999900,
+            category=self._Txn.Category.DEPOSIT,
+            status=self._Txn.Status.PENDING, description='In flight',
+        )
+        failed = self._Txn.objects.create(
+            school=self.school, reference='W-FAILED-1',
+            direction=self._Txn.Direction.CREDIT, amount_kobo=888800,
+            category=self._Txn.Category.DEPOSIT,
+            status=self._Txn.Status.FAILED, description='Declined',
+        )
+        payload = self._overview()
+        self.assertEqual(payload['walletDepositsTotal'], 2500.0)
+        self.assertEqual(sum(payload['walletDepositsTrend']), 2500.0)
+        self.assertEqual(len(payload['walletDepositsTrend']), 6)
+        # An older successful deposit lands in its own month bucket, not
+        # today's, and still counts toward the total.
+        _, old_txn = self._wallet.credit_wallet(
+            self.other_school, 100000,
+            category=self._Txn.Category.DEPOSIT, description='Old deposit',
+        )
+        self._move_to_month(old_txn, 2)
+        cache.clear()
+        payload = self._overview()
+        self.assertEqual(payload['walletDepositsTotal'], 3500.0)
+        self.assertEqual(payload['walletDepositsTrend'][-1], 2500.0)
+        self.assertEqual(payload['walletDepositsTrend'][-3], 1000.0)
+        pending.delete()
+        failed.delete()
+        ok_txn.delete()
+
+    def test_charges_bucket_by_category_and_refunds_stay_separate(self):
+        self._wallet.credit_wallet(
+            self.school, 500000,
+            category=self._Txn.Category.DEPOSIT, description='Funding',
+        )
+        self._wallet.debit_wallet(
+            self.school, 11500,
+            category=self._Txn.Category.STUDENT_ACTIVATION,
+            description='Activation', what='student access',
+        )
+        self._wallet.debit_wallet(
+            self.school, 57500,
+            category=self._Txn.Category.STUDENT_RENEWAL,
+            description='Renewal', what='student access',
+        )
+        self._wallet.debit_wallet(
+            self.school, 2000,
+            category=self._Txn.Category.SMS_ALERT,
+            description='SME alert', what='SME alert',
+        )
+        self._wallet.credit_wallet(
+            self.school, 11500,
+            category=self._Txn.Category.REFUND, description='Goodwill refund',
+        )
+        payload = self._overview()
+        # Activation + renewal are one expenditure series; deposits are
+        # money in and are never added to charges.
+        self.assertEqual(payload['activationChargesTotal'], 690.0)
+        self.assertEqual(payload['smsChargesTotal'], 20.0)
+        self.assertEqual(payload['refundsTotal'], 115.0)
+        self.assertEqual(payload['walletDepositsTotal'], 5000.0)
+        self.assertEqual(len(payload['activationChargesTrend']), 6)
+        self.assertEqual(len(payload['smsChargesTrend']), 6)
+        self.assertEqual(len(payload['refundsTrend']), 6)
+
+    def test_user_and_student_counts_come_from_the_right_tables(self):
+        payload = self._overview()
+        self.assertEqual(payload['totalUsers'], 1)
+        self.assertEqual(payload['totalStudents'], 2)
+
+    def test_empty_platform_reports_zeros_not_nulls(self):
+        School.objects.all().delete()
+        cache.clear()
+        payload = self._overview()
+        self.assertEqual(payload['totalUsers'], 0)
+        self.assertEqual(payload['totalStudents'], 0)
+        self.assertEqual(payload['walletDepositsTotal'], 0)
+        self.assertEqual(payload['activationChargesTotal'], 0)
+        self.assertEqual(payload['smsChargesTotal'], 0)
+        self.assertEqual(payload['refundsTotal'], 0)
+        self.assertEqual(payload['walletDepositsTrend'], [0, 0, 0, 0, 0, 0])
+        self.assertEqual(payload['schoolsByStatus']['active'], 0)
+
+    def test_school_user_cannot_see_platform_money(self):
+        admin = User.objects.get(email='wallet-admin@example.com')
+        other = APIClient()
+        other.force_authenticate(admin)
+        response = other.get('/api/v1/platform/overview/?range=30d')
+        self.assertEqual(response.status_code, 403)
 
 
 class PublicSchoolRegistrationPaymentTests(TestCase):

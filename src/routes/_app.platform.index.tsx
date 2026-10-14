@@ -87,19 +87,14 @@ const STATUS_META: { status: SchoolStatus; label: string; color: string }[] = [
 ];
 
 const REVENUE_CHART_CONFIG = {
-  revenue: { label: "Subscriptions", color: "var(--primary)" },
-  wallet: { label: "Wallet deposits", color: "var(--success)" },
+  deposits: { label: "Wallet deposits", color: "var(--success)" },
+  activations: { label: "Access charges", color: "var(--primary)" },
+  sms: { label: "SME charges", color: "var(--warning)" },
+  refunds: { label: "Refunds & reversals", color: "var(--destructive)" },
 };
 
 function isPlatformRange(value: string): value is PlatformOverviewRange {
   return value === "7d" || value === "30d" || value === "90d";
-}
-
-function percentageChange(values: number[]) {
-  const current = values.at(-1) ?? 0;
-  const previous = values.at(-2) ?? 0;
-  if (previous === 0) return current === 0 ? 0 : 100;
-  return ((current - previous) / Math.abs(previous)) * 100;
 }
 
 function Sparkline({ values, positive = true }: { values: number[]; positive?: boolean }) {
@@ -180,14 +175,15 @@ function downloadOverview(data: PlatformOverviewData) {
   const rows: (string | number)[][] = [
     ["Platform overview", `Last ${data.rangeDays} days`],
     ["Metric", "Value"],
-    ["Monthly recurring revenue", data.mrr],
-    ["Wallet deposits collected (6 mo)", data.walletDepositsTotal],
-    ["Registered users", data.totalUsers],
-    ["Registered students", data.totalStudents],
-    ["Active schools", data.activeSchools],
-    ["Active logins (24h)", data.activeLogins24h],
-    ["Failed payments", data.failedPayments],
-    ["Upcoming renewals", data.upcomingRenewals],
+    ["Wallet deposits collected (6 mo)", data.walletDepositsTotal ?? 0],
+    ["Student access charges (6 mo)", (data.activationChargesTotal ?? 0) + (data.smsChargesTotal ?? 0)],
+    ["Refunds and reversals (6 mo)", data.refundsTotal ?? 0],
+    ["Registered users", data.totalUsers ?? 0],
+    ["Registered students", data.totalStudents ?? 0],
+    ["Active schools", data.activeSchools ?? 0],
+    ["Active logins (24h)", data.activeLogins24h ?? 0],
+    ["Failed payments", data.failedPayments ?? 0],
+    ["Upcoming renewals", data.upcomingRenewals ?? 0],
     [],
     ["At-risk school", "Plan", "Students", "Last active", "Renewal", "Status", "Failed payments"],
     ...data.atRiskSchools.map((school) => [
@@ -288,18 +284,28 @@ function PlatformOverview() {
   const data = query.data;
 
   const revenueData = useMemo(() => {
-    const subscriptions = data?.mrrTrend ?? [];
-    const wallet = data?.walletDepositsTrend ?? [];
+    const deposits = data?.walletDepositsTrend ?? [];
+    const activations = data?.activationChargesTrend ?? [];
+    const sms = data?.smsChargesTrend ?? [];
+    const refunds = data?.refundsTrend ?? [];
     const now = new Date();
-    return subscriptions.map((value, index) => {
-      const month = new Date(now.getFullYear(), now.getMonth() - (subscriptions.length - 1 - index), 1);
+    const months = Math.max(deposits.length, activations.length, sms.length, refunds.length, 0);
+    return Array.from({ length: months }, (_, index) => {
+      const month = new Date(now.getFullYear(), now.getMonth() - (months - 1 - index), 1);
       return {
         month: month.toLocaleDateString("en-NG", { month: "short" }),
-        revenue: value,
-        wallet: wallet[index] ?? 0,
+        deposits: deposits[index] ?? 0,
+        activations: activations[index] ?? 0,
+        sms: sms[index] ?? 0,
+        refunds: refunds[index] ?? 0,
       };
     });
-  }, [data?.mrrTrend, data?.walletDepositsTrend]);
+  }, [
+    data?.walletDepositsTrend,
+    data?.activationChargesTrend,
+    data?.smsChargesTrend,
+    data?.refundsTrend,
+  ]);
 
   const statusData = useMemo(
     () =>
@@ -310,7 +316,6 @@ function PlatformOverview() {
     [data?.schoolsByStatus],
   );
 
-  const mrrChange = percentageChange(data?.mrrTrend ?? []);
   const activeSchoolsChange = data?.activeSchoolsGrowth ?? 0;
 
   return (
@@ -362,58 +367,52 @@ function PlatformOverview() {
           <>
             <div className="grid gap-4 md:grid-cols-3">
               <StatCard
-                label="Monthly recurring revenue"
-                value={naira(data.mrr)}
-                tone="success"
-                icon={<WalletCards className="size-5" aria-hidden="true" />}
-                hint={
-                  <span className="flex items-center justify-between gap-2">
-                    <TrendBadge value={mrrChange} />
-                    <Sparkline values={data.mrrTrend} positive={mrrChange >= 0} />
-                  </span>
-                }
-              />
-              <StatCard
-                label="Active schools"
-                value={numberFmt(data.activeSchools)}
-                icon={<Building2 className="size-5" aria-hidden="true" />}
-                hint={
-                  <span className="flex items-center justify-between gap-2">
-                    <TrendBadge value={activeSchoolsChange} unit="schools" />
-                    <Sparkline
-                      values={data.activeSchoolsTrend}
-                      positive={activeSchoolsChange >= 0}
-                    />
-                  </span>
-                }
-              />
-              <StatCard
-                label="Active logins (24h)"
-                value={numberFmt(data.activeLogins24h)}
-                icon={<UsersRound className="size-5" aria-hidden="true" />}
-                hint="Unique users in the last 24 hours"
-              />
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-3">
-              <StatCard
                 label="Wallet deposits collected"
-                value={naira(data.walletDepositsTotal)}
+                value={naira(data.walletDepositsTotal ?? 0)}
                 tone="success"
                 icon={<WalletCards className="size-5" aria-hidden="true" />}
                 hint="Verified deposits across all schools, last 6 months"
               />
               <StatCard
+                label="Student access charges"
+                value={naira((data.activationChargesTotal ?? 0) + (data.smsChargesTotal ?? 0))}
+                icon={<WalletCards className="size-5" aria-hidden="true" />}
+                hint={`Activations, renewals and SME charges · refunds & reversals ${naira(data.refundsTotal ?? 0)}`}
+              />
+              <StatCard
+                label="Active schools"
+                value={numberFmt(data.activeSchools ?? 0)}
+                icon={<Building2 className="size-5" aria-hidden="true" />}
+                hint={
+                  <span className="flex items-center justify-between gap-2">
+                    <TrendBadge value={activeSchoolsChange} unit="schools" />
+                    <Sparkline
+                      values={data.activeSchoolsTrend ?? []}
+                      positive={activeSchoolsChange >= 0}
+                    />
+                  </span>
+                }
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <StatCard
                 label="Registered users"
-                value={numberFmt(data.totalUsers)}
+                value={numberFmt(data.totalUsers ?? 0)}
                 icon={<UsersRound className="size-5" aria-hidden="true" />}
                 hint="Every account with a school"
               />
               <StatCard
                 label="Registered students"
-                value={numberFmt(data.totalStudents)}
+                value={numberFmt(data.totalStudents ?? 0)}
                 icon={<Building2 className="size-5" aria-hidden="true" />}
                 hint="All statuses, every school"
+              />
+              <StatCard
+                label="Active logins (24h)"
+                value={numberFmt(data.activeLogins24h ?? 0)}
+                icon={<UsersRound className="size-5" aria-hidden="true" />}
+                hint="Unique users in the last 24 hours"
               />
             </div>
 
@@ -421,14 +420,14 @@ function PlatformOverview() {
               <section className="fn-panel min-w-0 border border-border/60 p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h2 className="font-medium">Revenue</h2>
+                    <h2 className="font-medium">Wallet activity</h2>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Last 6 months · verified money only
+                      Last 6 months · deposits are money in, charges are money out — never added together
                     </p>
                   </div>
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success">
                     <Activity className="size-3.5" aria-hidden="true" />
-                    Subscriptions + wallet deposits
+                    Verified ledger only
                   </span>
                 </div>
                 <ChartContainer config={REVENUE_CHART_CONFIG} className="mt-5 h-[280px] w-full">
@@ -454,22 +453,40 @@ function PlatformOverview() {
                         <ChartTooltipContent
                           formatter={(value, name) => [
                             naira(Number(value)),
-                            name === "wallet" ? "Wallet deposits" : "Subscriptions",
+                            name === "deposits"
+                              ? "Wallet deposits"
+                              : name === "activations"
+                                ? "Access charges"
+                                : name === "sms"
+                                  ? "SME charges"
+                                  : "Refunds & reversals",
                           ]}
                         />
                       }
                     />
                     <Bar
-                      dataKey="revenue"
-                      fill="var(--color-revenue)"
+                      dataKey="deposits"
+                      fill="var(--color-deposits)"
                       radius={[7, 7, 2, 2]}
-                      maxBarSize={42}
+                      maxBarSize={30}
                     />
                     <Bar
-                      dataKey="wallet"
-                      fill="var(--color-wallet)"
+                      dataKey="activations"
+                      fill="var(--color-activations)"
                       radius={[7, 7, 2, 2]}
-                      maxBarSize={42}
+                      maxBarSize={30}
+                    />
+                    <Bar
+                      dataKey="sms"
+                      fill="var(--color-sms)"
+                      radius={[7, 7, 2, 2]}
+                      maxBarSize={30}
+                    />
+                    <Bar
+                      dataKey="refunds"
+                      fill="var(--color-refunds)"
+                      radius={[7, 7, 2, 2]}
+                      maxBarSize={30}
                     />
                   </BarChart>
                 </ChartContainer>

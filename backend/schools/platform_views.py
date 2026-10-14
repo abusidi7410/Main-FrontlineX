@@ -193,42 +193,63 @@ def _overview_rows(now, range_days, auth_school_id):
         "COUNT(DISTINCT CASE WHEN p.status = 'failed' AND p.created_at >= %s THEN p.id END) AS failed_payments",
     ]
     payment_params = [payment_cutoff]
+    # Wallet-first money movement, one column family per bucket. Deposits are
+    # money received; activations/renewals and SME charges are expenditure;
+    # refunds and reversals are money returned. They are bucketed separately
+    # and never summed together: adding deposits to charges would
+    # double-count money moving through the wallet system.
     wallet_columns = []
     wallet_params = []
     for index, (start, end) in enumerate(month_buckets):
-        payment_columns.append(
-            "COALESCE(SUM(CASE WHEN p.status = 'verified' AND p.created_at >= %s "
-            "AND p.created_at < %s THEN p.amount ELSE 0 END), 0) AS revenue_{}".format(index)
-        )
-        payment_params.extend([start, end])
-        # Wallet-first revenue: successful deposit credits, stored in kobo.
+        window = 'w.created_at >= %s AND w.created_at < %s'
         wallet_columns.append(
             "COALESCE(SUM(CASE WHEN w.direction = 'credit' AND w.category = 'deposit' "
-            "AND w.status = 'success' AND w.created_at >= %s "
-            "AND w.created_at < %s THEN w.amount_kobo ELSE 0 END), 0) AS wallet_{}".format(index)
+            "AND w.status = 'success' AND {} THEN w.amount_kobo ELSE 0 END), 0) "
+            'AS wallet_{}'.format(window, index)
         )
-        wallet_params.extend([start, end])
+        wallet_columns.append(
+            "COALESCE(SUM(CASE WHEN w.direction = 'debit' "
+            "AND w.category IN ('student_activation', 'student_renewal') "
+            "AND w.status = 'success' AND {} THEN w.amount_kobo ELSE 0 END), 0) "
+            'AS activation_{}'.format(window, index)
+        )
+        wallet_columns.append(
+            "COALESCE(SUM(CASE WHEN w.direction = 'debit' AND w.category = 'sms_alert' "
+            "AND w.status = 'success' AND {} THEN w.amount_kobo ELSE 0 END), 0) "
+            'AS sms_{}'.format(window, index)
+        )
+        wallet_columns.append(
+            "COALESCE(SUM(CASE WHEN ((w.category = 'refund' AND w.status = 'success') "
+            "OR w.status = 'reversed') AND {} THEN w.amount_kobo ELSE 0 END), 0) "
+            'AS refunds_{}'.format(window, index)
+        )
+        wallet_params.extend([start, end] * 4)
 
     active_school_columns = ', '.join(
         'COALESCE(lr.active_school_{}, 0) AS active_school_{}'.format(index, index)
         for index in range(len(month_buckets))
     )
-    revenue_columns = ', '.join(
-        'COALESCE(pr.revenue_{}, 0) AS revenue_{}'.format(index, index)
-        for index in range(len(month_buckets))
-    )
     wallet_output_columns = ', '.join(
         'wallet_{}'.format(index) for index in range(len(month_buckets))
     )
+    activation_output_columns = ', '.join(
+        'activation_{}'.format(index) for index in range(len(month_buckets))
+    )
+    sms_output_columns = ', '.join(
+        'sms_{}'.format(index) for index in range(len(month_buckets))
+    )
+    refunds_output_columns = ', '.join(
+        'refunds_{}'.format(index) for index in range(len(month_buckets))
+    )
     wallet_rollup_columns = ', '.join(
-        'COALESCE(wr.wallet_{}, 0) AS wallet_{}'.format(index, index)
+        'COALESCE(wr.wallet_{0}, 0) AS wallet_{0}, '
+        'COALESCE(wr.activation_{0}, 0) AS activation_{0}, '
+        'COALESCE(wr.sms_{0}, 0) AS sms_{0}, '
+        'COALESCE(wr.refunds_{0}, 0) AS refunds_{0}'.format(index)
         for index in range(len(month_buckets))
     )
     active_school_output_columns = ', '.join(
         'active_school_{}'.format(index) for index in range(len(month_buckets))
-    )
-    revenue_output_columns = ', '.join(
-        'revenue_{}'.format(index) for index in range(len(month_buckets))
     )
     scope_clause = ''
     scope_params = []
@@ -285,10 +306,6 @@ school_rollup AS (
             WHEN s.is_active = TRUE THEN 'active'
             ELSE 'trial'
         END AS status,
-        CASE
-            WHEN s.is_active = TRUE AND ss.status = 'active' THEN COALESCE(plan.monthly_price, 0)
-            ELSE 0
-        END AS mrr,
         COALESCE(sc.students, 0) AS students,
         COALESCE(sc.total_students, 0) AS total_students,
         COALESCE(uc.users, 0) AS users,
@@ -296,7 +313,6 @@ school_rollup AS (
         COALESCE(lr.active_logins_24h, 0) AS active_logins_24h,
         COALESCE(pr.failed_payments, 0) AS failed_payments,
         {active_school_columns},
-        {revenue_columns},
         {wallet_rollup_columns}
     FROM schools_school s
     LEFT JOIN schools_schoolsubscription ss ON ss.school_id = s.id
@@ -316,15 +332,16 @@ SELECT
     students,
     total_students,
     users,
-    mrr,
     status,
     last_active,
     renewal_date,
     failed_payments,
     active_logins_24h,
     {active_school_output_columns},
-    {revenue_output_columns},
-    {wallet_output_columns}
+    {wallet_output_columns},
+    {activation_output_columns},
+    {sms_output_columns},
+    {refunds_output_columns}
 FROM school_rollup
 ORDER BY
     CASE status
@@ -340,11 +357,12 @@ ORDER BY
         payment_columns=', '.join(payment_columns),
         wallet_columns=', '.join(wallet_columns),
         active_school_columns=active_school_columns,
-        revenue_columns=revenue_columns,
         wallet_rollup_columns=wallet_rollup_columns,
         active_school_output_columns=active_school_output_columns,
-        revenue_output_columns=revenue_output_columns,
         wallet_output_columns=wallet_output_columns,
+        activation_output_columns=activation_output_columns,
+        sms_output_columns=sms_output_columns,
+        refunds_output_columns=refunds_output_columns,
         scope_clause=scope_clause,
     )
     params = login_params + payment_params + wallet_params + scope_params
@@ -356,7 +374,6 @@ ORDER BY
 
 def _overview_payload(rows, range_days):
     status_counts = {value: 0 for value in PLATFORM_STATUSES}
-    mrr = 0.0
     active_logins = 0
     failed_payments = 0
     total_users = 0
@@ -364,8 +381,10 @@ def _overview_payload(rows, range_days):
     at_risk = []
     month_count = 6
     active_school_totals = [0] * month_count
-    revenue_trend = [0.0] * month_count
     wallet_trend = [0.0] * month_count
+    activation_trend = [0.0] * month_count
+    sms_trend = [0.0] * month_count
+    refunds_trend = [0.0] * month_count
     now = timezone.now()
     renewal_cutoff = now + timedelta(days=range_days)
 
@@ -373,7 +392,6 @@ def _overview_payload(rows, range_days):
         status = row['status']
         if status in status_counts:
             status_counts[status] += 1
-        mrr += float(row['mrr'] or 0)
         active_logins += int(row['active_logins_24h'] or 0)
         failed_payments += int(row['failed_payments'] or 0)
         total_users += int(row['users'] or 0)
@@ -381,10 +399,12 @@ def _overview_payload(rows, range_days):
         for index in range(month_count):
             if int(row[f'active_school_{index}'] or 0) > 0:
                 active_school_totals[index] += 1
-            revenue_trend[index] += float(row[f'revenue_{index}'] or 0)
             # Wallet ledger is kobo; the API speaks naira like every other
             # money figure on this payload.
             wallet_trend[index] += float(row[f'wallet_{index}'] or 0) / 100
+            activation_trend[index] += float(row[f'activation_{index}'] or 0) / 100
+            sms_trend[index] += float(row[f'sms_{index}'] or 0) / 100
+            refunds_trend[index] += float(row[f'refunds_{index}'] or 0) / 100
         if status in {'grace', 'suspended', 'pending_payment'}:
             renewal_date = _overview_datetime(row['renewal_date'])
             last_active = _overview_datetime(row['last_active'])
@@ -397,15 +417,18 @@ def _overview_payload(rows, range_days):
                 'lastActive': last_active.isoformat() if last_active else None,
                 'renewalDate': renewal_date.isoformat() if renewal_date else None,
                 'status': status,
-                'mrr': float(row['mrr'] or 0),
                 'failedPayments': int(row['failed_payments'] or 0),
             })
 
     return {
-        'mrr': round(mrr, 2),
-        'mrrTrend': [round(value, 2) for value in revenue_trend],
         'walletDepositsTrend': [round(value, 2) for value in wallet_trend],
         'walletDepositsTotal': round(sum(wallet_trend), 2),
+        'activationChargesTrend': [round(value, 2) for value in activation_trend],
+        'activationChargesTotal': round(sum(activation_trend), 2),
+        'smsChargesTrend': [round(value, 2) for value in sms_trend],
+        'smsChargesTotal': round(sum(sms_trend), 2),
+        'refundsTrend': [round(value, 2) for value in refunds_trend],
+        'refundsTotal': round(sum(refunds_trend), 2),
         'totalUsers': total_users,
         'totalStudents': total_students,
         'schoolsByStatus': status_counts,

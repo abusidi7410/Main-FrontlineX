@@ -576,17 +576,20 @@ export interface AtRiskSchool {
   lastActive: string | null;
   renewalDate: string | null;
   status: SchoolStatus;
-  mrr: number;
   failedPayments: number;
 }
 
 export type PlatformOverviewRange = "7d" | "30d" | "90d";
 
 export interface PlatformOverview {
-  mrr: number;
-  mrrTrend: number[];
   walletDepositsTrend: number[];
   walletDepositsTotal: number;
+  activationChargesTrend: number[];
+  activationChargesTotal: number;
+  smsChargesTrend: number[];
+  smsChargesTotal: number;
+  refundsTrend: number[];
+  refundsTotal: number;
   totalUsers: number;
   totalStudents: number;
   schoolsByStatus: Record<SchoolStatus, number>;
