@@ -1,4 +1,4 @@
-import { apiFetch } from "@/api/client";
+import { apiFetch, type Paginated } from "@/api/client";
 import type {
   Announcement,
   PlatformOverview,
@@ -12,9 +12,39 @@ export async function getPlatformOverview(
   return apiFetch("/platform/overview", { query: { range } });
 }
 
-export async function listPlatformSchools(search = "", status = ""): Promise<PlatformSchool[]> {
+export async function listPlatformSchools(
+  search = "",
+  status = "",
+  page = 1,
+  pageSize = 20,
+): Promise<Paginated<PlatformSchool>> {
   // SECURITY: Backend must verify permission platform.manage; schoolId match is intentionally not required for this cross-school platform scope.
-  return apiFetch("/platform/schools", { query: { search, status } });
+  const payload = await apiFetch<Paginated<PlatformSchool> | PlatformSchool[]>(
+    "/platform/schools",
+    {
+      query: { search, status, page, pageSize },
+    },
+  );
+  // Legacy backends return a bare array; unwrap both shapes.
+  if (Array.isArray(payload)) {
+    return {
+      results: payload,
+      count: payload.length,
+      page: 1,
+      pageSize: payload.length,
+      totalPages: 1,
+    };
+  }
+  return payload;
+}
+
+/** Bounded full list for selects and aggregate screens (one page, max 100). */
+export async function listAllPlatformSchools(
+  search = "",
+  status = "",
+): Promise<PlatformSchool[]> {
+  const page = await listPlatformSchools(search, status, 1, 100);
+  return page.results;
 }
 
 export async function setSchoolStatus(
@@ -178,14 +208,7 @@ export interface AuditEvent {
   schoolId?: string | null;
 }
 
-interface PaginatedResponse<T> {
-  results: T[];
-  count: number;
-  page: number;
-  pageSize: number;
-}
-
-function unwrapList<T>(payload: T[] | PaginatedResponse<T>): T[] {
+function unwrapList<T>(payload: T[] | Paginated<T>): T[] {
   return Array.isArray(payload) ? payload : (payload?.results ?? []);
 }
 
@@ -197,7 +220,7 @@ export async function listAuditEvents(params?: {
   schoolId?: string;
 }): Promise<AuditEvent[]> {
   // SECURITY: Backend must verify permission audit.read and the platform-manager role; schoolId match is intentionally not required for this global audit scope.
-  const payload = await apiFetch<AuditEvent[] | PaginatedResponse<AuditEvent>>("/platform/audit", {
+  const payload = await apiFetch<AuditEvent[] | Paginated<AuditEvent>>("/platform/audit", {
     query: { ...(params ?? {}) },
   });
   return unwrapList(payload);
@@ -294,7 +317,7 @@ export async function listSubscriptionPayments(params?: {
   schoolId?: string;
   search?: string;
 }): Promise<SubscriptionPayment[]> {
-  const payload = await apiFetch<SubscriptionPayment[] | PaginatedResponse<SubscriptionPayment>>(
+  const payload = await apiFetch<SubscriptionPayment[] | Paginated<SubscriptionPayment>>(
     "/platform/subscriptions/payments",
     { query: { ...(params ?? {}) } },
   );
@@ -322,11 +345,7 @@ export interface PlatformTransaction {
   schoolName: string;
 }
 
-export interface PlatformTransactionPage {
-  results: PlatformTransaction[];
-  count: number;
-  page: number;
-  pageSize: number;
+export interface PlatformTransactionPage extends Paginated<PlatformTransaction> {
   summary: { count: number; creditsKobo: number; debitsKobo: number };
 }
 

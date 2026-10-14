@@ -6,7 +6,7 @@ import { StatCard } from "@/components/common/stat-card";
 import { ErrorState, ListSkeleton } from "@/components/common/states";
 import { Progress } from "@/components/ui/progress";
 import { naira, numberFmt, percent } from "@/lib/format";
-import { listPlatformSchools } from "@/services/platform.service";
+import { listAllPlatformSchools } from "@/services/platform.service";
 
 export const Route = createFileRoute("/_app/platform/analytics")({
   head: () => ({
@@ -39,7 +39,7 @@ const ADOPTION = [
 function PlatformAnalyticsPage() {
   const query = useQuery({
     queryKey: ["platform", "schools"],
-    queryFn: () => listPlatformSchools(),
+    queryFn: () => listAllPlatformSchools(),
   });
   const schools = query.data ?? [];
   const students = schools.reduce((sum, s) => sum + s.students, 0);

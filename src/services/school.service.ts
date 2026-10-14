@@ -149,7 +149,11 @@ export async function uploadSchoolLogo(logo: File): Promise<SchoolProfile> {
 
 export async function getStaff(): Promise<StaffMember[]> {
   // SECURITY: Backend must verify permission staff.read and schoolId match.
-  return apiFetch("/staff");
+  // Same bounded-page convention as listStaff: one page of up to 100.
+  const payload = await apiFetch<StaffMember[] | { results: StaffMember[] }>("/staff", {
+    query: { pageSize: 100 },
+  });
+  return Array.isArray(payload) ? payload : (payload.results ?? []);
 }
 
 export async function getAnnouncements(): Promise<Announcement[]> {

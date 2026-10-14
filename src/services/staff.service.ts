@@ -14,7 +14,12 @@ export interface StaffInput {
 
 export async function listStaff(): Promise<StaffMember[]> {
   // SECURITY: Backend must verify permission staff.read and schoolId match.
-  return apiFetch("/staff");
+  // Single bounded page (100): staff directories fit one page; the backend
+  // still enforces its ceiling so the directory can never be an unbounded dump.
+  const payload = await apiFetch<StaffMember[] | { results: StaffMember[] }>("/staff", {
+    query: { pageSize: 100 },
+  });
+  return Array.isArray(payload) ? payload : (payload.results ?? []);
 }
 
 export async function getStaffMember(id: string): Promise<StaffMember> {

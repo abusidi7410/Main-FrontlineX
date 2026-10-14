@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { listPlatformSchools } from "@/services/platform.service";
+import { listAllPlatformSchools } from "@/services/platform.service";
 import { transferStudent } from "@/services/students.service";
 import { invalidateEnrollmentQueries } from "@/lib/query-invalidation";
 import type { PlatformSchool } from "@/types";
@@ -35,7 +35,7 @@ export function TransferStudentDialog({
 
   const schoolsQuery = useQuery({
     queryKey: ["transfer-schools"],
-    queryFn: () => listPlatformSchools(),
+    queryFn: () => listAllPlatformSchools(),
   });
   const transferSchools = (schoolsQuery.data ?? []).filter((school) => school.status === "active");
   const filteredSchools = transferSchools.filter(

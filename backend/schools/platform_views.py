@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from django.core.cache import cache
 from django.db import IntegrityError, connection
+from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.exceptions import ValidationError
@@ -80,13 +81,21 @@ def _subscription_json(subscription, plan):
 
 
 def _platform_school_data(school):
-    subscription = SchoolSubscription.objects.filter(school=school).first()
+    try:
+        subscription = school.subscription
+    except School.subscription.RelatedObjectDoesNotExist:
+        subscription = None
     plan = subscription.plan if subscription and subscription.plan_id else None
+    active_students = getattr(school, 'active_students', None)
+    if active_students is None:
+        active_students = Student.objects.filter(
+            school=school, status=Student.Status.ACTIVE,
+        ).count()
     return {
         'id': str(school.id),
         'name': school.name,
         'state': school.state,
-        'students': Student.objects.filter(school=school, status=Student.Status.ACTIVE).count(),
+        'students': active_students,
         'tierId': (plan.code or plan.name) if plan else 't100',
         'tierLabel': plan.name if plan else '',
         'status': school_status(school, subscription),
@@ -390,17 +399,40 @@ class PlatformSchoolListView(APIView):
     permission_classes = [IsAuthenticated, IsSuperAdmin]
 
     def get(self, request):
-        schools = School.objects.all()
+        schools = School.objects.select_related(
+            'subscription__plan',
+        ).annotate(
+            active_students=Count(
+                'students', filter=Q(students__status=Student.Status.ACTIVE),
+            ),
+        ).order_by('name')
         search = request.query_params.get('search', '').strip()
         if search:
             schools = schools.filter(name__icontains=search) | schools.filter(state__icontains=search)
         status_filter = request.query_params.get('status', '').strip()
+        try:
+            page = max(int(request.query_params.get('page', 1)), 1)
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = int(request.query_params.get('pageSize', 20))
+        except (TypeError, ValueError):
+            page_size = 20
+        page_size = min(max(page_size, 1), 100)
         data = [
             s for s in (
                 _platform_school_data(c) for c in schools
             ) if not status_filter or s['status'] == status_filter
         ]
-        return Response(data)
+        count = len(data)
+        start = (page - 1) * page_size
+        return Response({
+            'results': data[start:start + page_size],
+            'count': count,
+            'page': page,
+            'pageSize': page_size,
+            'totalPages': max((count + page_size - 1) // page_size, 1),
+        })
 
     def post(self, request):
         errors = {}

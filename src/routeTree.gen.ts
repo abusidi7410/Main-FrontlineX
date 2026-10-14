@@ -47,7 +47,6 @@ import { Route as AppPlatformAnalyticsRouteImport } from './routes/_app.platform
 import { Route as AppPlatformAuditRouteImport } from './routes/_app.platform.audit'
 import { Route as AppPlatformPaymentsRouteImport } from './routes/_app.platform.payments'
 import { Route as AppPlatformSchoolsRouteImport } from './routes/_app.platform.schools'
-import { Route as AppPlatformSecurityRouteImport } from './routes/_app.platform.security'
 import { Route as AppPlatformSettingsRouteImport } from './routes/_app.platform.settings'
 import { Route as AppPlatformSupportRouteImport } from './routes/_app.platform.support'
 import { Route as AppStaffIndexRouteImport } from './routes/_app.staff.index'
@@ -251,11 +250,6 @@ const AppPlatformSchoolsRoute = AppPlatformSchoolsRouteImport.update({
   path: '/platform/schools',
   getParentRoute: () => AppRoute,
 } as any)
-const AppPlatformSecurityRoute = AppPlatformSecurityRouteImport.update({
-  id: '/platform/security',
-  path: '/platform/security',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppPlatformSettingsRoute = AppPlatformSettingsRouteImport.update({
   id: '/platform/settings',
   path: '/platform/settings',
@@ -360,7 +354,6 @@ export interface FileRoutesByFullPath {
   '/platform/audit': typeof AppPlatformAuditRoute
   '/platform/payments': typeof AppPlatformPaymentsRoute
   '/platform/schools': typeof AppPlatformSchoolsRoute
-  '/platform/security': typeof AppPlatformSecurityRoute
   '/platform/settings': typeof AppPlatformSettingsRoute
   '/platform/support': typeof AppPlatformSupportRoute
   '/staff/$staffId': typeof AppStaffStaffIdRouteWithChildren
@@ -412,7 +405,6 @@ export interface FileRoutesByTo {
   '/platform/audit': typeof AppPlatformAuditRoute
   '/platform/payments': typeof AppPlatformPaymentsRoute
   '/platform/schools': typeof AppPlatformSchoolsRoute
-  '/platform/security': typeof AppPlatformSecurityRoute
   '/platform/settings': typeof AppPlatformSettingsRoute
   '/platform/support': typeof AppPlatformSupportRoute
   '/staff/new': typeof AppStaffNewRoute
@@ -465,7 +457,6 @@ export interface FileRoutesById {
   '/_app/platform/audit': typeof AppPlatformAuditRoute
   '/_app/platform/payments': typeof AppPlatformPaymentsRoute
   '/_app/platform/schools': typeof AppPlatformSchoolsRoute
-  '/_app/platform/security': typeof AppPlatformSecurityRoute
   '/_app/platform/settings': typeof AppPlatformSettingsRoute
   '/_app/platform/support': typeof AppPlatformSupportRoute
   '/_app/staff/$staffId': typeof AppStaffStaffIdRouteWithChildren
@@ -520,7 +511,6 @@ export interface FileRouteTypes {
     | '/platform/audit'
     | '/platform/payments'
     | '/platform/schools'
-    | '/platform/security'
     | '/platform/settings'
     | '/platform/support'
     | '/staff/$staffId'
@@ -572,7 +562,6 @@ export interface FileRouteTypes {
     | '/platform/audit'
     | '/platform/payments'
     | '/platform/schools'
-    | '/platform/security'
     | '/platform/settings'
     | '/platform/support'
     | '/staff/new'
@@ -624,7 +613,6 @@ export interface FileRouteTypes {
     | '/_app/platform/audit'
     | '/_app/platform/payments'
     | '/_app/platform/schools'
-    | '/_app/platform/security'
     | '/_app/platform/settings'
     | '/_app/platform/support'
     | '/_app/staff/$staffId'
@@ -920,13 +908,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPlatformSchoolsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/platform/security': {
-      id: '/_app/platform/security'
-      path: '/platform/security'
-      fullPath: '/platform/security'
-      preLoaderRoute: typeof AppPlatformSecurityRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/platform/settings': {
       id: '/_app/platform/settings'
       path: '/platform/settings'
@@ -1094,7 +1075,6 @@ interface AppRouteChildren {
   AppPlatformAuditRoute: typeof AppPlatformAuditRoute
   AppPlatformPaymentsRoute: typeof AppPlatformPaymentsRoute
   AppPlatformSchoolsRoute: typeof AppPlatformSchoolsRoute
-  AppPlatformSecurityRoute: typeof AppPlatformSecurityRoute
   AppPlatformSettingsRoute: typeof AppPlatformSettingsRoute
   AppPlatformSupportRoute: typeof AppPlatformSupportRoute
   AppStudentsStudentIdRoute: typeof AppStudentsStudentIdRouteWithChildren
@@ -1135,7 +1115,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppPlatformAuditRoute: AppPlatformAuditRoute,
   AppPlatformPaymentsRoute: AppPlatformPaymentsRoute,
   AppPlatformSchoolsRoute: AppPlatformSchoolsRoute,
-  AppPlatformSecurityRoute: AppPlatformSecurityRoute,
   AppPlatformSettingsRoute: AppPlatformSettingsRoute,
   AppPlatformSupportRoute: AppPlatformSupportRoute,
   AppStudentsStudentIdRoute: AppStudentsStudentIdRouteWithChildren,

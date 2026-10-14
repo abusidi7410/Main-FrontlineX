@@ -5,10 +5,9 @@ import {
   Activity,
   Building2,
   CalendarClock,
-  CalendarPlus,
   CheckCircle2,
   Download,
-  Phone,
+  Pencil,
   RefreshCcw,
   TrendingDown,
   TrendingUp,
@@ -18,6 +17,7 @@ import {
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 import { CardsSkeleton, EmptyState, ErrorState, ListSkeleton } from "@/components/common/states";
+import { TablePager } from "@/components/common/table-pager";
 import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatCard } from "@/components/common/stat-card";
@@ -259,22 +259,14 @@ function AtRiskSchoolRow({ school }: { school: AtRiskSchool }) {
       </TableCell>
       <TableCell>
         <div className="flex items-center justify-end gap-1">
-          <Button
-            size="sm"
-            variant="outline"
-            className="whitespace-nowrap"
-            onClick={() => toast.info(`Opening renewal tools for ${school.name}`)}
-          >
-            <CalendarPlus className="size-3.5" aria-hidden="true" />
-            Extend trial
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label={`Call ${school.name}`}
-            onClick={() => toast.info(`Starting a call with ${school.name}`)}
-          >
-            <Phone className="size-4" aria-hidden="true" />
+          <Button size="sm" variant="outline" className="whitespace-nowrap" asChild>
+            <Link
+              to="/platform/schools"
+              search={{ search: school.name, manage: school.id }}
+            >
+              <Pencil className="size-3.5" aria-hidden="true" />
+              Manage
+            </Link>
           </Button>
         </div>
       </TableCell>
@@ -581,18 +573,15 @@ function PlatformOverview() {
                             size="sm"
                             variant="outline"
                             className="whitespace-nowrap"
-                            onClick={() => toast.info(`Opening renewal tools for ${school.name}`)}
+                            asChild
                           >
-                            <CalendarPlus className="size-3.5" aria-hidden="true" />
-                            Extend trial
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            aria-label={`Call ${school.name}`}
-                            onClick={() => toast.info(`Starting a call with ${school.name}`)}
-                          >
-                            <Phone className="size-4" aria-hidden="true" />
+                            <Link
+                              to="/platform/schools"
+                              search={{ search: school.name, manage: school.id }}
+                            >
+                              <Pencil className="size-3.5" aria-hidden="true" />
+                              Manage
+                            </Link>
                           </Button>
                         </div>
                       </li>
@@ -825,30 +814,12 @@ function SchoolTransactionsSection() {
               </TableBody>
             </Table>
           </div>
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              Page {query.data.page} of{" "}
-              {Math.max(1, Math.ceil(query.data.count / query.data.pageSize))}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page * query.data.pageSize >= query.data.count}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
+          <TablePager
+            page={query.data.page}
+            pageSize={query.data.pageSize}
+            count={query.data.count}
+            onPageChange={setPage}
+          />
         </>
       )}
     </section>

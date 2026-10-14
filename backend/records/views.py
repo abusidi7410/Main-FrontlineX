@@ -1029,15 +1029,17 @@ class StaffListView(APIView):
         # the pinned regression test), but contact details are staff
         # administration data: callers without `staff.write` get names, roles,
         # subjects and classes only — never emails or phone numbers.
-        rows = StaffMemberSerializer(
-            StaffMember.objects.filter(school_id=request.user.school_id), many=True,
-        ).data
+        qs = StaffMember.objects.filter(
+            school_id=request.user.school_id,
+        ).order_by('full_name', 'id')
+        page = _paginate(qs, request, StaffMemberSerializer)
         if CanWriteStaff().has_permission(request, self):
-            return Response(rows)
-        return Response([
+            return Response(page)
+        page['results'] = [
             {key: value for key, value in row.items() if key not in ('email', 'phone')}
-            for row in rows
-        ])
+            for row in page['results']
+        ]
+        return Response(page)
 
     def post(self, request):
         if not CanWriteStaff().has_permission(request, self):

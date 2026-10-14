@@ -34,6 +34,8 @@ const KNOWN_ROUTES = new Set([
   "/platform/schools",
   "/platform/payments",
   "/platform/activity",
+  "/platform/analytics",
+  "/platform/support",
   "/platform/audit",
   "/platform/settings",
 ]);
@@ -87,6 +89,8 @@ describe("hierarchical navigation", () => {
       "/platform/schools",
       "/platform/payments",
       "/platform/activity",
+      "/platform/analytics",
+      "/platform/support",
       "/platform/audit",
       "/platform/settings",
     ]);

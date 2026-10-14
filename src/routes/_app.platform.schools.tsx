@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/common/page-header";
 import { PermissionGate } from "@/components/common/permission-gate";
 import { StatusBadge } from "@/components/common/status-badge";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/common/states";
+import { TablePager } from "@/components/common/table-pager";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,6 +48,12 @@ import {
 } from "@/services/platform.service";
 
 export const Route = createFileRoute("/_app/platform/schools")({
+  validateSearch: (search: Record<string, unknown>): { search?: string; manage?: string } => {
+    const out: { search?: string; manage?: string } = {};
+    if (typeof search["search"] === "string") out.search = search["search"];
+    if (typeof search["manage"] === "string") out.manage = search["manage"];
+    return out;
+  },
   head: () => ({
     meta: [
       { title: "Schools — Frontline Nexus Platform" },
@@ -88,17 +95,20 @@ const EMPTY_FORM = {
 };
 
 function PlatformSchoolsPage() {
-  const [search, setSearch] = useState("");
+  const { search: initialSearch, manage: initialManage } = Route.useSearch();
+  const [search, setSearch] = useState(initialSearch ?? "");
   const [status, setStatus] = useState("all");
+  const [page, setPage] = useState(1);
   const [registerOpen, setRegisterOpen] = useState(false);
-  const [manageId, setManageId] = useState<string | null>(null);
+  const [manageId, setManageId] = useState<string | null>(initialManage ?? null);
   const [deleteTarget, setDeleteTarget] = useState<PlatformSchool | null>(null);
   const debounced = useDebounced(search, 300);
   const queryClient = useQueryClient();
 
   const query = useQuery({
-    queryKey: ["platform", "schools", debounced, status],
-    queryFn: () => listPlatformSchools(debounced, status === "all" ? "" : status),
+    queryKey: ["platform", "schools", debounced, status, page],
+    queryFn: () =>
+      listPlatformSchools(debounced, status === "all" ? "" : status, page, 20),
   });
 
   const mutation = useMutation({
@@ -125,7 +135,7 @@ function PlatformSchoolsPage() {
     },
   });
 
-  const schools = query.data ?? [];
+  const schools = query.data?.results ?? [];
 
   return (
     <PermissionGate permission="platform.manage">
@@ -147,9 +157,18 @@ function PlatformSchoolsPage() {
             placeholder="Search by school name or state"
             aria-label="Search schools"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setPage(1);
+            }}
           />
-          <Select value={status} onValueChange={setStatus}>
+          <Select
+            value={status}
+            onValueChange={(value) => {
+              setStatus(value);
+              setPage(1);
+            }}
+          >
             <SelectTrigger className="h-11 sm:w-56" aria-label="Filter by status">
               <SelectValue placeholder="All statuses" />
             </SelectTrigger>
@@ -225,6 +244,16 @@ function PlatformSchoolsPage() {
             ))}
           </ul>
         )}
+
+        {query.data && query.data.count > 0 ? (
+          <TablePager
+            page={query.data.page}
+            pageSize={query.data.pageSize}
+            count={query.data.count}
+            onPageChange={setPage}
+            itemLabel="schools"
+          />
+        ) : null}
 
         <RegisterSchoolDialog open={registerOpen} onOpenChange={setRegisterOpen} />
         <ManageSchoolDialog

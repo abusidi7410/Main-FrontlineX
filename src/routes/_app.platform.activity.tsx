@@ -7,8 +7,8 @@ import { ErrorState, ListSkeleton } from "@/components/common/states";
 import { dateFmt, dateTimeFmt, numberFmt } from "@/lib/format";
 import {
   getPlatformOverview,
+  listAllPlatformSchools,
   listAuditEvents,
-  listPlatformSchools,
 } from "@/services/platform.service";
 
 export const Route = createFileRoute("/_app/platform/activity")({
@@ -29,7 +29,7 @@ export const Route = createFileRoute("/_app/platform/activity")({
 function PlatformActivityPage() {
   const schools = useQuery({
     queryKey: ["platform", "schools"],
-    queryFn: () => listPlatformSchools(),
+    queryFn: () => listAllPlatformSchools(),
   });
   const overview = useQuery({
     queryKey: ["platform", "overview", "30d"],
@@ -170,8 +170,8 @@ function PlatformActivityPage() {
               <Link to="/platform/analytics" className="font-medium text-primary hover:underline">
                 Growth analytics
               </Link>
-              <Link to="/platform/security" className="font-medium text-primary hover:underline">
-                Security & audit (legacy)
+              <Link to="/platform/audit" className="font-medium text-primary hover:underline">
+                Full audit log
               </Link>
               <Link to="/platform/support" className="font-medium text-primary hover:underline">
                 Support queue

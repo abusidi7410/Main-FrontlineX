@@ -8,6 +8,7 @@ import { PermissionGate } from "@/components/common/permission-gate";
 import { StatCard } from "@/components/common/stat-card";
 import { StatusBadge } from "@/components/common/status-badge";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/common/states";
+import { TablePager } from "@/components/common/table-pager";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -266,7 +267,6 @@ function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof ge
 
   const rows = list.data?.results ?? [];
   const totalCount = list.data?.count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(totalCount / (list.data?.pageSize ?? 20)));
   const active = list.data?.summary.active ?? 0;
   const needAttention = list.data?.summary.needAttention ?? 0;
 
@@ -375,29 +375,13 @@ function StudentAccessSection({ wallet }: { wallet: Awaited<ReturnType<typeof ge
                 ))}
               </TableBody>
             </Table>
-            <div className="flex items-center justify-between pt-1">
-              <p className="text-sm text-muted-foreground">
-                Page {page} of {totalPages} · {totalCount} students
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
+            <TablePager
+              page={page}
+              pageSize={list.data?.pageSize ?? 20}
+              count={totalCount}
+              onPageChange={setPage}
+              itemLabel="students"
+            />
           </>
         )}
       </div>
@@ -484,30 +468,13 @@ function TransactionsSection() {
               ))}
             </TableBody>
           </Table>
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              Page {query.data.page} of{" "}
-              {Math.max(1, Math.ceil(query.data.count / query.data.pageSize))}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page * query.data.pageSize >= query.data.count}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
+          <TablePager
+            page={query.data.page}
+            pageSize={query.data.pageSize}
+            count={query.data.count}
+            onPageChange={setPage}
+            itemLabel="transactions"
+          />
         </>
       )}
     </section>

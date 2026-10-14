@@ -25,6 +25,7 @@ import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { StatCard } from "@/components/common/stat-card";
 import { StatusBadge } from "@/components/common/status-badge";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/common/states";
+import { TablePager } from "@/components/common/table-pager";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -476,31 +477,14 @@ function AccountsPage() {
               </table>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-muted-foreground">
-                Showing {numberFmt((data.page - 1) * data.pageSize + (data.results.length || 0))} of{" "}
-                {numberFmt(data.count)} accounts
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1 || accounts.isFetching}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                >
-                  Previous
-                </Button>
-                <span className="text-sm text-muted-foreground">Page {data.page}</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page * data.pageSize >= data.count || accounts.isFetching}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
+            <TablePager
+              page={data.page}
+              pageSize={data.pageSize}
+              count={data.count}
+              onPageChange={setPage}
+              itemLabel="accounts"
+              disabled={accounts.isFetching}
+            />
           </>
         )}
       </div>

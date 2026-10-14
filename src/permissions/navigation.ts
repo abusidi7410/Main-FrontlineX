@@ -315,7 +315,9 @@ const PLATFORM: NavItem[] = [
   { label: "Overview", to: "/platform", icon: "home", group: "Platform", mobile: true },
   { label: "Schools", to: "/platform/schools", icon: "building", group: "Platform", mobile: true },
   { label: "Payments & Revenue", to: "/platform/payments", icon: "wallet", group: "Revenue" },
-  { label: "Activity", to: "/platform/activity", icon: "chart", group: "Operations" },
+  { label: "Activity", to: "/platform/activity", icon: "audit", group: "Operations" },
+  { label: "Analytics", to: "/platform/analytics", icon: "chart", group: "Operations" },
+  { label: "Support", to: "/platform/support", icon: "lifebuoy", group: "Operations" },
   {
     label: "Audit Logs",
     to: "/platform/audit",

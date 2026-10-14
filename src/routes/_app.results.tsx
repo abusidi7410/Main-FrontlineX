@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/common/page-header";
 import { IfAllowed, PermissionGate } from "@/components/common/permission-gate";
 import { StatusBadge } from "@/components/common/status-badge";
 import { ErrorState, ListSkeleton } from "@/components/common/states";
+import { TablePager } from "@/components/common/table-pager";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -272,30 +273,15 @@ function ResultsPage() {
             })}
           </ul>
         )}
-        {query.data && query.data.totalPages > 1 ? (
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              Page {query.data.page} of {query.data.totalPages}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                className="h-10"
-                disabled={page <= 1 || query.isFetching}
-                onClick={() => setPage((current) => current - 1)}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                className="h-10"
-                disabled={page >= query.data.totalPages || query.isFetching}
-                onClick={() => setPage((current) => current + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
+        {query.data ? (
+          <TablePager
+            page={query.data.page}
+            pageSize={query.data.pageSize}
+            count={query.data.count}
+            onPageChange={setPage}
+            itemLabel="result sheets"
+            disabled={query.isFetching}
+          />
         ) : null}
 
         <NewSheetDialog open={newSheetOpen} onOpenChange={setNewSheetOpen} />

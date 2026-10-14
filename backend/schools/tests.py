@@ -17,6 +17,58 @@ from schools.models import AuditLog, School, SchoolSubscription
 from .models import SubscriptionPlan
 
 
+class PlatformSchoolListTests(TestCase):
+    """The schools list stays bounded and cheap as the tenant count grows."""
+
+    def setUp(self):
+        self.platform = User.objects.create_user(
+            email='platform@example.com', password='Strong-Pass-1!',
+            first_name='Platform', last_name='Manager',
+            role=User.Role.PLATFORM_MANAGER, is_active=True,
+        )
+        plan = SubscriptionPlan.objects.create(
+            name='t100', min_students=1, max_students=100, monthly_price=100.00,
+        )
+        for index in range(3):
+            school = School.objects.create(
+                name=f'List Academy {index}', slug=f'list-academy-{index}',
+                address='1 List Way', state='Kano', lga='Kano Municipal',
+                phone=f'+234800000010{index}', email=f'list{index}@example.com',
+                is_active=True,
+            )
+            SchoolSubscription.objects.create(
+                school=school, plan=plan, status=SchoolSubscription.Status.ACTIVE,
+            )
+            Student.objects.create(
+                school=school, admission_number=f'LST-{index:03d}',
+                first_name='Ada', last_name='Test', gender='female',
+                class_name='SS1', status=Student.Status.ACTIVE,
+            )
+        self.client = APIClient()
+        self.client.force_authenticate(self.platform)
+
+    def test_list_is_paginated_with_prefetched_counts(self):
+        with self.assertNumQueries(1):
+            response = self.client.get('/api/v1/platform/schools/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['count'], 3)
+        self.assertEqual(len(response.data['results']), 3)
+        row = response.data['results'][0]
+        self.assertEqual(row['students'], 1)
+        self.assertEqual(row['status'], 'active')
+
+    def test_list_second_page_and_search(self):
+        second = self.client.get(
+            '/api/v1/platform/schools/', {'page': 2, 'pageSize': 2},
+        )
+        self.assertEqual(second.data['count'], 3)
+        self.assertEqual(len(second.data['results']), 1)
+        searched = self.client.get(
+            '/api/v1/platform/schools/', {'search': 'List Academy 1'},
+        )
+        self.assertEqual(searched.data['count'], 1)
+
+
 class PlatformSchoolDeleteTests(TestCase):
     def setUp(self):
         self.platform = User.objects.create_user(

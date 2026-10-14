@@ -179,8 +179,9 @@ class StaffDirectoryPrivacyTests(SecurityTestBase):
         self.auth(self.student_user)
         resp = self.client.get(self.url('/staff/'))
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(len(resp.data) > 0)
-        for row in resp.data:
+        rows = resp.data['results']
+        self.assertTrue(len(rows) > 0)
+        for row in rows:
             self.assertIn('fullName', row)
             self.assertNotIn('email', row)
             self.assertNotIn('phone', row)
@@ -189,7 +190,7 @@ class StaffDirectoryPrivacyTests(SecurityTestBase):
         self.auth(self.admin)
         resp = self.client.get(self.url('/staff/'))
         self.assertEqual(resp.status_code, 200)
-        row = next(r for r in resp.data if r['id'] == str(self.teacher_staff.public_id))
+        row = next(r for r in resp.data['results'] if r['id'] == str(self.teacher_staff.public_id))
         self.assertEqual(row['email'], 'teacher@success.example')
 
     def test_parent_staff_detail_has_no_contact_details(self):
