@@ -221,15 +221,16 @@ function WalletBalanceCard({
         </div>
         <div className="flex w-full max-w-sm flex-col gap-2">
           <Label htmlFor="deposit-amount">Deposit amount (₦)</Label>
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 min-[420px]:flex-row">
             <Input
               id="deposit-amount"
               inputMode="decimal"
               placeholder={`Minimum ${naira(wallet.minDeposit)}`}
               value={depositNaira}
               onChange={(e) => setDepositNaira(e.target.value)}
+              className="min-w-0 flex-1"
             />
-            <Button disabled={startingDeposit} onClick={beginDeposit}>
+            <Button disabled={startingDeposit} onClick={beginDeposit} className="shrink-0">
               {startingDeposit ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
               {startingDeposit ? "Opening…" : "Fund wallet"}
             </Button>

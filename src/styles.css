@@ -187,6 +187,7 @@
     text-rendering: optimizeLegibility;
     -moz-osx-font-smoothing: grayscale;
     scroll-behavior: smooth;
+    overflow-x: clip;
   }
 
   body {
@@ -199,6 +200,19 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    overflow-x: clip;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  img,
+  video,
+  svg {
+    max-width: 100%;
+  }
+
+  img,
+  video {
+    height: auto;
   }
 
   h1,

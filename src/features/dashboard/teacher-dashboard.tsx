@@ -33,7 +33,7 @@ export function TeacherDashboard() {
         <p className="relative text-xs font-semibold uppercase tracking-[0.14em] text-white/70">
           {school?.name} · {today} · {school?.currentTerm}
         </p>
-        <h1 className="relative mt-2 font-display text-2xl font-semibold sm:text-3xl">
+        <h1 className="relative mt-2 max-w-full break-words font-display text-2xl font-semibold leading-tight sm:text-3xl">
           {greeting()}, {user.fullName.split(" ")[0]}.
         </h1>
         <p className="relative mt-1.5 max-w-lg text-sm text-white/80">
