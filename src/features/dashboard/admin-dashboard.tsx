@@ -1,5 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import {
+  ArrowRight,
+  BadgeCheck,
+  Banknote,
+  CalendarCheck2,
+  CircleAlert,
+  Users,
+  UserCog,
+  Wallet,
+} from "lucide-react";
 import { StatCard } from "@/components/common/stat-card";
 import { CardsSkeleton, ErrorState } from "@/components/common/states";
 import { Button } from "@/components/ui/button";
@@ -42,9 +52,22 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
     );
   }
 
+  const outstanding = finance.data?.outstanding ?? 0;
   const loading =
     wallet.isPending || students.isPending || finance.isPending || attendance.isPending;
-  const outstanding = finance.data?.outstanding ?? 0;
+  const collected = finance.data?.paid ?? 0;
+  const billed = finance.data?.billed ?? collected + outstanding;
+  const collectionRate = billed > 0 ? Math.round((collected / billed) * 100) : 0;
+  const registerRate =
+    attendance.data?.isSchoolDay && attendance.data.total > 0
+      ? Math.round((attendance.data.submitted / attendance.data.total) * 100)
+      : 0;
+  const todayLong = new Date().toLocaleDateString("en-NG", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
   const awaitingApproval =
     results.data?.filter((r) => r.status === "submitted" || r.status === "under_review").length ??
     0;
@@ -110,14 +133,58 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
 
   return (
     <div className="space-y-6">
-      <section className="fn-enter border-l-2 border-primary py-1 pl-5">
-        <p className="text-sm font-medium text-primary">{school?.name}</p>
-        <h1 className="mt-1.5 font-display text-[1.625rem] font-semibold tracking-[-0.02em] sm:text-[2rem]">
+      <section className="fn-enter relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-primary via-primary/85 to-[#1d3a5f] p-6 text-primary-foreground sm:p-8">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-16 -top-24 size-72 rounded-full bg-white/10 blur-2xl"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-28 right-24 size-56 rounded-full bg-brass/30 blur-2xl"
+        />
+        <p className="relative text-xs font-semibold uppercase tracking-[0.14em] text-white/70">
+          {school?.name} · {todayLong}
+        </p>
+        <Link
+          to="/wallet"
+          className="absolute right-5 top-5 inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-sm font-semibold tabular-nums backdrop-blur transition hover:bg-white/25 sm:right-7 sm:top-7"
+          aria-label={`Wallet balance ${wallet.data ? compactNaira(wallet.data.balance) : "loading"}. Open wallet and billing.`}
+        >
+          <Wallet className="size-4" aria-hidden="true" />
+          {wallet.isPending ? "…" : compactNaira(wallet.data?.balance ?? 0)}
+          <span className="text-xs font-normal text-white/70">wallet</span>
+          {wallet.data && wallet.data.balance < wallet.data.studentPrice ? (
+            <span className="size-2 rounded-full bg-warning" aria-hidden="true" />
+          ) : null}
+        </Link>
+        <h1 className="relative mt-2 font-display text-[1.7rem] font-semibold tracking-[-0.02em] sm:text-[2.1rem]">
           {greeting()}, {user.fullName.split(" ")[0]}.
         </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {school?.currentSession} · {school?.currentTerm}
+        <p className="relative mt-2 max-w-xl text-sm text-white/80">
+          {school?.currentSession} · {school?.currentTerm} — {attendanceSummary.hint},{" "}
+          {collectionRate}% of billed fees collected.
         </p>
+        <div className="relative mt-5 flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium backdrop-blur">
+            <CalendarCheck2 className="size-3.5" aria-hidden="true" />
+            {attendance.data?.isSchoolDay ? `Registers ${registerRate}% complete` : "No school today"}
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium backdrop-blur">
+            <Banknote className="size-3.5" aria-hidden="true" />
+            {compactNaira(collected)} collected
+          </span>
+          {awaitingApproval > 0 ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-warning px-3 py-1.5 text-xs font-semibold text-warning-foreground">
+              <CircleAlert className="size-3.5" aria-hidden="true" />
+              {awaitingApproval} sheets need approval
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-success/90 px-3 py-1.5 text-xs font-semibold text-white">
+              <BadgeCheck className="size-3.5" aria-hidden="true" />
+              Results up to date
+            </span>
+          )}
+        </div>
       </section>
 
       {loading ? (
@@ -128,44 +195,93 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
             label="Active students"
             value={numberFmt(students.data?.count ?? 0)}
             hint="Enrolled this session"
+            icon={<Users className="size-5" />}
           />
           <StatCard
             label="Staff"
             value={numberFmt(staff.data?.length ?? 0)}
             hint="Teachers and administrative staff"
+            icon={<UserCog className="size-5" />}
           />
           <StatCard
-            label="Active paid students"
-            value={numberFmt(access.data?.summary.active ?? 0)}
-            tone="success"
-            hint="Paid access this month"
-          />
-          <StatCard
-            label="Awaiting activation"
-            value={numberFmt(access.data?.summary.needAttention ?? 0)}
-            tone={(access.data?.summary.needAttention ?? 0) > 0 ? "warning" : "success"}
-            hint="Need wallet funding to activate"
-          />
-          <StatCard
-            label="Registers submitted today"
-            value={attendanceSummary.value}
-            tone={
-              attendance.data?.isSchoolDay && attendance.data.total > 0
-                ? attendance.data.submitted === attendance.data.total
-                  ? "success"
-                  : "warning"
-                : "default"
-            }
-            hint={attendanceSummary.hint}
+            label="Fee collection"
+            value={`${collectionRate}%`}
+            tone={collectionRate >= 70 ? "success" : "warning"}
+            hint={`${compactNaira(collected)} of ${compactNaira(billed)} billed`}
+            icon={<Banknote className="size-5" />}
           />
           <StatCard
             label="Outstanding fees"
             value={compactNaira(outstanding)}
-            tone="warning"
+            tone={outstanding > 0 ? "warning" : "success"}
             hint="Across current term invoices"
+            icon={<Wallet className="size-5" />}
           />
         </div>
       )}
+
+      {!loading ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="fn-panel p-5" aria-labelledby="register-progress">
+            <div className="flex items-center justify-between gap-2">
+              <h2 id="register-progress" className="font-semibold">
+                Today's registers
+              </h2>
+              <Link
+                to="/attendance-overview"
+                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+              >
+                Open board <ArrowRight className="size-4" aria-hidden="true" />
+              </Link>
+            </div>
+            <p className="mt-1 text-3xl font-semibold tabular-nums">{attendanceSummary.value}</p>
+            <p className="text-sm text-muted-foreground">{attendanceSummary.hint}</p>
+            <div
+              className="mt-3 h-2.5 overflow-hidden rounded-full bg-muted"
+              role="progressbar"
+              aria-valuenow={registerRate}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-primary to-success transition-all"
+                style={{ width: `${registerRate}%` }}
+              />
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">{registerRate}% of classes submitted</p>
+          </section>
+          <section className="fn-panel p-5" aria-labelledby="fee-progress">
+            <div className="flex items-center justify-between gap-2">
+              <h2 id="fee-progress" className="font-semibold">
+                Fee collection
+              </h2>
+              <Link
+                to="/finance"
+                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+              >
+                Open finance <ArrowRight className="size-4" aria-hidden="true" />
+              </Link>
+            </div>
+            <p className="mt-1 text-3xl font-semibold tabular-nums">{compactNaira(collected)}</p>
+            <p className="text-sm text-muted-foreground">
+              {compactNaira(outstanding)} still outstanding
+            </p>
+            <div
+              className="mt-3 h-2.5 overflow-hidden rounded-full bg-muted"
+              role="progressbar"
+              aria-valuenow={collectionRate}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-brass to-success transition-all"
+                style={{ width: `${collectionRate}%` }}
+              />
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">{collectionRate}% collected</p>
+          </section>
+        </div>
+      ) : null}
 
       {!readOnly ? <SetupChecklist /> : null}
 
@@ -202,10 +318,10 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
                 Wallet balance: {compactNaira(wallet.data.balance)}
               </h2>
               <p className="mt-1 text-muted-foreground">
-                Student access {compactNaira(wallet.data.studentPrice)} per student per month.
-                {wallet.data.balance < wallet.data.studentPrice
-                  ? ` Your wallet holds ${compactNaira(wallet.data.balance)}. Fund your wallet to activate students.`
-                  : ` You can activate ${Math.floor(wallet.data.balance / wallet.data.studentPrice)} students with your current balance.`}{" "}
+                Student access {compactNaira(wallet.data.studentPrice)} per student per month.{" "}
+                {(access.data?.summary.active ?? 0) === 0
+                  ? "No active students — fund the wallet, then activate students one by one."
+                  : `${numberFmt(access.data?.summary.active ?? 0)} active · ${compactNaira((access.data?.summary.active ?? 0) * wallet.data.studentPrice)}/mo renewal cost.`}{" "}
                 Deposits stay available until a real charge occurs.
               </p>
             </div>

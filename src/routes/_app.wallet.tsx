@@ -189,6 +189,14 @@ function WalletBalanceCard({
   startingDeposit: boolean;
   beginDeposit: () => void;
 }) {
+  const accessSummary = useQuery({
+    queryKey: ["wallet", "students", "", 1],
+    queryFn: () => listStudentAccess(undefined, 1, 1),
+  });
+  const active = accessSummary.data?.summary.active ?? 0;
+  const monthlyBurn = active * wallet.studentPrice;
+  const runway =
+    monthlyBurn > 0 ? Math.floor(wallet.balance / monthlyBurn) : null;
   return (
     <div className="fn-panel space-y-4 p-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -199,10 +207,16 @@ function WalletBalanceCard({
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
             Student access {naira(wallet.studentPrice)} per student per month ·{" "}
-            {wallet.balance < wallet.studentPrice
-              ? "Insufficient balance. Fund your wallet to activate students."
-              : `You can activate ${Math.floor(wallet.balance / wallet.studentPrice)} students with your current balance.`}
-            {wallet.autoRenew ? " · renewals automatic while funded" : ""}
+            {active === 0
+              ? wallet.balance < wallet.studentPrice
+                ? "No active students. Fund your wallet, then activate students one by one."
+                : "No active students yet. Your balance covers new activations as you add them."
+              : monthlyBurn > wallet.balance
+                ? `${active} active · ${naira(monthlyBurn)}/mo renewal cost · balance covers this month only — top up before renewal.`
+                : runway !== null && runway > 1
+                  ? `${active} active · ${naira(monthlyBurn)}/mo renewal cost · ~${runway} months covered at current usage.`
+                  : `${active} active · ${naira(monthlyBurn)}/mo renewal cost · covered for this renewal cycle.`}
+            {wallet.autoRenew && active > 0 ? " Renewals run automatically while funded." : ""}
           </p>
         </div>
         <div className="flex w-full max-w-sm flex-col gap-2">

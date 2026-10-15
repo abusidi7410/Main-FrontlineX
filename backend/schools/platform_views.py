@@ -646,6 +646,10 @@ class PlatformSchoolStatusView(APIView):
             severity='critical' if next_status == 'suspended' else 'info',
             school=school,
         )
+        from records.services import events as event_service
+        event_service.school_status_changed(
+            school, previous=current, current=next_status,
+        )
 
         return Response(_platform_school_data(school))
 

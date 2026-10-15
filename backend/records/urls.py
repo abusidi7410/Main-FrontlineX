@@ -84,4 +84,5 @@ urlpatterns = [
     # The report card read model, shared by the parent portal and the staff
     # reports screen.
     path('reports/report-cards/<str:student_id>/', views.ReportCardView.as_view()),
+    path('audit-logs/', views.SchoolAuditLogListView.as_view()),
 ]

@@ -20,6 +20,7 @@ from accounts.models import User
 from accounts.permissions import HasSchool, require_permissions
 from accounts.utils import audit, paginate
 from records.models import Student
+from records.services import events as event_service
 from schools import paystack as paystack_client
 
 from . import services
@@ -192,6 +193,9 @@ def _confirm_deposit(deposit: WalletDeposit, request) -> Response:
             deposit.status = WalletDeposit.Status.FAILED
             deposit.raw = data
             deposit.save(update_fields=['status', 'raw'])
+            event_service.deposit_failed(
+                deposit, reason='The payment provider did not confirm this deposit.',
+            )
         return Response({'status': 'failed', 'reference': deposit.reference})
 
     gateway_reference = data.get('reference')
@@ -208,6 +212,10 @@ def _confirm_deposit(deposit: WalletDeposit, request) -> Response:
             request, 'wallet.deposit.verification_mismatch', deposit.school.name,
             'Gateway verification did not match the expected reference, amount, and currency.',
             severity='critical', entity='school', entity_id=str(deposit.school_id),
+        )
+        event_service.deposit_failed(
+            deposit,
+            reason='Gateway verification did not match the expected reference, amount, and currency.',
         )
         return Response({'status': 'failed', 'reference': deposit.reference})
 
@@ -238,6 +246,7 @@ def _confirm_deposit(deposit: WalletDeposit, request) -> Response:
         entity='school', entity_id=str(deposit.school_id),
         after={'amount': deposit.amount_kobo / 100, 'reference': deposit.reference},
     )
+    event_service.deposit_verified(deposit)
     return Response({
         'status': 'success',
         'reference': deposit.reference,

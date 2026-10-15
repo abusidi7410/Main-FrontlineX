@@ -66,21 +66,21 @@ function NavEntry({
   // Collapsed rail (or childless entry): a single icon link to the main route.
   if (collapsed || !hasChildren) {
     return (
-      <li>
-        <Link
-          to={item.to}
-          onClick={onNavigate}
-          aria-current={active ? "page" : undefined}
-          aria-label={item.label}
-          title={collapsed ? item.label : undefined}
-          className={cn(
-            "group relative flex min-h-[2.5rem] items-center rounded-lg text-[13px] font-medium transition-colors duration-150",
-            collapsed ? "justify-center px-0" : "gap-2.5 px-3",
-            active
-              ? "bg-sidebar-accent text-sidebar-accent-foreground"
-              : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-          )}
-        >
+          <li>
+            <Link
+              to={item.to}
+              onClick={onNavigate}
+              aria-current={active ? "page" : undefined}
+              aria-label={item.label}
+              title={collapsed ? item.label : undefined}
+              className={cn(
+                "group relative flex min-h-[2.75rem] items-center rounded-xl text-[13px] font-medium transition-all duration-200",
+                collapsed ? "justify-center px-0" : "gap-2.5 px-3",
+                active
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_1px_0_hsl(0_0%_100%/0.06)]"
+                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+              )}
+            >
           {active ? (
             <span
               aria-hidden="true"
@@ -237,7 +237,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <aside
         className={cn(
-          "fixed inset-y-3 left-3 z-30 hidden flex-col overflow-hidden rounded-xl border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-[var(--shadow-overlay)] lg:flex",
+          "fixed inset-y-3 left-3 z-30 hidden flex-col overflow-hidden rounded-2xl border border-sidebar-border/80 bg-sidebar text-sidebar-foreground shadow-[var(--shadow-overlay)] lg:flex",
           sidebarW,
         )}
       >
@@ -273,7 +273,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className={contentPl}>
-        <header className="sticky top-3 z-20 mx-0 flex h-16 items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-[var(--shadow-card)] sm:px-4">
+        <header className="sticky top-3 z-20 mx-0 flex h-14 items-center gap-2 rounded-2xl border border-border/80 bg-card/85 px-3 shadow-[var(--shadow-card)] backdrop-blur-xl sm:px-4">
           <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <SheetTrigger asChild>
               <Button
@@ -394,7 +394,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <main
           id="main-content"
-          className="mx-auto w-full max-w-[80rem] space-y-5 px-4 pb-32 pt-5 sm:px-6 lg:px-5 lg:pb-12"
+          className="mx-auto w-full max-w-[76rem] space-y-6 px-4 pb-32 pt-6 sm:px-6 lg:px-6 lg:pb-12"
         >
           <div key={pathname} className="fn-enter">
             {children}

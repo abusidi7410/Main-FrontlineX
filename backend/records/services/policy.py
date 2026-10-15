@@ -47,6 +47,28 @@ def require_linked_child(user, student_id):
     return student
 
 
+def teacher_class_names(*, user, school) -> set[str] | None:
+    """Class names `user` may read result sheets for, or None for the whole school.
+
+    Read access mirrors the entry rule in `require_teacher_class_scope`: the
+    taught-class list plus every class-teacher designation the teacher holds.
+    Anything else returns None (admins, principals and other whole-school
+    roles keep the full school).
+    """
+    if user.role != 'teacher':
+        return None
+    staff = getattr(user, 'staff_profile', None)
+    names = set(getattr(staff, 'classes', None) or [])
+    staff_id = getattr(user, 'staff_profile_id', None)
+    if staff_id is not None:
+        names.update(
+            ClassTeacherAssignment.objects.filter(
+                school=school, staff_id=staff_id,
+            ).values_list('class_obj__name', flat=True),
+        )
+    return names
+
+
 def require_teacher_class_scope(*, user, school, class_obj, session, action='work on'):
     """Teachers may only enter results for classes in their academic context.
 

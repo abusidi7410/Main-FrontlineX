@@ -68,9 +68,9 @@
 
 :root {
   color-scheme: light;
-  --radius: 0.625rem;
-  --shadow-card: 0 1px 2px hsl(222 47% 20% / 0.06);
-  --shadow-raised: 0 10px 26px -10px hsl(222 47% 18% / 0.16);
+  --radius: 0.75rem;
+  --shadow-card: 0 1px 2px hsl(222 47% 20% / 0.05), 0 1px 3px hsl(222 47% 20% / 0.06);
+  --shadow-raised: 0 12px 32px -12px hsl(222 47% 18% / 0.18), 0 2px 6px hsl(222 47% 18% / 0.06);
   --shadow-overlay: 0 26px 60px -20px hsl(222 47% 12% / 0.3);
   --shadow-glow: 0 0 0 3px hsl(222 62% 26% / 0.14);
   --shadow-brass: 0 8px 22px -10px hsl(36 72% 40% / 0.45);
@@ -290,22 +290,25 @@
 
 @utility fn-panel {
   background-color: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 14px;
   box-shadow: var(--shadow-card);
   transition:
-    box-shadow 150ms ease,
-    background-color 150ms ease,
-    border-color 150ms ease;
+    box-shadow 180ms var(--ease-premium),
+    background-color 180ms ease,
+    border-color 180ms ease,
+    transform 180ms var(--ease-premium);
 }
 
 @utility fn-panel-hover {
   transition:
-    box-shadow 150ms ease,
-    border-color 150ms ease;
+    box-shadow 180ms var(--ease-premium),
+    border-color 180ms ease,
+    transform 180ms var(--ease-premium);
   &:hover {
     box-shadow: var(--shadow-raised);
-    border-color: hsl(var(--foreground) / 0.18);
+    border-color: hsl(var(--foreground) / 0.14);
+    transform: translateY(-1px);
   }
 }
 

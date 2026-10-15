@@ -487,6 +487,8 @@ class AccountCreateSerializer(serializers.Serializer):
             f'{user.get_full_name()} ({user.email})',
             f'Role {role} account {mode}.',
         )
+        from records.services import events as event_service
+        event_service.account_created(user)
 
         data = AccountSerializer(user).data
         if generated:

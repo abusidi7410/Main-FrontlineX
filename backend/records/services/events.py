@@ -377,3 +377,149 @@ def sweep_attendance_gaps(school, on) -> list[str]:
     missing = [row['className'] for row in rows if row['submitted'] == 0]
     attendance_gaps(school, on, missing)
     return missing
+
+
+def invoice_issued(invoice) -> None:
+    """One bill exists: the family owes money, the office tracks it.
+
+    Called for single invoices (registration). Bulk generation uses
+    `invoices_issued` so a 200-student class does not fan out 200 office
+    notices.
+    """
+    school = invoice.school
+    student = invoice.student
+    name = f'{student.last_name}, {student.first_name}'
+    amount = f'{invoice.total:,.2f}'
+    notify_svc.notify_roles(
+        school, FINANCE_ROLES,
+        type='payment',
+        title=f'New invoice — {name}',
+        body=f'{amount} billed for {student.class_name} ({invoice.term}).',
+        link='/finance',
+        dedupe_key=f'invoice:{invoice.pk}:office',
+    )
+    notify_svc.notify_parents(
+        [student],
+        type='payment',
+        title=f'New school bill for {name}',
+        body=f'{amount} is due. Pay from Fees.',
+        link='/fees',
+        dedupe_key=f'invoice:{invoice.pk}:parent',
+        school=school,
+    )
+
+
+def invoices_issued(school, *, student_ids, term, class_name, count, total) -> None:
+    """A bulk generation run billed a class.
+
+    One notice per family (each about their own bill) plus one summary for
+    the office. The dedupe key carries the count and total, so an overwrite
+    re-run that changes nothing stays silent while a run that changes the
+    numbers re-notifies.
+    """
+    if not count:
+        return
+    from decimal import Decimal
+    amount = f'{Decimal(str(total)):,.2f}'
+    notify_svc.notify_parents(
+        list(student_ids),
+        type='payment',
+        title=f'New {term} bills are ready',
+        body=f'{count} invoice(s) are ready for {class_name}. Check Fees for the balance.',
+        link='/fees',
+        dedupe_key=f'invoices:{school.pk}:{term}:{class_name}:{count}x{amount}',
+        school=school,
+    )
+    notify_svc.notify_roles(
+        school, FINANCE_ROLES,
+        type='payment',
+        title=f'Invoices generated — {class_name} ({term})',
+        body=f'{count} invoice(s) totalling {amount}.',
+        link='/finance',
+        dedupe_key=f'invoices:{school.pk}:{term}:{class_name}:{count}x{amount}:office',
+    )
+
+
+def deposit_verified(deposit) -> None:
+    """A wallet deposit cleared the gateway: real money arrived."""
+    notify_svc.notify_roles(
+        deposit.school, FINANCE_ROLES,
+        type='payment',
+        title=f'Wallet deposit — ₦{deposit.amount_kobo / 100:,.2f}',
+        body=f'₦{deposit.amount_kobo / 100:,.2f} credited via Paystack ({deposit.reference}).',
+        link='/finance',
+        dedupe_key=f'deposit:{deposit.reference}:verified',
+    )
+
+
+def deposit_failed(deposit, *, reason='') -> None:
+    """A wallet deposit did not clear: no money moved.
+
+    Fires on gateway failure and on reference/amount mismatch alike. The
+    reference-keyed dedupe means retries of the same checkout alert once.
+    """
+    suffix = f' {reason}' if reason else ''
+    notify_svc.notify_roles(
+        deposit.school, FINANCE_ROLES,
+        type='payment',
+        title=f'Wallet deposit failed — ₦{deposit.amount_kobo / 100:,.2f}',
+        body=f'Deposit {deposit.reference} did not complete.{suffix} No money moved.',
+        link='/wallet',
+        dedupe_key=f'deposit:{deposit.reference}:failed',
+    )
+
+
+def account_created(user) -> None:
+    """A login was provisioned for somebody: tell them, without secrets.
+
+    The temporary password travels only through the one-time
+    `defaultCredentials` response to the administrator who created the
+    account — it is never written into a notification.
+    """
+    notify_svc.notify(
+        [user.pk],
+        type='system',
+        title='Your FrontlineX account is ready',
+        body='Sign in with the credentials your administrator gave you.',
+        link='/login',
+        dedupe_key=f'account:{user.pk}:created',
+        school=user.school,
+    )
+
+
+def account_status_changed(user, *, active: bool) -> None:
+    """An administrator switched this account on or off: tell the holder."""
+    notify_svc.notify(
+        [user.pk],
+        type='system' if active else 'security',
+        title='Your account was reactivated' if active
+        else 'Your account was deactivated',
+        body='You can sign in again.' if active
+        else 'Contact your school administrator if this is unexpected.',
+        link='/login',
+        dedupe_key=f'account:{user.pk}:{"active" if active else "inactive"}',
+        school=user.school,
+    )
+
+
+def school_status_changed(school, *, previous: str, current: str) -> None:
+    """The platform moved this school between states: tell its admins.
+
+    Suspension locks every account in the school out, so it goes out as a
+    security notice; every other move is operational.
+    """
+    notify_svc.notify_roles(
+        school, ('school_admin',),
+        type='security' if current == 'suspended' else 'system',
+        title=f'School {current.replace("_", " ")} — {school.name}',
+        body=(
+            f'Status changed from {previous} to {current}. '
+            + (
+                'Nobody in the school can sign in until it is reinstated. Contact the platform.'
+                if current == 'suspended'
+                else 'The school can operate normally.'
+            )
+        ),
+        link='/settings',
+        dedupe_key=f'school:{school.pk}:status:{current}',
+    )

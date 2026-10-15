@@ -204,6 +204,35 @@ def resolve_scope(user, params) -> dict:
         return scope
 
     if requested_class:
+        if scope['role'] == 'teacher':
+            from records.models import ClassTeacherAssignment
+            staff = getattr(user, 'staff_profile', None)
+            if staff is not None and staff.status == StaffMember.Status.ACTIVE:
+                school = getattr(user, 'school', None)
+                allowed_names = set(staff.classes or [])
+                allowed_ids = set()
+                if school is not None:
+                    allowed_ids = set(
+                        school.school_classes.filter(name__in=allowed_names)
+                        .values_list('id', flat=True)
+                    )
+                    allowed_ids.update(
+                        ClassTeacherAssignment.objects.filter(
+                            school=school, staff=staff,
+                        ).values_list('class_obj_id', flat=True)
+                    )
+                    allowed_ids.update(
+                        school.timetable_entries.filter(teacher=staff)
+                        .values_list('class_obj_id', flat=True)
+                    )
+                    try:
+                        wanted = int(requested_class)
+                    except (TypeError, ValueError):
+                        wanted = None
+                    if wanted is not None and wanted not in allowed_ids:
+                        raise ValidationError({
+                            'classId': 'You can only view the timetable of your assigned classes.',
+                        })
         scope['classId'] = requested_class
     elif requested_teacher:
         if public_refs.parse_public_id(requested_teacher) is None:

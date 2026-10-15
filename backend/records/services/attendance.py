@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from django.db import transaction
 from django.db.models import Count, QuerySet, Q
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
@@ -381,10 +382,18 @@ def correct_record(*, user, school: School, record_id: int, new_status: str, rea
     reason = (reason or '').strip()
     if not reason:
         raise ValidationError({'reason': 'A reason is required to correct attendance.'})
-
     record = get_object_or_404(
-        AttendanceRecord.objects.select_related('student'), id=record_id, school=school,
+        AttendanceRecord.objects.select_related('student'), id=record_id,
+        school=school,
     )
+    if getattr(user, 'role', None) == 'teacher':
+        # Teachers correct only registers they could have taken themselves:
+        # their designated classes. Admins and principals keep whole-school
+        # correction rights through the `attendance.correct` permission.
+        class_obj = resolve_class(school, record.class_name)
+        if class_obj is None:
+            raise Http404
+        require_can_submit(user, school, class_obj)
     previous = record.status
     if previous == new_status:
         return {'changed': False, 'previousStatus': previous, 'status': new_status}

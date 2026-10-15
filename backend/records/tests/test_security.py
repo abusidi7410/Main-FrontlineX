@@ -423,7 +423,7 @@ class AttendanceSubmissionResponsibilityTests(SecurityTestBase):
         self.assertEqual(self.roster(className='JSS 1').status_code, 200)
         self.assertEqual(self.submit_attendance().status_code, 403)
 
-    def test_teacher_cannot_correct_a_taken_register(self):
+    def test_class_teacher_can_correct_their_own_class_register(self):
         self.auth(self.teacher)
         self.assertEqual(self.submit_attendance().status_code, 201)
         record = AttendanceRecord.objects.get()
@@ -433,7 +433,55 @@ class AttendanceSubmissionResponsibilityTests(SecurityTestBase):
             {'recordId': str(record.id), 'status': 'absent', 'reason': 'Wrong mark'},
             format='json',
         )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        record.refresh_from_db()
+        self.assertEqual(record.status, 'absent')
+
+    def test_teacher_cannot_correct_a_class_they_do_not_own(self):
+        other_student = Student.objects.create(
+            school=self.school, admission_number='SUA/JSS/2026/000101',
+            first_name='Tunde', last_name='Ade', gender='male',
+            class_name='JSS 2', status=Student.Status.ACTIVE,
+        )
+        record = AttendanceRecord.objects.create(
+            school=self.school, student=other_student,
+            class_obj=self.jss2, class_name='JSS 2',
+            date=datetime.date(2026, 9, 18), status='present',
+        )
+        self.auth(self.teacher)
+        resp = self.client.post(
+            self.url('/attendance/correct/'),
+            {'recordId': str(record.id), 'status': 'absent', 'reason': 'Nope'},
+            format='json',
+        )
         self.assertEqual(resp.status_code, 403, resp.content)
+        record.refresh_from_db()
+        self.assertEqual(record.status, 'present')
+
+    def test_subject_teacher_cannot_correct_even_a_taught_class(self):
+        """Teaching the subject is read access, not register ownership."""
+        self.auth(self.teacher)
+        self.assertEqual(self.submit_attendance().status_code, 201)
+        record = AttendanceRecord.objects.get()
+        self.auth(self.subject_teacher)
+        resp = self.client.post(
+            self.url('/attendance/correct/'),
+            {'recordId': str(record.id), 'status': 'absent', 'reason': 'Nope'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 403, resp.content)
+
+    def test_admin_keeps_whole_school_correction_rights(self):
+        self.auth(self.teacher)
+        self.assertEqual(self.submit_attendance().status_code, 201)
+        record = AttendanceRecord.objects.get()
+        self.auth(self.admin)
+        resp = self.client.post(
+            self.url('/attendance/correct/'),
+            {'recordId': str(record.id), 'status': 'late', 'reason': 'Admin fix'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
 
     def test_teacher_cannot_correct_another_schools_record(self):
         """School scoping holds for corrections, not just submissions."""

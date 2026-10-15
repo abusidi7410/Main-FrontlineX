@@ -99,7 +99,6 @@ const SCHOOL_ADMIN: NavItem[] = [
     group: "Manage",
     children: [
       { label: "School Settings", to: "/settings" },
-      { label: "Wallet & Billing", to: "/wallet" },
       { label: "Audit Logs", to: "/audit-logs" },
       { label: "USSD", to: "/ussd" },
     ],

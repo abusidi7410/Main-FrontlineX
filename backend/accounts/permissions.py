@@ -58,7 +58,7 @@ ROLE_PERMISSIONS = {
     ],
     'teacher': [
         'students.read', 'attendance.read', 'attendance.write',
-        'attendance.staff',
+        'attendance.correct', 'attendance.staff',
         'results.read', 'results.write',
         'timetable.read', 'lessonplans.read', 'lessonplans.write',
         'communication.read', 'ai.teaching', 'class.read', 'class.write'

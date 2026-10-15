@@ -328,6 +328,8 @@ class AccountStatusView(APIView):
             f'Role {account.role} account now {"active" if account.is_active else "inactive"}.',
             severity=severity,
         )
+        from records.services import events as event_service
+        event_service.account_status_changed(account, active=account.is_active)
         return Response(AccountSerializer(account).data)
 
 

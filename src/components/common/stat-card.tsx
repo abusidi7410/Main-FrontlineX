@@ -24,16 +24,16 @@ export function StatCard({
   }[tone];
 
   return (
-    <div className="group relative overflow-hidden rounded-xl border border-border bg-card p-5 text-card-foreground shadow-[var(--shadow-card)] transition-[border-color,box-shadow] duration-150 hover:border-foreground/15 hover:shadow-[var(--shadow-raised)]">
-      <span aria-hidden="true" className="absolute inset-x-0 top-0 h-0.5 bg-brass/70" />
+    <div className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card p-5 text-card-foreground shadow-[var(--shadow-card)] transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-foreground/10 hover:shadow-[var(--shadow-raised)]">
+      <span aria-hidden="true" className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-brass via-brass/60 to-transparent" />
       <div className="flex items-start justify-between gap-3">
-        <p className="fn-eyebrow pt-1">{label}</p>
+        <p className="fn-eyebrow pt-1.5">{label}</p>
         <div className="flex items-center gap-2">
           {trend}
           {icon ? (
             <span
               aria-hidden="true"
-              className="grid size-9 shrink-0 place-items-center rounded-lg border border-brass/25 bg-brass-soft text-brass transition-colors duration-150 group-hover:border-brass/45"
+              className="grid size-10 shrink-0 place-items-center rounded-xl border border-border/70 bg-gradient-to-b from-muted to-muted/60 text-foreground shadow-sm transition-colors duration-200 group-hover:border-brass/40 group-hover:text-brass"
             >
               {icon}
             </span>
@@ -42,14 +42,14 @@ export function StatCard({
       </div>
       <p
         className={cn(
-          "mt-3 text-[28px] font-semibold leading-none tracking-[-0.02em] tabular-nums",
+          "mt-3 text-[30px] font-semibold leading-none tracking-[-0.025em] tabular-nums",
           toneClass,
         )}
       >
         {value}
       </p>
       {hint ? (
-        <p className="mt-2.5 text-[13px] leading-relaxed text-muted-foreground">{hint}</p>
+        <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">{hint}</p>
       ) : null}
     </div>
   );

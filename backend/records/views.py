@@ -26,7 +26,7 @@ from accounts.permissions import (
 from accounts.services import notifications as notification_service
 from accounts.utils import audit as log_audit
 from billing import services as wallet_billing
-from schools.models import Announcement, School, SchoolSubscription
+from schools.models import Announcement, AuditLog, School, SchoolSubscription
 from .constants import DEFAULT_SUBJECTS
 from .models import (
     EPOCH,
@@ -546,6 +546,7 @@ class StudentListCreateView(APIView):
                 entity='invoice', entity_id=str(invoice.pk),
                 after={'total': str(invoice.total), 'source': invoice.source},
             )
+            event_service.invoice_issued(invoice)
         return Response(data, status=status.HTTP_201_CREATED)
 
 
@@ -1006,6 +1007,13 @@ class StudentImportView(APIView):
             )
 
         wallet = wallet_billing.get_wallet(request.user.school)
+        log_audit(
+            request, 'student.imported', target='Student import',
+            detail=f'{len(students)} students imported from file '
+                   f'({analysis.rejected} rejected, {analysis.invalid} invalid)',
+            entity='school', entity_id=str(request.user.school_id),
+            after={'imported': len(students), 'chargedKobo': charged_kobo},
+        )
         return Response({
             'imported': len(students),
             'skipped': analysis.rejected,
@@ -1046,8 +1054,14 @@ class StaffListView(APIView):
             raise PermissionDenied('You do not have permission to manage staff.')
         serializer = StaffMemberSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(school_id=request.user.school_id, status=StaffMember.Status.ACTIVE)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        member = serializer.save(school_id=request.user.school_id, status=StaffMember.Status.ACTIVE)
+        log_audit(
+            request, 'staff.created', target='StaffMember',
+            detail=f'{member.full_name} ({member.role})',
+            entity='staff', entity_id=str(member.public_id),
+            after={'role': member.role, 'status': member.status},
+        )
+        return Response(StaffMemberSerializer(member).data, status=status.HTTP_201_CREATED)
 
 
 class StaffDetailView(APIView):
@@ -1074,12 +1088,23 @@ class StaffDetailView(APIView):
         serializer = StaffMemberSerializer(member, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        log_audit(
+            request, 'staff.updated', target='StaffMember',
+            detail=f'{member.full_name} ({member.role})',
+            entity='staff', entity_id=str(member.public_id),
+        )
         return Response(serializer.data)
 
     def delete(self, request, pk):
         if not CanWriteStaff().has_permission(request, self):
             raise PermissionDenied('You do not have permission to manage staff.')
         member = self.get_object(request, pk)
+        log_audit(
+            request, 'staff.deleted', target='StaffMember',
+            detail=f'{member.full_name} ({member.role})',
+            entity='staff', entity_id=str(member.public_id),
+            before={'status': member.status},
+        )
         member.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1135,6 +1160,11 @@ class ClassTeacherAssignmentView(APIView):
             attendance_service.assign_class_teacher(
                 school, class_obj=class_obj, assign=False,
             )
+            log_audit(
+                request, 'class.teacher_removed', target='ClassTeacherAssignment',
+                detail=f'{class_obj.name} class teacher removed',
+                entity='school_class', entity_id=str(class_obj.id),
+            )
             return Response({'className': class_obj.name, 'classTeacher': ''})
 
         staff_id = (request.data.get('staffId') or '').strip()
@@ -1155,6 +1185,12 @@ class ClassTeacherAssignmentView(APIView):
 
         assignment = attendance_service.assign_class_teacher(
             school, class_obj=class_obj, staff=staff,
+        )
+        log_audit(
+            request, 'class.teacher_assigned', target='ClassTeacherAssignment',
+            detail=f'{staff.full_name} designated class teacher for {class_obj.name}',
+            entity='school_class', entity_id=str(class_obj.id),
+            after={'staffId': str(staff.public_id)},
         )
         return Response({
             'className': class_obj.name,
@@ -1293,6 +1329,22 @@ class InvoiceGenerateView(APIView):
             if to_create:
                 Invoice.objects.bulk_create(to_create)
                 generated = len(to_create)
+        log_audit(
+            request, 'invoice.batch_generated', target='Invoice',
+            detail=f'{generated} invoiced, {updated} updated for {class_name} ({term})',
+            entity='school', entity_id=str(school.id),
+            after={
+                'className': class_name, 'term': term,
+                'generated': generated, 'updated': updated,
+                'total': str(total),
+            },
+        )
+        if generated or updated:
+            event_service.invoices_issued(
+                school, student_ids=list(roster), term=term,
+                class_name=class_name, count=generated + updated,
+                total=total * (generated + updated),
+            )
         return Response({
             'generated': generated,
             'updated': updated,
@@ -2196,6 +2248,14 @@ class ResultSheetListView(APIView):
         class_name = request.query_params.get('className', '').strip()
         if class_name:
             queryset = queryset.filter(class_obj__name=class_name)
+        # A teacher holds `results.read` for the school, so without narrowing
+        # here the list would read every class's sheets. They are confined to
+        # the classes they teach; other roles keep the full school.
+        teacher_classes = policy_service.teacher_class_names(
+            user=request.user, school=school,
+        )
+        if teacher_classes is not None:
+            queryset = queryset.filter(class_obj__name__in=teacher_classes)
         subject = request.query_params.get('subject', '').strip()
         if subject:
             queryset = queryset.filter(subject__iexact=subject)
@@ -2216,6 +2276,12 @@ class ResultSheetDetailView(APIView):
             ResultSheet.objects.select_related('academic_session', 'class_obj'),
             id=pk, school_id=request.user.school_id,
         )
+        teacher_classes = policy_service.teacher_class_names(
+            user=request.user, school=request.user.school,
+        )
+        if teacher_classes is not None and sheet.class_obj.name not in teacher_classes:
+            # 404, not 403: this user may not know the sheet exists.
+            raise Http404
         return Response(result_service.sheet_detail(sheet))
 
 
@@ -2549,6 +2615,13 @@ class AttendanceRosterView(APIView):
         if arm and school_class is not None:
             section = attendance_service.resolve_section(school, school_class, arm)
             if section is None:
+                raise Http404
+
+        if school_class is not None and request.user.role == 'teacher':
+            allowed = attendance_service.teacher_visible_class_ids(
+                school, request.user, session,
+            )
+            if allowed is not None and school_class.id not in allowed:
                 raise Http404
 
         rows = attendance_service.roster_for(school, school_class, section, session)
@@ -4335,3 +4408,38 @@ class PromotionApplyView(APIView):
                     f'Promotion notification failed for student {student.pk}'
                 )
         return Response(result)
+
+
+class SchoolAuditLogListView(APIView):
+    """GET /audit-logs/ — school-scoped audit trail, newest first."""
+
+    permission_classes = [IsAuthenticated, HasSchool, require_permissions('audit.read')]
+
+    def get(self, request):
+        events = AuditLog.objects.filter(school_id=request.user.school_id).order_by(
+            '-created_at', '-id',
+        )
+        action = (request.query_params.get('action') or '').strip()
+        if action:
+            events = events.filter(action__icontains=action)
+        search = (request.query_params.get('search') or '').strip()
+        if search:
+            events = events.filter(
+                Q(actor__icontains=search) | Q(action__icontains=search)
+                | Q(target__icontains=search) | Q(detail__icontains=search)
+                | Q(ip__icontains=search),
+            )
+        return Response([
+            {
+                'id': str(e.id),
+                'actor': e.actor,
+                'role': e.role,
+                'action': e.action,
+                'target': e.target,
+                'detail': e.detail or e.target,
+                'ip': e.ip,
+                'createdAt': e.created_at.isoformat(),
+                'severity': e.severity,
+            }
+            for e in events[:500]
+        ])

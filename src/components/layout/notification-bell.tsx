@@ -51,7 +51,7 @@ export function NotificationBell() {
       queryClient.setQueryData(
         ["notifications", { pageSize: 8 }],
         (old: typeof data) =>
-          old ? { ...old, results: applyRead(old.results, updated.id, updated.readAt ?? "") } : old,
+          old ? { ...old, results: applyRead(old.results, updated.id, updated.readAt ?? ""), unread: Math.max(0, (old.unread ?? 0) - 1) } : old,
       );
       void invalidate();
     },

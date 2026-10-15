@@ -203,6 +203,41 @@ class ResultSheetListTests(SecurityTestBase):
         self.assertEqual(resp.data['pageSize'], 25)
         self.assertTrue(all(row['className'] == 'JSS 1' for row in resp.data['results']))
 
+    def test_teacher_list_is_confined_to_their_own_classes(self):
+        results_service.create_sheet(
+            school=self.school, academic_session=self.session, class_obj=self.jss1,
+            subject='Mathematics', assessment='Test',
+        )
+        results_service.create_sheet(
+            school=self.school, academic_session=self.session, class_obj=self.jss2,
+            subject='Mathematics', assessment='Test',
+        )
+        # The fixture teacher is the designated class teacher for JSS 1 only.
+        self.auth(self.teacher)
+        resp = self.client.get(self.url('/results/'), {'page': 1, 'pageSize': 25})
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['className'], 'JSS 1')
+
+    def test_teacher_detail_of_another_class_is_not_found(self):
+        sheet = results_service.create_sheet(
+            school=self.school, academic_session=self.session, class_obj=self.jss2,
+            subject='Mathematics', assessment='Test',
+        )
+        self.auth(self.teacher)
+        resp = self.client.get(self.url(f'/results/{sheet.id}/'))
+        self.assertEqual(resp.status_code, 404, resp.content)
+
+    def test_subject_teacher_reads_a_taught_class_sheet(self):
+        """Read access mirrors the entry rule: taught classes count too."""
+        sheet = results_service.create_sheet(
+            school=self.school, academic_session=self.session, class_obj=self.jss1,
+            subject='Mathematics', assessment='Test',
+        )
+        self.auth(self.subject_teacher)
+        resp = self.client.get(self.url(f'/results/{sheet.id}/'))
+        self.assertEqual(resp.status_code, 200, resp.content)
+
 
 class TermResultSheetTests(SecurityTestBase):
     def setUp(self):

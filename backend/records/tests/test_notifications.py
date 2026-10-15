@@ -16,7 +16,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Notification, NotificationPreference, User
 from accounts.services import notifications as notify_svc
-from records.models import Enrollment, Payment, ResultSheet, Student
+from records.models import Enrollment, Invoice, Payment, ResultSheet, Student
 from records.services import announcements as announcement_service
 from records.services import attendance as attendance_service
 from records.services import events as event_service
@@ -1039,3 +1039,107 @@ class PlatformBroadcastTests(NotificationTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data['scope'], Announcement.Scope.SCHOOL)
         self.assertEqual(response.data['author'], 'Admin Test')
+
+
+class BillingAndAccountEventTests(NotificationTestCase):
+    """Money and access events reach the people who must act on them."""
+
+    def _invoice(self, student=None, total='115000'):
+        return self.make_invoice(student=student or self.make_student(), total=total)
+
+    def test_invoice_issued_notifies_office_once_and_parents_once(self):
+        student = self.make_student()
+        self.parent.linked_students.add(student)
+        invoice = self._invoice(student=student)
+        event_service.invoice_issued(invoice)
+        event_service.invoice_issued(invoice)
+        office = Notification.objects.filter(
+            type='payment', title__startswith='New invoice',
+        )
+        self.assertEqual(office.count(), 3)
+        self.assertTrue(office.filter(user=self.admin).exists())
+        self.assertTrue(office.filter(user=self.accountant).exists())
+        self.assertTrue(office.filter(user=self.principal).exists())
+        parent_notes = Notification.objects.filter(
+            user=self.parent, title__startswith='New school bill',
+        )
+        self.assertEqual(parent_notes.count(), 1)
+
+    def test_bulk_invoices_notify_each_family_plus_one_office_summary(self):
+        students = [self.make_student(admission_number=f'BULK-{i}') for i in range(2)]
+        self.parent.linked_students.add(students[0])
+        event_service.invoices_issued(
+            self.school, student_ids=[s.pk for s in students],
+            term='First Term', class_name='JSS 1', count=2, total='230000',
+        )
+        self.assertEqual(
+            Notification.objects.filter(
+                user=self.parent, title__startswith='New First Term bills',
+            ).count(), 1,
+        )
+        self.assertEqual(
+            Notification.objects.filter(title__startswith='Invoices generated').count(), 3,
+        )
+
+    def test_bulk_invoices_with_zero_count_stays_silent(self):
+        event_service.invoices_issued(
+            self.school, student_ids=[], term='First Term',
+            class_name='JSS 1', count=0, total='0',
+        )
+        self.assertFalse(Notification.objects.exists())
+
+    def test_deposit_verified_and_failed_notify_the_office(self):
+        from billing.models import WalletDeposit
+        deposit = WalletDeposit.objects.create(
+            school=self.school, reference='DEP-001', amount_kobo=500000,
+        )
+        event_service.deposit_verified(deposit)
+        event_service.deposit_verified(deposit)
+        self.assertEqual(
+            Notification.objects.filter(title__startswith='Wallet deposit —').count(), 3,
+        )
+        event_service.deposit_failed(deposit, reason='Gateway timeout.')
+        self.assertEqual(
+            Notification.objects.filter(title__startswith='Wallet deposit failed').count(), 3,
+        )
+        bodies = set(
+            Notification.objects.filter(title__startswith='Wallet deposit failed')
+            .values_list('body', flat=True),
+        )
+        self.assertEqual(len(bodies), 1)
+        self.assertIn('No money moved', next(iter(bodies)))
+
+    def test_account_created_and_status_changes_reach_the_holder(self):
+        newcomer = User.objects.create_user(
+            email='newcomer@success.example', password='Strong-Pass-1!',
+            first_name='New', last_name='Comer',
+            role=User.Role.TEACHER, school=self.school, is_active=True,
+        )
+        event_service.account_created(newcomer)
+        event_service.account_status_changed(newcomer, active=False)
+        event_service.account_status_changed(newcomer, active=True)
+        titles = list(
+            Notification.objects.filter(user=newcomer).values_list('title', flat=True),
+        )
+        self.assertIn('Your FrontlineX account is ready', titles)
+        self.assertIn('Your account was deactivated', titles)
+        self.assertIn('Your account was reactivated', titles)
+
+    def test_school_suspension_warns_admins_as_security(self):
+        event_service.school_status_changed(
+            self.school, previous='active', current='suspended',
+        )
+        note = Notification.objects.get(user=self.admin)
+        self.assertEqual(note.type, 'security')
+        self.assertIn('suspended', note.title)
+        self.assertIn('sign in', note.body)
+        event_service.school_status_changed(
+            self.school, previous='suspended', current='active',
+        )
+        self.assertEqual(
+            Notification.objects.get(user=self.admin, type='system').title,
+            'School active — Success Academy',
+        )
+        # Nobody outside the school's admins is told.
+        self.assertFalse(Notification.objects.filter(user=self.teacher).exists())
+        self.assertFalse(Notification.objects.filter(user=self.other_admin).exists())

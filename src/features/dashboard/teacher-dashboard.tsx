@@ -25,14 +25,37 @@ export function TeacherDashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold sm:text-3xl">
+      <section className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-primary via-primary/85 to-[#1d3a5f] p-6 text-primary-foreground sm:p-7">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-14 -top-20 size-64 rounded-full bg-white/10 blur-2xl"
+        />
+        <p className="relative text-xs font-semibold uppercase tracking-[0.14em] text-white/70">
+          {school?.name} · {today} · {school?.currentTerm}
+        </p>
+        <h1 className="relative mt-2 font-display text-2xl font-semibold sm:text-3xl">
           {greeting()}, {user.fullName.split(" ")[0]}.
         </h1>
-        <p className="mt-1 text-muted-foreground">
-          {school?.name} · {school?.currentTerm}
+        <p className="relative mt-1.5 max-w-lg text-sm text-white/80">
+          {todaySlots.length > 0
+            ? `You have ${todaySlots.length} ${todaySlots.length === 1 ? "lesson" : "lessons"} on today — first up ${todaySlots[0]?.className} ${todaySlots[0]?.subject}.`
+            : "No lessons on your timetable today — a good day to catch up on marking and plans."}
         </p>
-      </div>
+        <div className="relative mt-4 flex flex-wrap gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium backdrop-blur">
+            <CalendarClock className="size-3.5" aria-hidden="true" />
+            {todaySlots.length} classes today
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium backdrop-blur">
+            {draftSheets} draft result {draftSheets === 1 ? "sheet" : "sheets"}
+          </span>
+          {pendingCount > 0 ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-warning px-3 py-1.5 text-xs font-semibold text-warning-foreground">
+              {pendingCount} waiting to sync
+            </span>
+          ) : null}
+        </div>
+      </section>
 
       {!online ? (
         <div
@@ -99,7 +122,13 @@ export function TeacherDashboard() {
         ) : (
           <ul className="divide-y">
             {todaySlots.map((slot) => (
-              <li key={slot.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-4">
+              <li key={slot.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-4 hover:bg-muted/40">
+                <span
+                  aria-hidden="true"
+                  className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-soft font-semibold text-primary"
+                >
+                  {(slot.period || "?").slice(0, 2).toUpperCase()}
+                </span>
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">
                     {slot.className} · {slot.subject}
