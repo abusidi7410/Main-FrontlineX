@@ -42,6 +42,16 @@ urlpatterns = [
         'attendance/staff-records/<str:pk>/review/',
         views.StaffAttendanceReviewView.as_view(),
     ),
+    # Teacher class check-ins: one row per timetabled lesson, linked to the
+    # timetable (my-day + check-in for the teacher; the list is the admin
+    # board; decision is the cancel/override an administrator records).
+    path('attendance/teacher-checkins/my-day/', views.TeacherCheckInMyDayView.as_view()),
+    path('attendance/teacher-checkins/check-in/', views.TeacherCheckInView.as_view()),
+    path(
+        'attendance/teacher-checkins/<int:pk>/decision/',
+        views.TeacherCheckInDecisionView.as_view(),
+    ),
+    path('attendance/teacher-checkins/', views.TeacherCheckInMonitorView.as_view()),
     path('attendance/', views.AttendanceSubmitView.as_view()),
     path('academics/', views.AcademicsView.as_view()),
     path('academics/subjects/<str:name>/', views.AcademicSubjectDetailView.as_view()),

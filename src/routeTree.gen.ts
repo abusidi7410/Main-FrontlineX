@@ -36,6 +36,7 @@ import { Route as AppResultsRouteImport } from './routes/_app.results'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppStaffRouteImport } from './routes/_app.staff'
 import { Route as AppSyncRouteImport } from './routes/_app.sync'
+import { Route as AppTeacherAttendanceRouteImport } from './routes/_app.teacher-attendance'
 import { Route as AppTimetableRouteImport } from './routes/_app.timetable'
 import { Route as AppUssdRouteImport } from './routes/_app.ussd'
 import { Route as AppWalletRouteImport } from './routes/_app.wallet'
@@ -195,6 +196,11 @@ const AppSyncRoute = AppSyncRouteImport.update({
   path: '/sync',
   getParentRoute: () => AppRoute,
 } as any)
+const AppTeacherAttendanceRoute = AppTeacherAttendanceRouteImport.update({
+  id: '/teacher-attendance',
+  path: '/teacher-attendance',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppTimetableRoute = AppTimetableRouteImport.update({
   id: '/timetable',
   path: '/timetable',
@@ -345,6 +351,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/staff': typeof AppStaffRouteWithChildren
   '/sync': typeof AppSyncRoute
+  '/teacher-attendance': typeof AppTeacherAttendanceRoute
   '/timetable': typeof AppTimetableRoute
   '/ussd': typeof AppUssdRoute
   '/wallet': typeof AppWalletRoute
@@ -396,6 +403,7 @@ export interface FileRoutesByTo {
   '/results': typeof AppResultsRoute
   '/settings': typeof AppSettingsRoute
   '/sync': typeof AppSyncRoute
+  '/teacher-attendance': typeof AppTeacherAttendanceRoute
   '/timetable': typeof AppTimetableRoute
   '/ussd': typeof AppUssdRoute
   '/wallet': typeof AppWalletRoute
@@ -448,6 +456,7 @@ export interface FileRoutesById {
   '/_app/settings': typeof AppSettingsRoute
   '/_app/staff': typeof AppStaffRouteWithChildren
   '/_app/sync': typeof AppSyncRoute
+  '/_app/teacher-attendance': typeof AppTeacherAttendanceRoute
   '/_app/timetable': typeof AppTimetableRoute
   '/_app/ussd': typeof AppUssdRoute
   '/_app/wallet': typeof AppWalletRoute
@@ -502,6 +511,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/staff'
     | '/sync'
+    | '/teacher-attendance'
     | '/timetable'
     | '/ussd'
     | '/wallet'
@@ -553,6 +563,7 @@ export interface FileRouteTypes {
     | '/results'
     | '/settings'
     | '/sync'
+    | '/teacher-attendance'
     | '/timetable'
     | '/ussd'
     | '/wallet'
@@ -604,6 +615,7 @@ export interface FileRouteTypes {
     | '/_app/settings'
     | '/_app/staff'
     | '/_app/sync'
+    | '/_app/teacher-attendance'
     | '/_app/timetable'
     | '/_app/ussd'
     | '/_app/wallet'
@@ -829,6 +841,13 @@ declare module '@tanstack/react-router' {
       path: '/sync'
       fullPath: '/sync'
       preLoaderRoute: typeof AppSyncRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/teacher-attendance': {
+      id: '/_app/teacher-attendance'
+      path: '/teacher-attendance'
+      fullPath: '/teacher-attendance'
+      preLoaderRoute: typeof AppTeacherAttendanceRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/timetable': {
@@ -1066,6 +1085,7 @@ interface AppRouteChildren {
   AppSettingsRoute: typeof AppSettingsRoute
   AppStaffRoute: typeof AppStaffRouteWithChildren
   AppSyncRoute: typeof AppSyncRoute
+  AppTeacherAttendanceRoute: typeof AppTeacherAttendanceRoute
   AppTimetableRoute: typeof AppTimetableRoute
   AppUssdRoute: typeof AppUssdRoute
   AppWalletRoute: typeof AppWalletRoute
@@ -1106,6 +1126,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSettingsRoute: AppSettingsRoute,
   AppStaffRoute: AppStaffRouteWithChildren,
   AppSyncRoute: AppSyncRoute,
+  AppTeacherAttendanceRoute: AppTeacherAttendanceRoute,
   AppTimetableRoute: AppTimetableRoute,
   AppUssdRoute: AppUssdRoute,
   AppWalletRoute: AppWalletRoute,

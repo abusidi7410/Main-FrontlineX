@@ -1,26 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import {
-  Banknote,
-  Users,
-  UserCog,
-  Wallet,
-} from "lucide-react";
+import { Banknote, Users, UserCog, Wallet } from "lucide-react";
 import { StatCard } from "@/components/common/stat-card";
 import { CardsSkeleton, ErrorState } from "@/components/common/states";
 import { AttentionList } from "@/features/dashboard/attention-list";
 import { QuickActions } from "@/features/dashboard/quick-actions";
 import { SetupChecklist } from "@/features/dashboard/setup-checklist";
 import { useAuthenticatedSession } from "@/auth/session";
-import { compactNaira, greeting, numberFmt } from "@/lib/format";
-import { getAttendanceOverview } from "@/services/attendance.service";
+import { compactNaira, greeting, numberFmt, schoolToday } from "@/lib/format";
+import { getAttendanceOverview, getTeacherCheckIns } from "@/services/attendance.service";
 import { getFinanceSummary } from "@/services/finance.service";
 import { getStaff, getResultSheets } from "@/services/school.service";
 import { getWallet, listStudentAccess } from "@/services/wallet.service";
 import { listStudents } from "@/services/students.service";
 
 export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
-  const { user, school } = useAuthenticatedSession();
+  const { user, school, can } = useAuthenticatedSession();
+
+  const canManageTeacherAttendance = can("attendance.staff.manage");
 
   const wallet = useQuery({ queryKey: ["wallet"], queryFn: getWallet });
   const access = useQuery({
@@ -37,6 +34,12 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
   const attendance = useQuery({
     queryKey: ["attendance-overview"],
     queryFn: () => getAttendanceOverview(),
+  });
+  // Counts, not rows: pageSize 1 is enough to read summary.counts for today.
+  const teacherCheckins = useQuery({
+    queryKey: ["teacher-checkins", "dashboard", schoolToday()],
+    queryFn: () => getTeacherCheckIns({ date: schoolToday(), pageSize: 1 }),
+    enabled: canManageTeacherAttendance,
   });
 
   if (wallet.isError || students.isError || finance.isError) {
@@ -63,12 +66,22 @@ export function AdminDashboard({ readOnly = false }: { readOnly?: boolean }) {
     results.data?.filter((r) => r.status === "submitted" || r.status === "under_review").length ??
     0;
 
+  const missedCheckins = teacherCheckins.data?.summary.counts["missed"] ?? 0;
+
   const attention = [
     attendance.data?.isSchoolDay && attendance.data.total > attendance.data.submitted
       ? {
           id: "registers",
           label: `${attendance.data.total - attendance.data.submitted} class registers are still missing today`,
           to: "/attendance-overview",
+        }
+      : null,
+    missedCheckins > 0
+      ? {
+          id: "teacher-missed",
+          label: `${missedCheckins} teacher lesson${missedCheckins === 1 ? "" : "s"} missed check-in today`,
+          to: "/teacher-attendance",
+          tone: "danger" as const,
         }
       : null,
     awaitingApproval > 0

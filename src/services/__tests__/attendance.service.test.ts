@@ -3,6 +3,10 @@ import { apiFetch } from "@/api/client";
 import {
   assignClassTeacher,
   assignedClassNames,
+  checkInToClass,
+  decideTeacherCheckIn,
+  getMyClassAttendance,
+  getTeacherCheckIns,
   visibleClassNames,
   type ClassTeacherAssignment,
 } from "@/services/attendance.service";
@@ -74,5 +78,108 @@ describe("assignClassTeacher", () => {
       method: "POST",
       body: { className: "JSS 1", staffId: "9" },
     });
+  });
+});
+
+describe("teacher class check-ins", () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+  });
+
+  it("loads the caller's own day from the school clock", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({
+      date: "2026-10-15",
+      sessions: [],
+      summary: { total: 0 },
+    });
+    await getMyClassAttendance();
+    expect(apiFetch).toHaveBeenCalledWith("/attendance/teacher-checkins/my-day");
+  });
+
+  it("posts only coordinates — never a claimed status", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ id: 1, status: "present_verified" });
+    await checkInToClass({ entryId: 42, latitude: 6.5, longitude: 3.3, accuracy: 12 });
+    expect(apiFetch).toHaveBeenCalledWith("/attendance/teacher-checkins/check-in", {
+      method: "POST",
+      body: { entryId: 42, latitude: 6.5, longitude: 3.3, accuracy: 12 },
+    });
+  });
+
+  it("sends every monitor filter as a query string value", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({
+      records: [],
+      count: 0,
+      page: 2,
+      pageSize: 25,
+      totalPages: 0,
+      summary: { total: 0, counts: {} },
+    });
+    await getTeacherCheckIns({
+      date: "2026-10-15",
+      staffId: "9",
+      className: "JSS 1",
+      subject: "Mathematics",
+      status: ["missed"],
+      search: "Ade",
+      page: 2,
+      pageSize: 25,
+    });
+    expect(apiFetch).toHaveBeenCalledWith("/attendance/teacher-checkins", {
+      query: {
+        date: "2026-10-15",
+        staffId: "9",
+        className: "JSS 1",
+        subject: "Mathematics",
+        status: "missed",
+        search: "Ade",
+        page: 2,
+        pageSize: 25,
+      },
+    });
+  });
+
+  it("omits empty filters so an untouched board means no query params", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({
+      records: [],
+      count: 0,
+      page: 1,
+      pageSize: 25,
+      totalPages: 0,
+      summary: { total: 0, counts: {} },
+    });
+    await getTeacherCheckIns({ date: "2026-10-15", status: [] });
+    expect(apiFetch).toHaveBeenCalledWith("/attendance/teacher-checkins", {
+      query: { date: "2026-10-15" },
+    });
+  });
+
+  it("posts a cancel decision with its reason to the session's decision endpoint", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ id: 7, status: "cancelled" });
+    await decideTeacherCheckIn({ id: 7, action: "cancel", note: "School trip" });
+    expect(apiFetch).toHaveBeenCalledWith("/attendance/teacher-checkins/7/decision", {
+      method: "POST",
+      body: { action: "cancel", note: "School trip" },
+    });
+  });
+
+  it("posts an override with a forced status and a required reason", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ id: 7, status: "late_verified" });
+    await decideTeacherCheckIn({
+      id: 7,
+      action: "override",
+      status: "late_verified",
+      note: "Traffic confirmed",
+    });
+    expect(apiFetch).toHaveBeenCalledWith("/attendance/teacher-checkins/7/decision", {
+      method: "POST",
+      body: { action: "override", status: "late_verified", note: "Traffic confirmed" },
+    });
+  });
+
+  it("never sends a status field for a cancel decision", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ id: 7, status: "cancelled" });
+    await decideTeacherCheckIn({ id: 7, action: "cancel" });
+    const body = vi.mocked(apiFetch).mock.calls[0]?.[1]?.body as Record<string, unknown>;
+    expect(body).not.toHaveProperty("status");
   });
 });

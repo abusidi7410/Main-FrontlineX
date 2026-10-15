@@ -301,3 +301,55 @@ class StaffAttendanceReviewSerializer(serializers.Serializer):
 
     decision = serializers.ChoiceField(choices=['approve', 'reject'])
     note = serializers.CharField(required=False, allow_blank=True, max_length=280, default='')
+
+
+class TeacherClassCheckInSerializer(serializers.Serializer):
+    """A teacher checking in to one timetabled lesson.
+
+    Same contract as the daily staff check-in: coordinates optional (no fix
+    still records the arrival, marked unverified), both-or-neither enforced.
+    Which lesson is identified by `entryId`, and the service proves the lesson
+    belongs to this school, this teacher and today before writing anything.
+    """
+
+    entryId = serializers.IntegerField(min_value=1)
+    latitude = serializers.FloatField(required=False, allow_null=True, min_value=-90, max_value=90)
+    longitude = serializers.FloatField(
+        required=False, allow_null=True, min_value=-180, max_value=180,
+    )
+    accuracy = serializers.FloatField(required=False, allow_null=True, min_value=0)
+
+    def validate(self, data):
+        has_lat = data.get('latitude') is not None
+        has_lng = data.get('longitude') is not None
+        if has_lat != has_lng:
+            raise serializers.ValidationError({
+                'latitude': 'Provide both latitude and longitude, or neither.',
+            })
+        return data
+
+
+class TeacherCheckInDecisionSerializer(serializers.Serializer):
+    """An administrator's decision on one teacher class check-in.
+
+    `cancel` records that the lesson did not run (the teacher can no longer
+    check in); `override` sets a verified/late/unverified state by hand with a
+    required reason, mirroring an attendance correction.
+    """
+
+    action = serializers.ChoiceField(choices=['cancel', 'override'])
+    status = serializers.ChoiceField(required=False, allow_blank=True, choices=[
+        'present_verified', 'late_verified', 'unverified',
+    ])
+    note = serializers.CharField(required=False, allow_blank=True, max_length=280, default='')
+
+    def validate(self, data):
+        if data['action'] == 'override' and not data.get('status'):
+            raise serializers.ValidationError({
+                'status': 'Choose the status to record.',
+            })
+        if data['action'] == 'override' and not (data.get('note') or '').strip():
+            raise serializers.ValidationError({
+                'note': 'A reason is required for an override.',
+            })
+        return data

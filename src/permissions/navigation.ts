@@ -58,6 +58,7 @@ const SCHOOL_ADMIN: NavItem[] = [
     children: [
       { label: "Take Register", to: "/attendance" },
       { label: "Records & History", to: "/attendance-overview" },
+      { label: "Teacher Check-ins", to: "/teacher-attendance" },
     ],
   },
   {
@@ -129,6 +130,7 @@ const PRINCIPAL: NavItem[] = [
       // A principal is read-only on attendance, so the overview (who has
       // taken their register) is the more useful screen for them.
       { label: "Records & History", to: "/attendance-overview" },
+      { label: "Teacher Check-ins", to: "/teacher-attendance" },
       { label: "Results", to: "/results" },
       { label: "Timetable", to: "/timetable" },
       { label: "Promotion Centre", to: "/promotion" },

@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { CalendarClock, WifiOff } from "lucide-react";
 import { StatCard } from "@/components/common/stat-card";
 import { CardsSkeleton } from "@/components/common/states";
+import {
+  TeacherClassAttendance,
+  TimetableLessonList,
+} from "@/features/attendance/teacher-class-attendance";
 import { QuickActions } from "@/features/dashboard/quick-actions";
 import { useAuthenticatedSession } from "@/auth/session";
 import { useOfflineQueue } from "@/hooks/use-offline-queue";
@@ -109,50 +112,7 @@ export function TeacherDashboard() {
         ]}
       />
 
-      <section className="fn-panel overflow-hidden" aria-labelledby="today-heading">
-        <div className="border-b px-5 py-4">
-          <h2 id="today-heading" className="font-semibold">
-            Today's classes
-          </h2>
-        </div>
-        {todaySlots.length === 0 ? (
-          <p className="px-5 py-8 text-center text-muted-foreground">
-            You have no scheduled classes today. Check your full timetable for the week.
-          </p>
-        ) : (
-          <ul className="divide-y">
-            {todaySlots.map((slot) => (
-              <li key={slot.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-4 hover:bg-muted/40">
-                <span
-                  aria-hidden="true"
-                  className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-soft font-semibold text-primary"
-                >
-                  {(slot.period || "?").slice(0, 2).toUpperCase()}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">
-                    {slot.className} · {slot.subject}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {slot.period} · {slot.room}
-                  </p>
-                </div>
-                <Link
-                  to="/attendance"
-                  className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-5 font-medium text-primary-foreground shadow-[0_6px_14px_-6px_oklch(0.31_0.02_250/0.55),inset_0_1px_0_oklch(1_0_0/0.1)] transition-all duration-200 hover:-translate-y-px hover:bg-primary/90"
-                >
-                  Take attendance
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="border-t px-5 py-3">
-          <Link to="/timetable" className="font-medium text-primary hover:underline">
-            View full timetable
-          </Link>
-        </div>
-      </section>
+      <TeacherClassAttendance fallback={<TimetableLessonList slots={todaySlots} />} />
     </div>
   );
 }

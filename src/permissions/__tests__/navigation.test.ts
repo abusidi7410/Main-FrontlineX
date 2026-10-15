@@ -12,6 +12,7 @@ const KNOWN_ROUTES = new Set([
   "/academics",
   "/attendance",
   "/attendance-overview",
+  "/teacher-attendance",
   "/results",
   "/timetable",
   "/lesson-plans",

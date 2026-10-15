@@ -196,6 +196,31 @@ def attendance_gaps(school, on, class_names: list[str]) -> None:
     )
 
 
+def teacher_checkin_missed(record) -> None:
+    """A teacher did not check in to a timetabled class by the grace deadline.
+
+    Raised by the sweep, never inline: whether a teacher is missing is only
+    knowable after the bell plus the school's grace period, and marking the
+    session before then would be premature. Keyed by the session row so the
+    sweep can run every few minutes without re-alerting — the row's own
+    `late_alert_sent` flag is the primary guard, this key is the belt.
+    """
+    school = record.school
+    teacher = record.staff.full_name
+    label = f'{record.class_name} · {record.subject}' if record.subject else record.class_name
+    notify_svc.notify_roles(
+        school, RESULT_APPROVER_ROLES,
+        type='attendance',
+        title=f'No teacher check-in — {label}',
+        body=(
+            f'{teacher} did not check in to {label} '
+            f'(scheduled {record.scheduled_start:%H:%M}, {record.date:%d %b %Y}).'
+        ),
+        link='/teacher-attendance',
+        dedupe_key=f'teacher-checkin-missed:{record.pk}',
+    )
+
+
 def password_changed(user) -> None:
     """The account holder changed their own password."""
     notify_svc.notify(

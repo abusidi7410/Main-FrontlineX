@@ -46,6 +46,7 @@ from .models import (
     StaffAttendance,
     StaffMember,
     Student,
+    TeacherClassCheckIn,
     TimetableEntry,
     TimetablePeriod,
     invoice_item_amount,
@@ -67,6 +68,7 @@ from .services import report_card as report_card_service
 from .services import reporting as reporting_service
 from .services import results as result_service
 from .services import staff_attendance as staff_attendance_service
+from .services import teacher_checkin as teacher_checkin_service
 from .services import timetable as timetable_service
 from .student_import import (
     StudentImportError,
@@ -82,6 +84,8 @@ from .serializers import (
     StaffCheckInSerializer,
     StaffMemberSerializer,
     StudentSerializer,
+    TeacherCheckInDecisionSerializer,
+    TeacherClassCheckInSerializer,
 )
 
 # Role guards for endpoints that predate the granular permission matrix.
@@ -3086,6 +3090,252 @@ class StaffAttendanceReviewView(APIView):
             after={'status': record.status},
         )
         return Response(_staff_attendance_row(record))
+
+
+# ── Teacher class check-ins (timetabled sessions) ───────────────────────────
+
+def _teacher_checkin_row(record):
+    """Wire shape for one teacher class check-in: camelCase, human-readable."""
+    return {
+        'id': record.pk,
+        'staffId': str(record.staff.public_id),
+        'staffName': record.staff.full_name,
+        'entryId': record.entry_id,
+        'date': record.date.isoformat(),
+        'period': record.period_name,
+        'scheduledStart': record.scheduled_start.strftime('%H:%M'),
+        'scheduledEnd': record.scheduled_end.strftime('%H:%M'),
+        'className': record.class_name,
+        'subject': record.subject,
+        'room': record.room,
+        'checkInAt': record.check_in_at.isoformat() if record.check_in_at else None,
+        'minutesLate': record.minutes_late,
+        'status': record.status,
+        'gpsStatus': record.gps_status,
+        'latitude': float(record.latitude) if record.latitude is not None else None,
+        'longitude': float(record.longitude) if record.longitude is not None else None,
+        'accuracy': record.accuracy_meters,
+        'distanceMeters': record.distance_meters,
+        'lateAlertSent': record.late_alert_sent,
+        'decidedBy': record.decided_by.get_full_name() if record.decided_by else '',
+        'decisionNote': record.decision_note,
+        'decidedAt': record.decided_at.isoformat() if record.decided_at else None,
+    }
+
+
+def _teacher_day_summary(sessions):
+    """Status counts (including not-checked-in) for a teacher's day view."""
+    counts = {}
+    for status, _label in TeacherClassCheckIn.Status.choices:
+        counts[status] = 0
+    counts['not_checked_in'] = 0
+    for _entry, record in sessions:
+        counts[record.status if record else 'not_checked_in'] += 1
+    counts['total'] = len(sessions)
+    return counts
+
+
+class TeacherCheckInMyDayView(APIView):
+    """GET /attendance/teacher-checkins/my-day/ — today's lessons, one state each.
+
+    Returns every lesson this teacher is timetabled for on the date (default:
+    the school's today), paired with any check-in already recorded. A lesson
+    with no row is `not_checked_in`, which is a claim only the *absence* of a
+    record can support — nothing else ever writes that state.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanCheckInStaffAttendance]
+
+    def get(self, request):
+        school = request.user.school
+        staff = staff_attendance_service.require_staff(request.user)
+        raw_date = request.query_params.get('date', '').strip()
+        day = parse_date(raw_date) if raw_date else None
+        if raw_date and day is None:
+            raise ValidationError({'date': 'Enter a valid date in YYYY-MM-DD format.'})
+        day = day or staff_attendance_service.local_day(school)
+
+        sessions = teacher_checkin_service.sessions_for_staff(school, staff, day)
+        payload = [
+            teacher_checkin_service.session_payload(school, entry, record, day)
+            for entry, record in sessions
+        ]
+        return Response({
+            'date': day.isoformat(),
+            'graceMinutes': teacher_checkin_service.grace_minutes(school),
+            'staffName': staff.full_name,
+            'sessions': payload,
+            'summary': _teacher_day_summary(sessions),
+        })
+
+
+class TeacherCheckInView(APIView):
+    """POST /attendance/teacher-checkins/check-in/ — check in to one lesson.
+
+    The staff record comes from the caller's own account and the service
+    proves the lesson is this teacher's, this school's and today's before
+    writing. GPS is verified server-side against the campus; a reading from
+    outside the fence persists as evidence but is refused as a check-in, and
+    a request with no fix is recorded unverified rather than trusted.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanCheckInStaffAttendance]
+
+    def post(self, request):
+        serializer = TeacherClassCheckInSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        school = request.user.school
+        staff = staff_attendance_service.require_staff(request.user)
+
+        record, created = teacher_checkin_service.check_in(
+            user=request.user,
+            school=school,
+            staff=staff,
+            entry_id=data['entryId'],
+            latitude=data.get('latitude'),
+            longitude=data.get('longitude'),
+            accuracy=data.get('accuracy'),
+        )
+        log_audit(
+            request,
+            action='attendance.teacher.check_in',
+            target=f'TeacherClassCheckIn {record.pk}',
+            detail=(
+                f'{staff.full_name} checked in to '
+                f'{record.class_name} {record.subject} ({record.status})'
+            ),
+            entity='TeacherClassCheckIn',
+            entity_id=str(record.pk),
+            after={
+                'status': record.status,
+                'gpsStatus': record.gps_status,
+                'distanceMeters': record.distance_meters,
+            },
+        )
+        body = _teacher_checkin_row(record)
+        body['denied'] = record.status == TeacherClassCheckIn.Status.OUTSIDE
+        if body['denied']:
+            body['deniedReason'] = (
+                'You are outside the approved school location. '
+                'Move inside the campus and try again.'
+            )
+        return Response(
+            body,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class TeacherCheckInMonitorView(APIView):
+    """GET /attendance/teacher-checkins/ — the admin monitoring board.
+
+    Filterable by date, teacher, class, subject and status (the spec's five
+    states plus cancelled and the outside-fence detail). Only school admins
+    and principals (`attendance.staff.manage`) reach it, so a teacher can
+    never read a colleague's movements.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanManageStaffAttendance]
+
+    def get(self, request):
+        school = request.user.school
+        params = request.query_params
+
+        raw_date = params.get('date', '').strip()
+        day = parse_date(raw_date) if raw_date else None
+        if raw_date and day is None:
+            raise ValidationError({'date': 'Enter a valid date in YYYY-MM-DD format.'})
+
+        staff_filter = None
+        raw_staff = params.get('staffId', '').strip()
+        if raw_staff:
+            staff_filter = get_object_or_404(
+                StaffMember.objects.filter(school_id=school.id),
+                public_id=public_refs.required_public_id(raw_staff),
+            )
+
+        statuses = []
+        for raw in params.getlist('status'):
+            for value in raw.split(','):
+                value = value.strip()
+                if value in set(TeacherClassCheckIn.Status.values):
+                    statuses.append(value)
+
+        queryset = teacher_checkin_service.monitor_queryset(
+            school,
+            day=day,
+            staff=staff_filter,
+            class_name=params.get('className', ''),
+            subject=params.get('subject', ''),
+            statuses=statuses,
+            search=params.get('search', '').strip(),
+        )
+
+        summary = {'total': queryset.count(), 'counts': {}}
+        for status, _label in TeacherClassCheckIn.Status.choices:
+            summary['counts'][status] = 0
+        for row in queryset.values('status').order_by():
+            summary['counts'][row['status']] += 1
+
+        page_records, count, page, page_size = _pagination_window(queryset, request)
+        return Response({
+            'records': [_teacher_checkin_row(record) for record in page_records],
+            'count': count,
+            'page': page,
+            'pageSize': page_size,
+            'totalPages': max((count + page_size - 1) // page_size, 1),
+            'summary': summary,
+        })
+
+
+class TeacherCheckInDecisionView(APIView):
+    """POST /attendance/teacher-checkins/<pk>/decision/ — cancel or override.
+
+    `cancel` means the lesson did not run (no late alert can fire for it
+    afterwards — the sweep skips cancelled rows). `override` forces a state by
+    hand with a required reason. Both are audited with before/after status.
+    """
+
+    permission_classes = [IsAuthenticated, HasSchool, CanManageStaffAttendance]
+
+    def post(self, request, pk):
+        serializer = TeacherCheckInDecisionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        school = request.user.school
+        record = get_object_or_404(
+            TeacherClassCheckIn.objects.filter(school_id=school.id),
+            pk=pk,
+        )
+        previous = record.status
+
+        if data['action'] == 'cancel':
+            teacher_checkin_service.cancel_session(
+                user=request.user, school=school, record=record,
+                note=data.get('note', ''),
+            )
+            action_name = 'attendance.teacher.cancel'
+        else:
+            teacher_checkin_service.override_status(
+                user=request.user, school=school, record=record,
+                status=data['status'], note=data.get('note', ''),
+            )
+            action_name = 'attendance.teacher.override'
+
+        log_audit(
+            request,
+            action=action_name,
+            target=f'TeacherClassCheckIn {record.pk}',
+            detail=(
+                data.get('note', '')
+                or f'{record.staff.full_name} {record.class_name}: {previous} → {record.status}'
+            ),
+            entity='TeacherClassCheckIn',
+            entity_id=str(record.pk),
+            before={'status': previous},
+            after={'status': record.status},
+        )
+        return Response(_teacher_checkin_row(record))
 
 
 # ── Academics ──────────────────────────────────────────────────────────────

@@ -70,6 +70,10 @@ class School(models.Model):
     # as on site. Wide enough for a large compound, tight enough to be a
     # meaningful check.
     attendance_radius = models.PositiveIntegerField(default=150, db_default=150)
+    # Minutes after a timetabled class starts before a missing teacher
+    # check-in counts as late for alerting. The late-alert sweep notifies the
+    # administrator once this grace has passed with no verified check-in.
+    teacher_checkin_grace_minutes = models.PositiveIntegerField(default=30, db_default=30)
     # IANA time zone for this school. Stored per school so a check-in's local
     # day and time are computed correctly regardless of the platform default.
     timezone = models.CharField(

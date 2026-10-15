@@ -453,6 +453,101 @@ class StaffAttendance(models.Model):
         return f'{self.staff_id} {self.date} {self.status}'
 
 
+class TeacherClassCheckIn(models.Model):
+    """A teacher's check-in to one timetabled class session on one date.
+
+    The timetable itself is recurring weekly (`TimetableEntry` has a weekday,
+    not dates), so each school day materialises one row per (teacher, lesson)
+    the moment something happens: a check-in, an admin cancellation, or the
+    late-alert sweep marking it missed. A teacher with five lessons in a day
+    gets five independent rows; checking into one never touches the others.
+
+    The session is snapshotted (period name, start/end times, class, subject,
+    room) because the timetable is editable: if an administrator later moves
+    the lesson, history must still show what the teacher actually checked into.
+    `entry` stays as a live link while the lesson exists (SET_NULL when the
+    lesson is deleted, so the snapshot survives it).
+    """
+
+    class Status(models.TextChoices):
+        PRESENT_VERIFIED = 'present_verified', 'Present — Location Verified'
+        LATE_VERIFIED = 'late_verified', 'Late — Location Verified'
+        UNVERIFIED = 'unverified', 'Location Unverified'
+        OUTSIDE = 'outside', 'Outside Approved Location'
+        MISSED = 'missed', 'Missed Class'
+        CANCELLED = 'cancelled', 'Class Cancelled'
+
+    class Gps(models.TextChoices):
+        INSIDE = 'inside', 'Inside Approved School Location'
+        OUTSIDE = 'outside', 'Outside Approved Location'
+        UNVERIFIED = 'unverified', 'Location Unverified'
+
+    school = models.ForeignKey(
+        School, on_delete=models.CASCADE, related_name='teacher_class_checkins',
+    )
+    staff = models.ForeignKey(
+        StaffMember, on_delete=models.CASCADE, related_name='class_checkins',
+    )
+    # Live link to the lesson while it exists; null once deleted or when the
+    # row was created by the sweep from a snapshot.
+    entry = models.ForeignKey(
+        'TimetableEntry', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='class_checkins',
+    )
+    date = models.DateField()
+    weekday = models.PositiveSmallIntegerField(default=0)
+    # Snapshotted at write time so timetable edits never rewrite history.
+    period_name = models.CharField(max_length=60, blank=True, default='')
+    scheduled_start = models.TimeField()
+    scheduled_end = models.TimeField()
+    class_name = models.CharField(max_length=50)
+    subject = models.CharField(max_length=100, blank=True, default='')
+    room = models.CharField(max_length=60, blank=True, default='')
+    check_in_at = models.DateTimeField(null=True, blank=True)
+    # Minutes after the scheduled start (negative = early). Null until checked in.
+    minutes_late = models.IntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices)
+    gps_status = models.CharField(max_length=20, choices=Gps.choices)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    accuracy_meters = models.FloatField(null=True, blank=True)
+    distance_meters = models.FloatField(null=True, blank=True)
+    # Set when the late-alert sweep has notified the administrator for this
+    # session, so re-runs never double-alert.
+    late_alert_sent = models.BooleanField(default=False)
+    late_alert_sent_at = models.DateTimeField(null=True, blank=True)
+    # Admin override / cancellation audit trail.
+    decided_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    decision_note = models.CharField(max_length=280, blank=True, default='')
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date', 'scheduled_start']
+        constraints = [
+            # One row per teacher per lesson-slot per day: a second tap
+            # updates the row, and the sweep can never double-mark a miss.
+            models.UniqueConstraint(
+                fields=[
+                    'staff', 'date', 'weekday', 'scheduled_start',
+                    'class_name', 'subject',
+                ],
+                name='unique_teacher_class_checkin',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['school', 'date']),
+            models.Index(fields=['school', 'staff', 'date']),
+            models.Index(fields=['school', 'date', 'status']),
+        ]
+
+    def __str__(self):
+        return f'{self.staff_id} {self.class_name} {self.date} {self.status}'
+
+
 class ClassTeacherAssignment(models.Model):
     """The teacher responsible for taking a class's daily register.
 

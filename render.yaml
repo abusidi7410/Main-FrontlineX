@@ -101,3 +101,32 @@ services:
         sync: false
       - key: TERMII_SENDER_ID
         sync: false
+
+# ── Teacher class check-in sweep ────────────────────────────────────────────
+# Late alerts need intraday timing: a session that passes its grace deadline
+# (School.teacher_checkin_grace_minutes, default 30) without a verified
+# check-in must alert within minutes, not at the daily 06:00 run. Every 10
+# minutes through the school day; the command itself skips non-school days,
+# sessions before their deadline, and anything already alerted (idempotent,
+# advisory-locked against overlap).
+  - type: cron
+    name: frontlinex-teacher-checkins
+    runtime: python
+    plan: free
+    rootDir: backend
+    schedule: "*/10 7-17 * * 1-6"
+    buildCommand: ./build.sh
+    command: python manage.py sweep_teacher_checkins
+    envVars:
+      - key: DJANGO_DEBUG
+        value: false
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: DJANGO_ALLOWED_HOSTS
+        value: localhost,127.0.0.1
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL_REQUIRE
+        value: true
+      - key: REDIS_URL
+        sync: false

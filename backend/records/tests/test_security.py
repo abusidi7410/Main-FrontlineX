@@ -312,7 +312,10 @@ class AttendanceRosterEnrollmentTests(SecurityTestBase):
         self.student.refresh_from_db()
         self.assertEqual(self.student.class_name, 'JSS 1')
 
-        self.auth(self.teacher)
+        # An admin reads both registers: a teacher is scoped to their own
+        # classes (JSS 2 would 404 for `self.teacher`), and scoping has its
+        # own tests. This test is about *membership*, not visibility.
+        self.auth(self.admin)
         wrong = self.roster(className='JSS 1').json()['students']
         right = self.roster(className='JSS 2').json()['students']
         self.assertNotIn('Amina', {row['firstName'] for row in wrong})
