@@ -1626,19 +1626,6 @@ class PaymentListView(APIView):
         is_self_service = request.user.role == 'student' and request.user.student_profile_id is not None
         if not is_finance and not is_self_service:
             raise PermissionDenied('You do not have permission to record fee payments.')
-        try:
-            wallet_billing.require_enrollment_funding(
-                request.user.school, what='recording fee payments',
-            )
-        except wallet_billing.InsufficientFunds as exc:
-            return Response(
-                {
-                    'detail': wallet_billing.error_message(exc),
-                    'requiredKobo': exc.required_kobo,
-                    'availableKobo': exc.available_kobo,
-                },
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
         method = (request.data.get('method') or Payment.Method.CASH).strip()
         if method not in Payment.Method.values:
             raise ValidationError({'method': 'Invalid payment method.'})
@@ -1668,63 +1655,84 @@ class PaymentListView(APIView):
             raise ValidationError({'reference': 'A payment with this reference already exists.'})
 
         verified = is_finance and method in (Payment.Method.CASH, Payment.Method.POS)
-        with transaction.atomic():
-            invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
-            outstanding = invoice.total - invoice.paid
-            if amount > outstanding:
-                raise ValidationError({
-                    'amount': f'Amount exceeds the outstanding balance of {outstanding:.2f}.',
-                })
-            try:
-                payment = Payment.objects.create(
-                    school_id=request.user.school_id,
-                    invoice_id=invoice.id,
-                    amount=amount,
-                    method=method,
-                    status=Payment.Status.VERIFIED if verified else Payment.Status.PENDING,
-                    reference=reference or f'FN-{uuid.uuid4().hex[:10].upper()}',
-                    note=request.data.get('note', ''),
-                    recorded_by=request.user if request.user.school_id else None,
+        try:
+            with transaction.atomic():
+                invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+                outstanding = invoice.total - invoice.paid
+                if amount > outstanding:
+                    raise ValidationError({
+                        'amount': f'Amount exceeds the outstanding balance of {outstanding:.2f}.',
+                    })
+                try:
+                    payment = Payment.objects.create(
+                        school_id=request.user.school_id,
+                        invoice_id=invoice.id,
+                        amount=amount,
+                        method=method,
+                        status=Payment.Status.VERIFIED if verified else Payment.Status.PENDING,
+                        reference=reference or f'FN-{uuid.uuid4().hex[:10].upper()}',
+                        note=request.data.get('note', ''),
+                        recorded_by=request.user if request.user.school_id else None,
+                    )
+                except IntegrityError:
+                    # Two submissions racing with the same reference: the pre-check
+                    # above cannot see the other transaction yet, so the unique
+                    # constraint arbitrates and the loser gets a readable 400.
+                    raise ValidationError(
+                        {'reference': 'A payment with this reference already exists.'}
+                    )
+                if verified:
+                    # Recomputed from the verified sum rather than incremented, so
+                    # the denormalised column can never drift from the source of
+                    # truth it mirrors.
+                    invoice.paid = billing_service.verified_paid_total(invoice.id)
+                    invoice.save(update_fields=['paid'])
+                # Cash and POS are verified on the spot, so a family paying the
+                # admission fee at the bursar's desk is fully settled right here.
+                # Without this the student would sit in PENDING_PAYMENT until some
+                # later verification endpoint happened to run.
+                activated = billing_service.activate_student_if_fully_paid(
+                    invoice.student, actor=request.user,
                 )
-            except IntegrityError:
-                # Two submissions racing with the same reference: the pre-check
-                # above cannot see the other transaction yet, so the unique
-                # constraint arbitrates and the loser gets a readable 400.
-                raise ValidationError(
-                    {'reference': 'A payment with this reference already exists.'}
-                )
-            if verified:
-                # Recomputed from the verified sum rather than incremented, so
-                # the denormalised column can never drift from the source of
-                # truth it mirrors.
-                invoice.paid = billing_service.verified_paid_total(invoice.id)
-                invoice.save(update_fields=['paid'])
-            # Cash and POS are verified on the spot, so a family paying the
-            # admission fee at the bursar's desk is fully settled right here.
-            # Without this the student would sit in PENDING_PAYMENT until some
-            # later verification endpoint happened to run.
-            activated = billing_service.activate_student_if_fully_paid(
-                invoice.student, actor=request.user,
-            )
-            log_audit(
-                request, 'payment.created', target='Payment',
-                detail=f'{payment.get_method_display()} {amount} from {invoice.student.admission_number}',
-                entity='payment', entity_id=str(payment.pk),
-                after={'amount': str(amount), 'status': payment.status},
-            )
-            if verified:
                 log_audit(
-                    request, 'payment.verified', target='Payment',
-                    detail=f'Cash/POS payment verified for {invoice.student.admission_number}',
+                    request, 'payment.created', target='Payment',
+                    detail=f'{payment.get_method_display()} {amount} from {invoice.student.admission_number}',
                     entity='payment', entity_id=str(payment.pk),
-                    after={'amount': str(amount), 'invoiceId': str(invoice.pk)},
+                    after={'amount': str(amount), 'status': payment.status},
                 )
-            if activated:
-                log_audit(
-                    request, 'enrollment.activated', target='Student',
-                    detail=f'{invoice.student.admission_number} seated after registration payment',
-                    entity='student', entity_id=str(invoice.student_id),
+                if verified:
+                    log_audit(
+                        request, 'payment.verified', target='Payment',
+                        detail=f'Cash/POS payment verified for {invoice.student.admission_number}',
+                        entity='payment', entity_id=str(payment.pk),
+                        after={'amount': str(amount), 'invoiceId': str(invoice.pk)},
+                    )
+                if activated:
+                    log_audit(
+                        request, 'enrollment.activated', target='Student',
+                        detail=f'{invoice.student.admission_number} seated after registration payment',
+                        entity='student', entity_id=str(invoice.student_id),
+                    )
+                # Taking money for a student is a real use of that student, so it
+                # bills their monthly platform access exactly the way result
+                # recording and attendance already do: one debit per billing
+                # period, and no charge at all when they are already paid up. The
+                # debit shares the payment's transaction, so a wallet that cannot
+                # cover it rolls the whole payment back rather than letting money
+                # move unbilled. Escaping the atomic block is deliberate: a
+                # Response returned from inside it would commit.
+                wallet_billing.ensure_student_access(
+                    request.user.school, invoice.student, actor=request.user,
                 )
+        except wallet_billing.InsufficientFunds as exc:
+            return Response(
+                {
+                    'detail': wallet_billing.error_message(exc),
+                    'requiredKobo': exc.required_kobo,
+                    'availableKobo': exc.available_kobo,
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         return Response(
             {**PaymentSerializer(payment).data, 'studentActivated': activated},
             status=status.HTTP_201_CREATED,
@@ -1825,9 +1833,66 @@ class PaymentVerifyView(APIView):
 
     def post(self, request, pk):
         try:
-            wallet_billing.require_enrollment_funding(
-                request.user.school, what='verifying fee payments',
-            )
+            with transaction.atomic():
+                payment = get_object_or_404(
+                    Payment.objects.select_for_update(), id=pk, school_id=request.user.school_id,
+                )
+                if payment.status in (Payment.Status.FAILED, Payment.Status.REFUNDED,
+                                      Payment.Status.REVERSED, Payment.Status.CANCELLED):
+                    return Response(
+                        {'detail': f'A {payment.status} payment cannot be verified.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if payment.status == Payment.Status.VERIFIED:
+                    # Already verified: re-running is a no-op for the money, but the
+                    # student may still be held if the earlier run failed midway.
+                    activated = billing_service.activate_student_if_fully_paid(
+                        payment.invoice.student, actor=request.user,
+                    )
+                    if activated:
+                        log_audit(
+                            request, 'enrollment.activated', target='Student',
+                            detail=f'{payment.invoice.student.admission_number} seated after re-verification',
+                            entity='student', entity_id=str(payment.invoice.student_id),
+                        )
+                    return Response({**PaymentSerializer(payment).data, 'studentActivated': activated})
+                invoice = Invoice.objects.select_for_update().get(pk=payment.invoice_id)
+                outstanding = invoice.total - invoice.paid
+                if payment.amount > outstanding:
+                    return Response(
+                        {'detail': f'Amount exceeds the outstanding balance of {outstanding:.2f}.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                payment.status = Payment.Status.VERIFIED
+                payment.save(update_fields=['status'])
+                # Recomputed, never incremented: `paid` mirrors the verified sum.
+                invoice.paid = billing_service.verified_paid_total(invoice.id)
+                invoice.save(update_fields=['paid'])
+                # Verifying the final instalment is what lets a new student start
+                # classes. Only promotes PENDING_PAYMENT forward, so this can never
+                # undo a suspension or a graduation.
+                activated = billing_service.activate_student_if_fully_paid(
+                    invoice.student, actor=request.user,
+                )
+                event_service.payment_verified(payment)
+                log_audit(
+                    request, 'payment.verified', target='Payment',
+                    detail=f'{payment.get_method_display()} {payment.amount} towards {invoice.student.admission_number}',
+                    entity='payment', entity_id=str(payment.pk),
+                    after={'amount': str(payment.amount), 'invoiceId': str(invoice.pk)},
+                )
+                if activated:
+                    log_audit(
+                        request, 'enrollment.activated', target='Student',
+                        detail=f'{invoice.student.admission_number} seated after registration payment',
+                        entity='student', entity_id=str(invoice.student_id),
+                    )
+                # Same rule as recording a payment: verifying one is a real use
+                # of the student, so it bills their monthly platform access and
+                # rolls the verification back when the wallet cannot cover it.
+                wallet_billing.ensure_student_access(
+                    request.user.school, invoice.student, actor=request.user,
+                )
         except wallet_billing.InsufficientFunds as exc:
             return Response(
                 {
@@ -1837,60 +1902,6 @@ class PaymentVerifyView(APIView):
                 },
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
-        with transaction.atomic():
-            payment = get_object_or_404(
-                Payment.objects.select_for_update(), id=pk, school_id=request.user.school_id,
-            )
-            if payment.status in (Payment.Status.FAILED, Payment.Status.REFUNDED,
-                                  Payment.Status.REVERSED, Payment.Status.CANCELLED):
-                return Response(
-                    {'detail': f'A {payment.status} payment cannot be verified.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if payment.status == Payment.Status.VERIFIED:
-                # Already verified: re-running is a no-op for the money, but the
-                # student may still be held if the earlier run failed midway.
-                activated = billing_service.activate_student_if_fully_paid(
-                    payment.invoice.student, actor=request.user,
-                )
-                if activated:
-                    log_audit(
-                        request, 'enrollment.activated', target='Student',
-                        detail=f'{payment.invoice.student.admission_number} seated after re-verification',
-                        entity='student', entity_id=str(payment.invoice.student_id),
-                    )
-                return Response({**PaymentSerializer(payment).data, 'studentActivated': activated})
-            invoice = Invoice.objects.select_for_update().get(pk=payment.invoice_id)
-            outstanding = invoice.total - invoice.paid
-            if payment.amount > outstanding:
-                return Response(
-                    {'detail': f'Amount exceeds the outstanding balance of {outstanding:.2f}.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            payment.status = Payment.Status.VERIFIED
-            payment.save(update_fields=['status'])
-            # Recomputed, never incremented: `paid` mirrors the verified sum.
-            invoice.paid = billing_service.verified_paid_total(invoice.id)
-            invoice.save(update_fields=['paid'])
-            # Verifying the final instalment is what lets a new student start
-            # classes. Only promotes PENDING_PAYMENT forward, so this can never
-            # undo a suspension or a graduation.
-            activated = billing_service.activate_student_if_fully_paid(
-                invoice.student, actor=request.user,
-            )
-            event_service.payment_verified(payment)
-            log_audit(
-                request, 'payment.verified', target='Payment',
-                detail=f'{payment.get_method_display()} {payment.amount} towards {invoice.student.admission_number}',
-                entity='payment', entity_id=str(payment.pk),
-                after={'amount': str(payment.amount), 'invoiceId': str(invoice.pk)},
-            )
-            if activated:
-                log_audit(
-                    request, 'enrollment.activated', target='Student',
-                    detail=f'{invoice.student.admission_number} seated after registration payment',
-                    entity='student', entity_id=str(invoice.student_id),
-                )
         return Response({**PaymentSerializer(payment).data, 'studentActivated': activated})
 
 

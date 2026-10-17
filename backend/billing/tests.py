@@ -881,6 +881,103 @@ class AccessEnforcementTests(SchoolTestCase):
         )
         self.assertEqual(allowed.status_code, 201, allowed.content)
 
+    def test_record_fee_payment_auto_debits_wallet_once(self):
+        from billing.models import Wallet
+        student = self.make_student(admission_number='F3')
+        invoice = self.make_invoice(student=student, total='50000')
+        price = PlatformPricing.objects.get(pk=1).student_price_kobo
+        before = Wallet.objects.get(school=self.school).balance_kobo
+
+        first = self.client.post(
+            '/api/v1/payments/',
+            {'invoiceId': str(invoice.id), 'amount': '10000', 'method': 'cash'},
+            format='json',
+        )
+        self.assertEqual(first.status_code, 201, first.content)
+        after_first = Wallet.objects.get(school=self.school).balance_kobo
+        self.assertEqual(before - after_first, price)
+        self.assertTrue(StudentEntitlement.objects.filter(student=student).exists())
+
+        # Taking money again in the same period must not charge a second time:
+        # the entitlement the first payment bought is still live.
+        second = self.client.post(
+            '/api/v1/payments/',
+            {'invoiceId': str(invoice.id), 'amount': '10000', 'method': 'cash'},
+            format='json',
+        )
+        self.assertEqual(second.status_code, 201, second.content)
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, after_first,
+        )
+        self.assertEqual(
+            WalletTransaction.objects.filter(
+                school=self.school, direction=WalletTransaction.Direction.DEBIT,
+            ).count(),
+            1,
+        )
+
+    def test_short_wallet_rolls_back_the_whole_payment(self):
+        from billing.models import Wallet
+        from records.models import Invoice, Payment
+        student = self.make_student(admission_number='F5')
+        invoice = self.make_invoice(student=student, total='50000')
+        price = PlatformPricing.objects.get(pk=1).student_price_kobo
+        # A penny short of one activation: the gate must fail closed and leave
+        # no half-written payment behind.
+        Wallet.objects.filter(school=self.school).update(balance_kobo=price - 1)
+        blocked = self.client.post(
+            '/api/v1/payments/',
+            {'invoiceId': str(invoice.id), 'amount': '10000', 'method': 'cash'},
+            format='json',
+        )
+        self.assertEqual(blocked.status_code, 402, blocked.content)
+        self.assertFalse(Payment.objects.filter(invoice=invoice).exists())
+        self.assertFalse(StudentEntitlement.objects.filter(student=student).exists())
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, price - 1,
+        )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.paid, Decimal('0'))
+
+    def test_verify_fee_payment_auto_debits_wallet(self):
+        from billing.models import Wallet
+        from records.models import Payment
+        student = self.make_student(admission_number='F4')
+        invoice = self.make_invoice(student=student, total='50000')
+        payment = Payment.objects.create(
+            school=self.school, invoice=invoice, amount=10000,
+            method=Payment.Method.BANK_TRANSFER, status=Payment.Status.PENDING,
+            reference='FEE-002',
+        )
+        price = PlatformPricing.objects.get(pk=1).student_price_kobo
+        before = Wallet.objects.get(school=self.school).balance_kobo
+
+        verified = self.client.post(f'/api/v1/payments/{payment.id}/verify/')
+        self.assertEqual(verified.status_code, 200, verified.content)
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.VERIFIED)
+        self.assertEqual(
+            before - Wallet.objects.get(school=self.school).balance_kobo, price,
+        )
+
+    def test_verify_fee_payment_with_short_wallet_leaves_it_pending(self):
+        from billing.models import Wallet
+        from records.models import Payment
+        student = self.make_student(admission_number='F6')
+        invoice = self.make_invoice(student=student, total='50000')
+        payment = Payment.objects.create(
+            school=self.school, invoice=invoice, amount=10000,
+            method=Payment.Method.BANK_TRANSFER, status=Payment.Status.PENDING,
+            reference='FEE-003',
+        )
+        Wallet.objects.filter(school=self.school).update(balance_kobo=0)
+        blocked = self.client.post(f'/api/v1/payments/{payment.id}/verify/')
+        self.assertEqual(blocked.status_code, 402, blocked.content)
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.PENDING)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.paid, Decimal('0'))
+
     def test_verify_fee_payment_blocked_until_wallet_funded(self):
         from billing.models import Wallet
         from records.models import Payment
