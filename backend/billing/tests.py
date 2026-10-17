@@ -916,6 +916,81 @@ class AccessEnforcementTests(SchoolTestCase):
             1,
         )
 
+    def test_one_activation_unlocks_every_feature_for_the_whole_month(self):
+        """The whole promise in one test: charge the student once, then every
+        feature they are used with works for the rest of the period at no
+        further cost. Any path that starts re-charging mid-month fails here."""
+        from records.models import Enrollment
+        from records.services import attendance as attendance_service
+        from records.services import results as results_service
+
+        student = self.make_student(admission_number='ALL')
+        invoice = self.make_invoice(student=student, total='50000')
+        Enrollment.objects.create(
+            school=self.school, student=student,
+            academic_session=self.session, class_obj=self.jss1,
+            status=Enrollment.Status.ACTIVE,
+        )
+        sheet = results_service.create_sheet(
+            school=self.school, academic_session=self.session,
+            class_obj=self.jss1, subject='Mathematics',
+            assessment='First Term Test',
+        )
+        day = timezone.localdate()
+        for _ in range(14):
+            if attendance_service.is_school_day(self.school, day):
+                break
+            day += timedelta(days=1)
+        price = PlatformPricing.objects.get(pk=1).student_price_kobo
+        opening = Wallet.objects.get(school=self.school).balance_kobo
+
+        # 1. The single charge: taking this student's money activates them.
+        recorded = self.client.post(
+            '/api/v1/payments/',
+            {'invoiceId': str(invoice.id), 'amount': '10000', 'method': 'cash'},
+            format='json',
+        )
+        self.assertEqual(recorded.status_code, 201, recorded.content)
+        after_charge = Wallet.objects.get(school=self.school).balance_kobo
+        self.assertEqual(opening - after_charge, price)
+
+        def debits():
+            return WalletTransaction.objects.filter(
+                school=self.school,
+                direction=WalletTransaction.Direction.DEBIT,
+            ).count()
+
+        # 2..5. Everything else the staff do with this student in the same
+        # period must be free: more payments, exam marks, the register, reads.
+        again = self.client.post(
+            '/api/v1/payments/',
+            {'invoiceId': str(invoice.id), 'amount': '10000', 'method': 'cash'},
+            format='json',
+        )
+        self.assertEqual(again.status_code, 201, again.content)
+
+        self.assertEqual(
+            results_service.record_scores(sheet, {str(student.public_id): 75}), 1,
+        )
+
+        register = attendance_service.submit_register(
+            user=self.admin, school=self.school, class_obj=self.jss1, day=day,
+            records=[{'studentId': str(student.public_id), 'status': 'present'}],
+        )
+        self.assertEqual(register.saved, 1)
+        self.assertEqual(register.skipped, 0)
+
+        self.assertEqual(
+            self.client.get(f'/api/v1/students/{student.public_id}/').status_code,
+            200,
+        )
+
+        self.assertEqual(
+            Wallet.objects.get(school=self.school).balance_kobo, after_charge,
+        )
+        self.assertEqual(debits(), 1)
+        self.assertTrue(services.student_has_access(student))
+
     def test_short_wallet_rolls_back_the_whole_payment(self):
         from billing.models import Wallet
         from records.models import Invoice, Payment
