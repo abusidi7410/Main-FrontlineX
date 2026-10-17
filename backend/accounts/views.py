@@ -39,12 +39,18 @@ _REFRESH_COOKIE_PATH = '/api/v1/auth/'
 
 
 def _set_refresh_cookie(response, refresh_token):
+    # Prod serves the SPA and the API from different registrable domains
+    # (*.workers.dev -> *.railway.app), which browsers treat as cross-site:
+    # a Lax cookie is neither stored from nor sent back on a cross-site fetch,
+    # so the refresh token would never survive a page reload. None requires
+    # Secure, and Secure is unusable over plain-HTTP localhost, so dev keeps Lax.
+    secure = not settings.DEBUG
     response.set_cookie(
         'refresh_token',
         str(refresh_token),
         httponly=True,
-        secure=not settings.DEBUG,
-        samesite='Lax',
+        secure=secure,
+        samesite='Lax' if settings.DEBUG else 'None',
         max_age=settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME'].total_seconds(),
         path=_REFRESH_COOKIE_PATH,
     )
