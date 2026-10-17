@@ -44,7 +44,7 @@ jobs:
       - name: Fall back to the live backend URL when no override is set
         run: |
           if [ -z "$VITE_API_URL" ]; then
-            echo "VITE_API_URL=https://main-frontlinex-ratelimitenabledtrue.up.railway.app/api/v1" >> "$GITHUB_ENV"
+            echo "VITE_API_URL=https://backend-production-b5d8.up.railway.app/api/v1" >> "$GITHUB_ENV"
           fi
 
       - name: Set up Node

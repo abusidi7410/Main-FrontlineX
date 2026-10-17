@@ -2951,6 +2951,6 @@ secrets (for example, in Railway's backend service Variables). Set
 `PAYSTACK_CALLBACK_URL` to the deployed frontend subscription page; it defaults
 to `https://abusidi7410-main-frontlinex.2027frontline.workers.dev/subscription`.
 In Paystack's Live API Keys & Webhooks settings, configure the webhook URL as
-`https://main-frontlinex-production.up.railway.app/api/v1/schools/subscriptions/webhook/`.
+`https://backend-production-b5d8.up.railway.app/api/v1/schools/subscriptions/webhook/`.
 The callback returns the payer to the app for server-side transaction
 verification; the signed webhook independently confirms successful payments.
