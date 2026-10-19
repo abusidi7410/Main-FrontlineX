@@ -56,6 +56,7 @@ from .services import admission as admission_service
 from .services import ai_tools
 from .services import announcements as announcement_service
 from .services import attendance as attendance_service
+from .services import attendance_rate
 from .services import billing as billing_service
 from .services import enrollment as enrollment_service
 from .services import events as event_service
@@ -168,16 +169,22 @@ def _pagination_window(queryset, request):
     return queryset[start:start + page_size], count, page, page_size
 
 
-def _student_queryset(school_id):
+def _student_queryset(school_id, *, session=None):
     """School-scoped student queryset, annotated for a constant query cost.
 
     Keeps the two hot list endpoints (student list, student detail) off the
     N+1 path: attendance counts, outstanding fees and the destination school
     are all resolved in the page query or a single prefetch (spec §72).
+
+    Passing a `session` bounds every attendance figure to that session's
+    calendar window, so the rate reflects the selected term rather than every
+    register the pupil has ever appeared in. Without it the counts span the
+    pupil's whole history.
     """
+    window = attendance_rate.session_window(session) if session is not None else None
     return (
         Student.objects
-        .for_roster()
+        .for_roster(window=window)
         .filter(school_id=school_id)
         .select_related('transferred_to')
         .prefetch_related(
@@ -208,8 +215,30 @@ def _filtered_students(request, *, search='', class_name='', class_id='', studen
     Class, section and session membership all come from the *active enrollment*
     rather than the denormalised `Student.class_name` mirror, so a stale mirror
     cannot decide the list. Newest admissions come first.
+
+    The attendance figures are bounded to the session being browsed -- the
+    explicit `session_id` filter when one is supplied, otherwise the school's
+    current session -- so the rate on a term's list is that term's rate rather
+    than everything the pupil has ever accumulated.
     """
-    qs = _student_queryset(request.user.school_id)
+    session = None
+    if session_id:
+        # `AcademicSession` has no public_id, so the id the client sends is the
+        # real PK. Fall back to a name match, then to the current session, so a
+        # stale or foreign id cannot blank the whole list.
+        session = AcademicSession.objects.filter(
+            school_id=request.user.school_id, id=session_id,
+        ).first() if public_refs.parse_public_id(session_id) else None
+        if session is None:
+            session = AcademicSession.objects.filter(
+                school_id=request.user.school_id, name=session_id,
+            ).first()
+        if session is None:
+            session = academic_service.current_session(request.user.school)
+    else:
+        session = academic_service.current_session(request.user.school)
+
+    qs = _student_queryset(request.user.school_id, session=session)
     if search:
         qs = qs.filter(
             Q(first_name__icontains=search)
@@ -554,26 +583,17 @@ class StudentListCreateView(APIView):
         return Response(data, status=status.HTTP_201_CREATED)
 
 
-def _average_attendance(school_id, *, days: int = 30):
-    """Mean attendance rate over the last `days` of marked registers.
+def _average_attendance(school_id, *, session=None):
+    """School-wide attendance rate, computed by the shared rate service.
 
-    Computed in the database so a school with years of history does not load
-    every record to produce one number. A school that has taken no register yet
-    reports ``None`` rather than a flattering 100%, so the UI can show an empty
-    state instead of inventing a figure.
+    Scoped to `session`'s calendar window when one is given so the headline
+    number matches what every student list and report card shows for the same
+    term. Summed across register lines (not averaged across per-student rates),
+    so a pupil with forty recorded days counts for forty and one with a single
+    day counts for one. A school that has taken no register reports ``None``
+    rather than a flattering 100%, so the UI shows an empty state.
     """
-    since = timezone.now().date() - timedelta(days=days)
-    counts = AttendanceRecord.objects.filter(
-        school_id=school_id, date__gte=since,
-    ).aggregate(
-        present=Count('pk', filter=Q(
-            status__in=[AttendanceRecord.Status.PRESENT, AttendanceRecord.Status.LATE],
-        )),
-        total=Count('pk'),
-    )
-    if not counts['total']:
-        return None
-    return round(counts['present'] * 100 / counts['total'], 1)
+    return attendance_rate.rate_for_school(school_id, session=session)
 
 
 class StudentStatsView(APIView):
@@ -590,12 +610,15 @@ class StudentStatsView(APIView):
         outstanding = Invoice.objects.filter(
             school_id=school_id,
         ).aggregate(net=Sum('total') - Sum('paid'))['net'] or Decimal('0')
+        # Scoped to the current session so this headline matches the rate the
+        # student list and report cards show for the same term.
+        session = academic_service.current_session(request.user.school)
         return Response({
             'total': total,
             'active': active,
             'pendingPayment': qs.filter(status=Student.Status.PENDING_PAYMENT).count(),
             'suspended': suspended,
-            'averageAttendance': _average_attendance(school_id),
+            'averageAttendance': _average_attendance(school_id, session=session),
             'outstandingFees': float(outstanding),
         })
 

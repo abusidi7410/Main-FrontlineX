@@ -9,6 +9,7 @@ from datetime import date, timedelta
 
 from records.models import AttendanceRecord, Student
 from records.serializers import StudentSerializer
+from records.services import attendance_rate
 
 from .test_security import SecurityTestBase
 
@@ -84,12 +85,54 @@ class AttendanceRateTests(SecurityTestBase):
         )
         self.assertEqual(self.rate_for(self.student), 100)
 
-    def test_excused_is_not_counted_as_attending(self):
+    def test_an_excused_day_is_not_a_session_the_child_owed(self):
+        """An excused day leaves the rate untouched, in both directions.
+
+        A day the school excused is a day the child was not expected to attend,
+        so it can neither help nor hurt the figure. The students list used to
+        keep excused in the denominator (this pupil read 50%) while the parent
+        portal, report card and promotion engine excluded it (100%). One rule
+        now serves all four, which is what this asserts.
+        """
         self.mark(
             self.student,
             [AttendanceRecord.Status.PRESENT, AttendanceRecord.Status.EXCUSED],
         )
-        self.assertEqual(self.rate_for(self.student), 50)
+        self.assertEqual(self.rate_for(self.student), 100)
+
+    def test_an_excused_day_does_not_flatter_a_poor_record(self):
+        """Excused is not a free pass — it is neutral, not a pass."""
+        self.mark(
+            self.student,
+            [
+                AttendanceRecord.Status.ABSENT,
+                AttendanceRecord.Status.ABSENT,
+                AttendanceRecord.Status.EXCUSED,
+            ],
+        )
+        self.assertEqual(self.rate_for(self.student), 0)
+
+    def test_excused_is_excluded_from_the_denominator(self):
+        self.mark(
+            self.student,
+            [
+                AttendanceRecord.Status.PRESENT,
+                AttendanceRecord.Status.PRESENT,
+                AttendanceRecord.Status.EXCUSED,
+                AttendanceRecord.Status.EXCUSED,
+            ],
+        )
+        self.assertEqual(self.rate_for(self.student), 100)
+
+    def test_a_register_never_taken_reads_as_zero(self):
+        """No register lines means no denominator.
+
+        The raw service returns `None` here so a caller can render "no register
+        yet"; the list serializer maps that to 0 for the same reason a brand-new
+        student is 0 -- never a flattering 100%.
+        """
+        self.assertIsNone(attendance_rate.rate_for_student(self.student))
+        self.assertEqual(self.rate_for(self.student), 0)
 
     def test_all_absent_is_zero(self):
         self.mark(

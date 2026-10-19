@@ -41,6 +41,7 @@ from accounts.permissions import has_permission
 
 from . import announcements as announcement_service
 from . import attendance as attendance_service
+from . import attendance_rate
 from . import billing, clearance
 from . import enrollment as enrollment_service
 from . import public_refs
@@ -185,22 +186,16 @@ def get_student(user, *, student_id) -> dict:
 
 def get_student_attendance(user, *, student_id, days: int = 30) -> dict:
     student = _student_or_throw(user, student_id)
-    since = _parse_date(str(_today() - timedelta(days=int(days))))
-    counts = AttendanceRecord.objects.filter(
-        student=student, date__gte=since,
-    ).aggregate(
-        present=Count('pk', filter=Q(
-            status__in=[AttendanceRecord.Status.PRESENT, AttendanceRecord.Status.LATE],
-        )),
-        total=Count('pk'),
+    until = _today()
+    since = _parse_date(str(until - timedelta(days=int(days))))
+    counts = attendance_rate.counts_for_student(
+        student, date_from=since, date_to=until,
     )
     return {
         'student': f'{student.last_name}, {student.first_name}',
         'days': days,
-        'records': counts['total'],
-        'attendanceRate': (
-            round(counts['present'] * 100 / counts['total'], 1) if counts['total'] else None
-        ),
+        'records': counts['recorded'],
+        'attendanceRate': attendance_rate.rate_from_counts(counts),
     }
 
 

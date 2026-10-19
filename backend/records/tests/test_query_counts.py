@@ -135,8 +135,13 @@ class StudentListQueryCountTests(SecurityTestBase):
         self.assertEqual(resp.status_code, 200, resp.content)
         # 5 invoices x 600 outstanding each.
         self.assertEqual(resp.json()['outstandingFees'], 3000.0)
+        # 4 status counts + invoices + attendance + one lookup of the current
+        # session (the attendance figure is scoped to that term, and the session
+        # is resolved by name from `School.current_session`, so it costs a
+        # query). The point of the budget is that none of these grow with the
+        # number of students or invoices.
         self.assertLessEqual(
-            len(ctx.captured_queries), 6,
+            len(ctx.captured_queries), 7,
             f'stats issued {len(ctx.captured_queries)} queries',
         )
 

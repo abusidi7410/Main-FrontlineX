@@ -164,7 +164,7 @@ class AdmissionSequence(models.Model):
 class StudentQuerySet(models.QuerySet):
     """Query helpers for the two hot student list endpoints (spec §72)."""
 
-    def for_roster(self):
+    def for_roster(self, window=None):
         """Annotate attendance counts and outstanding fees for list rendering.
 
         A page of students previously cost two extra queries each — one to count
@@ -172,21 +172,44 @@ class StudentQuerySet(models.QuerySet):
         These annotations fold that work into the page query itself, so listing
         N students stays at a constant number of queries.
 
+        ``window`` is an optional ``(start, end)`` date pair that bounds the
+        attendance counts to one academic session, so a pupil's figure reflects
+        the selected term rather than every register they have ever appeared in.
+
         The annotations alias onto attribute names the serializer reads
         directly, and are safe on any queryset.
         """
         from django.db.models import Count, DecimalField, Q, Sum, Value
         from django.db.models.functions import Coalesce
 
+        def attended_filter(field_status):
+            return Q(**{f'attendance__status': field_status})
+
+        date_filter = {}
+        if window is not None:
+            date_filter = {'attendance__date__range': window}
+
         # `Value(Decimal('0'), DecimalField(...))` keeps the fallback the same
         # type as the sums; a bare `0` would mix DecimalField and IntegerField
         # and Django refuses to guess the output type.
         zero = Value(Decimal('0'), output_field=DecimalField(max_digits=12, decimal_places=2))
         return self.annotate(
-            attendance_total=Count('attendance', distinct=True),
+            # `recorded` is the denominator's starting point: every persisted
+            # register line for the pupil inside the window.
+            attendance_total=Count('attendance', filter=Q(**date_filter), distinct=True),
             attendance_present=Count(
                 'attendance',
-                filter=Q(attendance__status__in=['present', 'late']),
+                filter=Q(**date_filter) & (
+                    attended_filter('present') | attended_filter('late')
+                ),
+                distinct=True,
+            ),
+            # Excused days are subtracted from the denominator by the shared
+            # rate service: a day the school excused is not a day the child was
+            # expected to attend.
+            attendance_excused=Count(
+                'attendance',
+                filter=Q(**date_filter) & attended_filter('excused'),
                 distinct=True,
             ),
             outstanding_total=Coalesce(Sum('invoices__total'), zero)

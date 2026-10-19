@@ -22,6 +22,7 @@ from ..models import (
     Student,
 )
 from . import academic as academic_service
+from . import attendance_rate
 from . import promotion as promotion_service
 from . import public_refs
 
@@ -43,42 +44,28 @@ def linked_child(user, student_id) -> Student | None:
     )
 
 
-def session_window(session) -> tuple[date, date]:
-    """The calendar bounds of an academic session.
-
-    `AttendanceRecord` has no session foreign key, so the window is what keeps
-    a later session out of this year's figures (same bounds promotion uses).
-    """
-    return date(session.start_year, 8, 1), date(session.end_year, 7, 31)
+# The calendar bounds of an academic session live in the attendance-rate
+# service now; they are re-exported here because `parent_portal.session_window`
+# is the name the report card and other callers already import.
+session_window = attendance_rate.session_window
 
 
 def attendance_for(student, *, session=None, date_from=None, date_to=None) -> dict:
     """Attendance summary plus the most recent register lines for one child.
 
-    `excused` days are counted but kept out of the rate's denominator: a day
-    the school excused is not a day the child was expected to attend.
+    The rate comes from the shared `attendance_rate` service so a parent sees
+    exactly the same number as the admin students list and the report card.
     """
-    queryset = AttendanceRecord.objects.filter(student=student, school_id=student.school_id)
-    window = None
-    if session is not None:
-        window = session_window(session)
-    if window is not None:
-        queryset = queryset.filter(date__range=window)
-    if date_from is not None:
-        queryset = queryset.filter(date__gte=date_from)
-    if date_to is not None:
-        queryset = queryset.filter(date__lte=date_to)
-
-    counts = queryset.aggregate(
-        recorded=Count('pk'),
-        present=Count('pk', filter=Q(status=AttendanceRecord.Status.PRESENT)),
-        late=Count('pk', filter=Q(status=AttendanceRecord.Status.LATE)),
-        absent=Count('pk', filter=Q(status=AttendanceRecord.Status.ABSENT)),
-        excused=Count('pk', filter=Q(status=AttendanceRecord.Status.EXCUSED)),
+    counts = attendance_rate.counts_for_student(
+        student, session=session, date_from=date_from, date_to=date_to,
     )
-    expected = counts['recorded'] - counts['excused']
-    attended = counts['present'] + counts['late']
-    rate = round(attended * 100 / expected, 1) if expected else None
+
+    recent = (
+        AttendanceRecord.objects
+        .filter(student=student, school_id=student.school_id)
+        .select_related('class_obj')
+        .order_by('-date')[:60]
+    )
 
     return {
         'summary': {
@@ -87,7 +74,7 @@ def attendance_for(student, *, session=None, date_from=None, date_to=None) -> di
             'late': counts['late'],
             'absent': counts['absent'],
             'excused': counts['excused'],
-            'attendanceRate': rate,
+            'attendanceRate': attendance_rate.rate_from_counts(counts),
         },
         'records': [
             {
@@ -95,7 +82,7 @@ def attendance_for(student, *, session=None, date_from=None, date_to=None) -> di
                 'status': record.status,
                 'className': record.class_name,
             }
-            for record in queryset.select_related('class_obj')[:60]
+            for record in recent
         ],
     }
 

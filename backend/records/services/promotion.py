@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
 from decimal import Decimal
 
 from ..models import (
     AcademicSession,
-    AttendanceRecord,
     Enrollment,
     PromotionPolicy,
     ResultEntry,
@@ -15,6 +13,7 @@ from ..models import (
     SchoolClass,
     Student,
 )
+from . import attendance_rate
 
 
 DECISIONS = {'promote', 'conditional', 'repeat', 'review'}
@@ -111,21 +110,13 @@ def candidates_for(school, session: AcademicSession, school_class: SchoolClass,
         values[0] += entry['score']
         values[1] += max_by_sheet[entry['sheet_id']]
 
-    attendance: dict[int, list[int]] = defaultdict(lambda: [0, 0])
-    # AttendanceRecord has no session FK. Bound the query to the session's
-    # calendar years so later sessions cannot affect this year's decision.
-    start_date = date(session.start_year, 8, 1)
-    end_date = date(session.end_year, 7, 31)
-    for row in AttendanceRecord.objects.filter(
-        school=school,
-        student_id__in=student_ids,
-        date__range=(start_date, end_date),
-    ).values('student_id', 'status'):
-        if row['status'] == AttendanceRecord.Status.EXCUSED:
-            continue
-        attendance[row['student_id']][1] += 1
-        if row['status'] in (AttendanceRecord.Status.PRESENT, AttendanceRecord.Status.LATE):
-            attendance[row['student_id']][0] += 1
+    # One grouped query for the whole class, bounded to the session's calendar
+    # window and scored by the shared rate service, so a promotion decision uses
+    # the same figure the parent portal and report card print. AttendanceRecord
+    # has no session FK, so the window is what keeps later sessions out.
+    per_student = attendance_rate.counts_for_students(
+        school.id, student_ids, window=attendance_rate.session_window(session),
+    )
 
     expected_sheet_ids = {row['id'] for row in sheets}
     final_class = next_class_for(school_class) is None
@@ -146,11 +137,14 @@ def candidates_for(school, session: AcademicSession, school_class: SchoolClass,
             sum(score < policy.promote_min_average for score in percentages)
             if percentages else 0
         )
-        present, recorded = attendance[student.pk]
-        attendance_rate = (
-            Decimal(present * 100) / Decimal(recorded) if recorded else None
-        )
+        counts = per_student.get(student.pk)
+        # `None` counts means the pupil has no register line in this session,
+        # and a `None` rate means no session was held; the policy reads either
+        # as "not enough data" rather than as a zero percent.
+        pct = attendance_rate.rate_from_counts(counts) if counts is not None else None
+        attendance_rate_value = Decimal(str(pct)) if pct is not None else None
         missing_sheet = bool(expected_sheet_ids - seen_sheets[student.pk])
+        recorded = counts['recorded'] if counts is not None else 0
         incomplete = (
             not sheets
             or missing_sheet
@@ -158,7 +152,7 @@ def candidates_for(school, session: AcademicSession, school_class: SchoolClass,
             or not percentages
             or recorded == 0
         )
-        suggested = _decision(average, attendance_rate, failed, incomplete, policy)
+        suggested = _decision(average, attendance_rate_value, failed, incomplete, policy)
         if final_class and suggested == 'conditional':
             suggested = 'review'
         if incomplete:
@@ -175,7 +169,10 @@ def candidates_for(school, session: AcademicSession, school_class: SchoolClass,
             'admissionNumber': student.admission_number,
             'className': school_class.name,
             'average': round(float(average), 1) if average is not None else None,
-            'attendanceRate': round(float(attendance_rate), 1) if attendance_rate is not None else None,
+            'attendanceRate': (
+                round(float(attendance_rate_value), 1)
+                if attendance_rate_value is not None else None
+            ),
             'attendanceRecords': recorded,
             'subjectsAssessed': len(percentages),
             'failedSubjects': failed,

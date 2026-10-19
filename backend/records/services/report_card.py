@@ -17,16 +17,14 @@ from __future__ import annotations
 from collections import OrderedDict
 from decimal import Decimal
 
-from django.db.models import Count, Q
-
 from ..models import (
     AcademicSession,
-    AttendanceRecord,
     Enrollment,
     ResultEntry,
     ResultSheet,
     Student,
 )
+from . import attendance_rate
 from . import parent_portal
 from . import promotion as promotion_service
 from . import results as results_service
@@ -155,23 +153,13 @@ def _subject_rows(student: Student, sheets) -> list[dict]:
 def _attendance(student: Student, session: AcademicSession) -> dict:
     """Counts for the session's calendar window.
 
-    `excused` days are counted but kept out of the rate: a day the school
-    excused is not a day the child was expected to attend (the promotion
-    calculation treats them the same way).
+    Delegates to the shared attendance-rate service so the report card prints
+    the same number as the parent portal and the admin students list. `excused`
+    days are kept out of the rate: a day the school excused is not a day the
+    child was expected to attend (the promotion calculation agrees).
     """
-    start, end = parent_portal.session_window(session)
-    counts = AttendanceRecord.objects.filter(
-        school_id=student.school_id, student=student, date__range=(start, end),
-    ).aggregate(
-        recorded=Count('pk'),
-        present=Count('pk', filter=Q(status=AttendanceRecord.Status.PRESENT)),
-        late=Count('pk', filter=Q(status=AttendanceRecord.Status.LATE)),
-        absent=Count('pk', filter=Q(status=AttendanceRecord.Status.ABSENT)),
-        excused=Count('pk', filter=Q(status=AttendanceRecord.Status.EXCUSED)),
-    )
-    expected = counts['recorded'] - counts['excused']
-    attended = counts['present'] + counts['late']
-    counts['attendanceRate'] = round(attended * 100 / expected, 1) if expected else 0
+    counts = attendance_rate.counts_for_student(student, session=session)
+    counts['attendanceRate'] = attendance_rate.rate_from_counts(counts)
     return counts
 
 
@@ -196,7 +184,7 @@ def build_report_card(student: Student, *, session=None, term: str = '') -> dict
         return None
 
     attendance = _attendance(student, session)
-    attendance_rate = attendance['attendanceRate']
+    attendance_pct = attendance['attendanceRate']
 
     total = sum(Decimal(str(row['total'])) for row in subjects)
     max_total = sum(Decimal(str(row['max'])) for row in subjects)
@@ -259,7 +247,7 @@ def build_report_card(student: Student, *, session=None, term: str = '') -> dict
             'className': enrollment.class_obj.name,
             'arm': enrollment.section.name if enrollment.section_id else student.arm,
             'gender': student.gender,
-            'attendanceRate': attendance_rate,
+            'attendanceRate': attendance_pct,
         },
         'school': {'name': school.name, 'address': school.address},
         'session': session.name,
@@ -277,6 +265,6 @@ def build_report_card(student: Student, *, session=None, term: str = '') -> dict
             'late': attendance['late'],
             'absent': attendance['absent'],
             'excused': attendance['excused'],
-            'attendanceRate': attendance_rate,
+            'attendanceRate': attendance_pct,
         },
     }

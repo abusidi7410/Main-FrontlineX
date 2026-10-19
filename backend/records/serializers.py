@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from .models import AttendanceRecord, Invoice, Payment, StaffMember, Student
+from .services import attendance_rate
 
 
 class StudentSerializer(serializers.ModelSerializer):
@@ -21,6 +22,13 @@ class StudentSerializer(serializers.ModelSerializer):
     photoUrl = serializers.SerializerMethodField()
     transferredTo = serializers.SerializerMethodField()
     attendanceRate = serializers.SerializerMethodField()
+    # Raw counts travel with the rate so a client can build a *class* or
+    # *school* average by summing counts and dividing once. Averaging
+    # already-rounded percentages over-weights a pupil with one recorded day as
+    # heavily as one with forty.
+    attendanceRecorded = serializers.SerializerMethodField()
+    attendanceAttended = serializers.SerializerMethodField()
+    attendanceExcused = serializers.SerializerMethodField()
     average = serializers.SerializerMethodField()
     outstandingFees = serializers.SerializerMethodField()
     enrollmentHistory = serializers.SerializerMethodField()
@@ -33,11 +41,13 @@ class StudentSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'transferredTo', 'attendanceRate', 'average',
             'outstandingFees', 'enrollmentHistory',
+            'attendanceRecorded', 'attendanceAttended', 'attendanceExcused',
         ]
         fields = [
             'id', 'admissionNumber', 'firstName', 'lastName', 'gender', 'dateOfBirth',
             'className', 'arm', 'status', 'guardianName', 'guardianPhone', 'photoUrl',
             'transferredTo', 'attendanceRate', 'average', 'outstandingFees', 'enrollmentHistory',
+            'attendanceRecorded', 'attendanceAttended', 'attendanceExcused',
         ]
 
     def validate(self, attrs):
@@ -110,23 +120,48 @@ class StudentSerializer(serializers.ModelSerializer):
             'transferredAt': obj.transferred_at.isoformat() if obj.transferred_at else None,
         }
 
-    def get_attendanceRate(self, obj):
-        # Prefer the queryset-level annotation built by
-        # `Student.objects.for_roster()` so a page of students costs one query
-        # rather than two per student.
-        cached = getattr(obj, 'attendance_total', None)
-        if cached is not None:
-            present = getattr(obj, 'attendance_present', 0) or 0
-            return round((present / cached) * 100, 1) if cached else 0
+    def _attendance_counts(self, obj):
+        """Raw register counts for this student.
+
+        Prefers the queryset-level annotations built by
+        `Student.objects.for_roster()` so a page of students costs one query
+        rather than several per student. Falls back to per-student queries only
+        when the caller used a plain queryset.
+        """
+        cached_total = getattr(obj, 'attendance_total', None)
+        if cached_total is not None:
+            return {
+                'recorded': cached_total or 0,
+                'present': getattr(obj, 'attendance_present', 0) or 0,
+                'excused': getattr(obj, 'attendance_excused', 0) or 0,
+            }
         records = obj.attendance.all()
-        count = records.count()
-        if count == 0:
-            # No records is not perfect attendance. This used to return 100, so
-            # every newly registered student showed a flawless record and the
-            # list rendered it green before a single day had been marked.
-            return 0
-        present = records.filter(status__in=[AttendanceRecord.Status.PRESENT, AttendanceRecord.Status.LATE]).count()
-        return round((present / count) * 100, 1)
+        return {
+            'recorded': records.count(),
+            'present': records.filter(
+                status__in=attendance_rate.ATTENDED_STATUSES,
+            ).count(),
+            'excused': records.filter(
+                status=AttendanceRecord.Status.EXCUSED,
+            ).count(),
+        }
+
+    def get_attendanceRate(self, obj):
+        # One formula, one place — the same service the parent portal, report
+        # card and promotion engine use. It was four different expressions of
+        # the same idea, and they disagreed.
+        rate = attendance_rate.rate_from_counts(self._attendance_counts(obj))
+        # A pupil with no register yet has no rate; the list renders "—".
+        return 0 if rate is None else rate
+
+    def get_attendanceRecorded(self, obj):
+        return self._attendance_counts(obj)['recorded']
+
+    def get_attendanceAttended(self, obj):
+        return self._attendance_counts(obj)['present']
+
+    def get_attendanceExcused(self, obj):
+        return self._attendance_counts(obj)['excused']
 
     def get_average(self, obj):
         return 0
