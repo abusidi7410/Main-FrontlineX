@@ -2,6 +2,7 @@ import secrets
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.db.models import Q
 from rest_framework import serializers
 from .permissions import ROLE_PERMISSIONS
 from .services import profile_photos
@@ -43,7 +44,11 @@ class SchoolRegistrationSerializer(serializers.Serializer):
     # ── field-level validators ────────────────────────────────────────────
 
     def validate_admin_email(self, value):
-        if User.objects.filter(email=value).exists():
+        # Case-insensitive: `create_user` keeps the local part's case but the
+        # unique index would otherwise still catch `Foo@x.com` vs `foo@x.com`
+        # as a 500 instead of a field error.
+        value = value.strip().lower()
+        if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError(
                 'A user with this email already exists.',
             )
@@ -52,7 +57,14 @@ class SchoolRegistrationSerializer(serializers.Serializer):
     def validate_admin_phone(self, value):
         if not value:
             return value
-        return normalize_phone(value)
+        normalized = normalize_phone(value)
+        if User.objects.filter(
+            Q(phone=normalized) | Q(phone=value),
+        ).exclude(phone__isnull=True).exclude(phone='').exists():
+            raise serializers.ValidationError(
+                'An account with this phone number already exists.',
+            )
+        return normalized
 
     def validate_school_phone(self, value):
         return normalize_phone(value)

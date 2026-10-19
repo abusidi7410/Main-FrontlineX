@@ -1,3 +1,4 @@
+from django.db import DataError, IntegrityError
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from rest_framework import status, viewsets
@@ -145,7 +146,33 @@ class SchoolRegisterView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        result = serializer.save()
+        try:
+            result = serializer.save()
+        except IntegrityError:
+            # Validation above covers the ordinary duplicates; this is the
+            # race (two registrations in flight) and any case the checks
+            # cannot see. Both are the user's fix, not a server fault, so
+            # they answer 400 — a 500 here reads as "the site is broken".
+            return Response(
+                {
+                    'detail': (
+                        'Could not register this school. An account with this '
+                        'email or phone number already exists — try signing in instead.'
+                    ),
+                    'errors': {
+                        'admin': ['This email or phone number is already registered.'],
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except DataError:
+            return Response(
+                {
+                    'detail': 'Could not register this school. Check the highlighted fields.',
+                    'errors': {'school': ['One of the values provided is too long.']},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response(result, status=status.HTTP_201_CREATED)
 
 

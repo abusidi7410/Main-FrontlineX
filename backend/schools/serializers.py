@@ -1,11 +1,27 @@
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers
+
+from accounts.validators import normalize_phone
+
 from .models import School, SchoolSubscription, SubscriptionPayment, SubscriptionPlan
 
 User = get_user_model()
 
 _SCHOOL_TYPE_CHOICES = ['nursery', 'primary', 'secondary', 'mixed']
+
+# Column widths the database actually enforces. The client's limits are looser
+# (a state/LGA field allows 120 characters, an email 255), and on Postgres an
+# over-long value is a DataError — an unhandled 500 rather than a validation
+# error — so the serializer repeats them here.
+_SCHOOL_FIELD_LIMITS = {
+    'name': 255,
+    'state': 100,
+    'lga': 100,
+    'phone': 20,
+    'email': 254,
+}
 
 
 class SchoolRegistrationSerializer(serializers.Serializer):
@@ -28,7 +44,19 @@ class SchoolRegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f'Missing school fields: {", ".join(missing)}.'
             )
-        if School.objects.filter(email=value.get('email')).exists():
+        too_long = [
+            f for f, limit in _SCHOOL_FIELD_LIMITS.items()
+            if len(str(value.get(f) or '')) > limit
+        ]
+        if too_long:
+            raise serializers.ValidationError(
+                f'These fields are too long: {", ".join(too_long)}.'
+            )
+        # Case-insensitive: rows written outside this form (Django admin, the
+        # platform screen) keep whatever case they arrived with, and the form
+        # lower-cases what it sends, so an exact match misses `Foo@x.com` and
+        # the unique index answers with a 500.
+        if School.objects.filter(email__iexact=value.get('email')).exists():
             raise serializers.ValidationError(
                 'A school with this email already exists.'
             )
@@ -45,6 +73,13 @@ class SchoolRegistrationSerializer(serializers.Serializer):
             if expected_count < 1:
                 raise serializers.ValidationError(
                     'Number of students must be at least 1.'
+                )
+            # The column is a 32-bit integer: above 2,147,483,647 Postgres
+            # answers with a DataError (HTTP 500), and the count is only ever
+            # a planning figure, so the cap is generous.
+            if expected_count > 1_000_000:
+                raise serializers.ValidationError(
+                    'Number of students must be 1,000,000 or fewer.'
                 )
         # Coordinates are optional (a school may register before it can get a
         # GPS fix) but must arrive as a pair.
@@ -63,10 +98,30 @@ class SchoolRegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f'Missing admin fields: {", ".join(missing)}.'
             )
-        if User.objects.filter(email=value.get('email')).exists():
+        # Both uniqueness checks below mirror the columns they guard. `User`
+        # carries UNIQUE indexes on email and phone, and `create_user` stores
+        # the address lower-cased and the number in E.164: without these checks
+        # a repeat registration answers 500 from the index instead of 400 with
+        # a field the form can show.
+        email = str(value.get('email') or '').strip().lower()
+        if User.objects.filter(email__iexact=email).exists():
             raise serializers.ValidationError(
                 'A user with this email already exists.'
             )
+        raw_phone = str(value.get('phone') or '').strip()
+        phone = normalize_phone(raw_phone)
+        if phone and len(phone) > 20:
+            raise serializers.ValidationError(
+                {'phone': 'Enter a valid phone number.'},
+            )
+        if phone and User.objects.filter(
+            Q(phone=phone) | Q(phone=raw_phone),
+        ).exists():
+            raise serializers.ValidationError(
+                {'phone': 'An account with this phone number already exists.'},
+            )
+        value['email'] = email
+        value['phone'] = phone
         return value
 
     def create(self, validated_data):

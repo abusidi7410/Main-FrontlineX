@@ -619,6 +619,15 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
         self.assertEqual(response.status_code, 400, response.content)
         self.assertFalse(School.objects.filter(email='new-academy@example.com').exists())
 
+    def test_registration_rejects_an_impossible_student_count(self):
+        payload = self._payload()
+        payload['school']['expectedStudents'] = 99_999_999_999
+        response = self.client.post(
+            '/api/v1/schools/register/', payload, format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(School.objects.filter(email='new-academy@example.com').exists())
+
     def test_public_registration_rejection_explains_itself(self):
         payload = self._payload()
         payload['school']['type'] = 'Primary only'
@@ -630,6 +639,68 @@ class PublicSchoolRegistrationPaymentTests(TestCase):
         body = response.json()
         self.assertTrue(body['detail'])
         self.assertIn('school', body['errors'])
+        self.assertFalse(School.objects.filter(email='new-academy@example.com').exists())
+
+    def test_registration_rejects_an_admin_phone_already_in_use(self):
+        # `User.phone` is a unique column: without the check the insert reaches
+        # the index and the endpoint answers 500 instead of a field error.
+        User.objects.create_user(
+            email='taken-phone@example.com', password='Strong-Pass-1!',
+            phone='+2348000000101', role=User.Role.TEACHER,
+        )
+        payload = self._payload()
+
+        response = self.client.post(
+            '/api/v1/schools/register/', payload, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('phone', ' '.join(
+            str(v) for v in response.json()['errors'].values()
+        ))
+        self.assertFalse(School.objects.filter(email='new-academy@example.com').exists())
+
+    def test_registration_rejects_an_admin_email_that_differs_only_by_case(self):
+        User.objects.create_user(
+            email='cased-admin@example.com', password='Strong-Pass-1!',
+            role=User.Role.TEACHER,
+        )
+        payload = self._payload()
+        payload['admin']['email'] = 'CASED-ADMIN@example.com'
+
+        response = self.client.post(
+            '/api/v1/schools/register/', payload, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(School.objects.filter(email='new-academy@example.com').exists())
+
+    def test_registration_rejects_a_school_email_that_differs_only_by_case(self):
+        School.objects.create(
+            name='Cased Academy', address='1 Cased Road', state='Lagos',
+            lga='Ikeja', phone='+2348000000300', email='cased@example.com',
+        )
+        payload = self._payload()
+        payload['school']['email'] = 'CASED@example.com'
+
+        response = self.client.post(
+            '/api/v1/schools/register/', payload, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(School.objects.filter(email='CASED@example.com').exists())
+
+    def test_registration_rejects_a_field_longer_than_its_column(self):
+        # The form allows 120 characters for state; the column holds 100, and
+        # Postgres answers the overflow with a DataError (HTTP 500).
+        payload = self._payload()
+        payload['school']['state'] = 'X' * 120
+
+        response = self.client.post(
+            '/api/v1/schools/register/', payload, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
         self.assertFalse(School.objects.filter(email='new-academy@example.com').exists())
 
     def test_payment_verification_never_trusts_a_public_reference(self):
