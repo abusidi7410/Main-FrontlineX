@@ -17,6 +17,15 @@ from rest_framework.permissions import BasePermission
 #   finance.payment       — record a payment
 #   finance.verify        — verify / reverse a payment
 #   finance.read          — view financial records
+#   admissions.read       — view admission applications/documents
+#   admissions.write      — start/complete an application and upload documents
+#   admissions.review     — verify documents, approve or reject an application
+#   admissions.settings   — configure required documents (ADMIN ONLY)
+#   receipts.read         — view/download issued receipts
+#   receipts.issue        — issue the official receipt for a verified payment
+#   receipts.reprint      — record and print a reprint
+#   receipts.void         — void a receipt (ADMIN ONLY)
+#   receipts.settings     — configure receipt branding (ADMIN ONLY)
 ROLE_PERMISSIONS = {
     'platform_manager': [
         'platform.manage', 'subscription.read', 'subscription.write',
@@ -34,6 +43,10 @@ ROLE_PERMISSIONS = {
         'results.read', 'results.write', 'results.approve', 'results.publish',
         'finance.read', 'finance.write', 'finance.verify',
         'finance.structure', 'finance.invoice', 'finance.payment',
+        'admissions.read', 'admissions.write', 'admissions.review',
+        'admissions.settings',
+        'receipts.read', 'receipts.issue', 'receipts.reprint',
+        'receipts.void', 'receipts.settings',
         'timetable.read', 'timetable.write',
         'lessonplans.read',
         'communication.read', 'communication.write',
@@ -54,6 +67,10 @@ ROLE_PERMISSIONS = {
         # Read-only view of the money: a principal signs off on fees but does
         # not reprice the school, so `finance.read` without `finance.structure`.
         'finance.read',
+        # A principal can admit and review applicants, but does not configure
+        # the school's requirements or void a receipt (an administrator action).
+        'admissions.read', 'admissions.write', 'admissions.review',
+        'receipts.read',
         'reports.read', 'settings.read', 'ai.academic',
     ],
     'teacher': [
@@ -66,12 +83,20 @@ ROLE_PERMISSIONS = {
     'accountant': [
         'students.read', 'finance.read', 'finance.write', 'finance.verify',
         'finance.structure', 'finance.invoice', 'finance.payment',
+        # The bursar sees an applicant's fee status and issues/reprints the
+        # receipt, but does not make the admission decision.
+        'admissions.read',
+        'receipts.read', 'receipts.issue', 'receipts.reprint',
         'attendance.staff',
         'reports.read', 'ai.finance',
     ],
     'secretary': [
         'students.read', 'students.write', 'students.register',
         'accounts.read', 'accounts.write',
+        # The front desk takes applications and corrects drafts; only a
+        # principal/administrator makes the admission decision.
+        'admissions.read', 'admissions.write',
+        'receipts.read', 'receipts.reprint',
         'attendance.read', 'attendance.staff',
         'communication.read', 'communication.write',
     ],

@@ -9,4 +9,6 @@ urlpatterns = [
     path('api/v1/platform/', include('schools.platform_urls')),
     path('api/v1/', include('records.urls')),
     path('api/v1/billing/', include('billing.urls')),
+    path('api/v1/admissions/', include('admissions.urls')),
+    path('api/v1/receipts/', include('receipts.urls')),
 ]

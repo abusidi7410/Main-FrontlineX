@@ -40,8 +40,13 @@ import { Route as AppTeacherAttendanceRouteImport } from './routes/_app.teacher-
 import { Route as AppTimetableRouteImport } from './routes/_app.timetable'
 import { Route as AppUssdRouteImport } from './routes/_app.ussd'
 import { Route as AppWalletRouteImport } from './routes/_app.wallet'
+import { Route as AppAdmissionsIndexRouteImport } from './routes/_app.admissions.index'
+import { Route as AppAdmissionsApplicationIdRouteImport } from './routes/_app.admissions.$applicationId'
+import { Route as AppAdmissionsNewRouteImport } from './routes/_app.admissions.new'
+import { Route as AppAdmissionsSettingsRouteImport } from './routes/_app.admissions.settings'
 import { Route as AppFinanceIndexRouteImport } from './routes/_app.finance.index'
 import { Route as AppFinanceInvoicesRouteImport } from './routes/_app.finance.invoices'
+import { Route as AppFinanceReceiptsRouteImport } from './routes/_app.finance.receipts'
 import { Route as AppPlatformIndexRouteImport } from './routes/_app.platform.index'
 import { Route as AppPlatformActivityRouteImport } from './routes/_app.platform.activity'
 import { Route as AppPlatformAnalyticsRouteImport } from './routes/_app.platform.analytics'
@@ -216,6 +221,27 @@ const AppWalletRoute = AppWalletRouteImport.update({
   path: '/wallet',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAdmissionsIndexRoute = AppAdmissionsIndexRouteImport.update({
+  id: '/admissions/',
+  path: '/admissions/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAdmissionsApplicationIdRoute =
+  AppAdmissionsApplicationIdRouteImport.update({
+    id: '/admissions/$applicationId',
+    path: '/admissions/$applicationId',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppAdmissionsNewRoute = AppAdmissionsNewRouteImport.update({
+  id: '/admissions/new',
+  path: '/admissions/new',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAdmissionsSettingsRoute = AppAdmissionsSettingsRouteImport.update({
+  id: '/admissions/settings',
+  path: '/admissions/settings',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppFinanceIndexRoute = AppFinanceIndexRouteImport.update({
   id: '/finance/',
   path: '/finance/',
@@ -224,6 +250,11 @@ const AppFinanceIndexRoute = AppFinanceIndexRouteImport.update({
 const AppFinanceInvoicesRoute = AppFinanceInvoicesRouteImport.update({
   id: '/finance/invoices',
   path: '/finance/invoices',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppFinanceReceiptsRoute = AppFinanceReceiptsRouteImport.update({
+  id: '/finance/receipts',
+  path: '/finance/receipts',
   getParentRoute: () => AppRoute,
 } as any)
 const AppPlatformIndexRoute = AppPlatformIndexRouteImport.update({
@@ -355,7 +386,11 @@ export interface FileRoutesByFullPath {
   '/timetable': typeof AppTimetableRoute
   '/ussd': typeof AppUssdRoute
   '/wallet': typeof AppWalletRoute
+  '/admissions/$applicationId': typeof AppAdmissionsApplicationIdRoute
+  '/admissions/new': typeof AppAdmissionsNewRoute
+  '/admissions/settings': typeof AppAdmissionsSettingsRoute
   '/finance/invoices': typeof AppFinanceInvoicesRoute
+  '/finance/receipts': typeof AppFinanceReceiptsRoute
   '/platform/activity': typeof AppPlatformActivityRoute
   '/platform/analytics': typeof AppPlatformAnalyticsRoute
   '/platform/audit': typeof AppPlatformAuditRoute
@@ -368,6 +403,7 @@ export interface FileRoutesByFullPath {
   '/students/$studentId': typeof AppStudentsStudentIdRouteWithChildren
   '/students/import': typeof AppStudentsImportRoute
   '/students/new': typeof AppStudentsNewRoute
+  '/admissions/': typeof AppAdmissionsIndexRoute
   '/finance/': typeof AppFinanceIndexRoute
   '/platform/': typeof AppPlatformIndexRoute
   '/staff/': typeof AppStaffIndexRoute
@@ -407,7 +443,11 @@ export interface FileRoutesByTo {
   '/timetable': typeof AppTimetableRoute
   '/ussd': typeof AppUssdRoute
   '/wallet': typeof AppWalletRoute
+  '/admissions/$applicationId': typeof AppAdmissionsApplicationIdRoute
+  '/admissions/new': typeof AppAdmissionsNewRoute
+  '/admissions/settings': typeof AppAdmissionsSettingsRoute
   '/finance/invoices': typeof AppFinanceInvoicesRoute
+  '/finance/receipts': typeof AppFinanceReceiptsRoute
   '/platform/activity': typeof AppPlatformActivityRoute
   '/platform/analytics': typeof AppPlatformAnalyticsRoute
   '/platform/audit': typeof AppPlatformAuditRoute
@@ -418,6 +458,7 @@ export interface FileRoutesByTo {
   '/staff/new': typeof AppStaffNewRoute
   '/students/import': typeof AppStudentsImportRoute
   '/students/new': typeof AppStudentsNewRoute
+  '/admissions': typeof AppAdmissionsIndexRoute
   '/finance': typeof AppFinanceIndexRoute
   '/platform': typeof AppPlatformIndexRoute
   '/staff': typeof AppStaffIndexRoute
@@ -460,7 +501,11 @@ export interface FileRoutesById {
   '/_app/timetable': typeof AppTimetableRoute
   '/_app/ussd': typeof AppUssdRoute
   '/_app/wallet': typeof AppWalletRoute
+  '/_app/admissions/$applicationId': typeof AppAdmissionsApplicationIdRoute
+  '/_app/admissions/new': typeof AppAdmissionsNewRoute
+  '/_app/admissions/settings': typeof AppAdmissionsSettingsRoute
   '/_app/finance/invoices': typeof AppFinanceInvoicesRoute
+  '/_app/finance/receipts': typeof AppFinanceReceiptsRoute
   '/_app/platform/activity': typeof AppPlatformActivityRoute
   '/_app/platform/analytics': typeof AppPlatformAnalyticsRoute
   '/_app/platform/audit': typeof AppPlatformAuditRoute
@@ -473,6 +518,7 @@ export interface FileRoutesById {
   '/_app/students/$studentId': typeof AppStudentsStudentIdRouteWithChildren
   '/_app/students/import': typeof AppStudentsImportRoute
   '/_app/students/new': typeof AppStudentsNewRoute
+  '/_app/admissions/': typeof AppAdmissionsIndexRoute
   '/_app/finance/': typeof AppFinanceIndexRoute
   '/_app/platform/': typeof AppPlatformIndexRoute
   '/_app/staff/': typeof AppStaffIndexRoute
@@ -515,7 +561,11 @@ export interface FileRouteTypes {
     | '/timetable'
     | '/ussd'
     | '/wallet'
+    | '/admissions/$applicationId'
+    | '/admissions/new'
+    | '/admissions/settings'
     | '/finance/invoices'
+    | '/finance/receipts'
     | '/platform/activity'
     | '/platform/analytics'
     | '/platform/audit'
@@ -528,6 +578,7 @@ export interface FileRouteTypes {
     | '/students/$studentId'
     | '/students/import'
     | '/students/new'
+    | '/admissions/'
     | '/finance/'
     | '/platform/'
     | '/staff/'
@@ -567,7 +618,11 @@ export interface FileRouteTypes {
     | '/timetable'
     | '/ussd'
     | '/wallet'
+    | '/admissions/$applicationId'
+    | '/admissions/new'
+    | '/admissions/settings'
     | '/finance/invoices'
+    | '/finance/receipts'
     | '/platform/activity'
     | '/platform/analytics'
     | '/platform/audit'
@@ -578,6 +633,7 @@ export interface FileRouteTypes {
     | '/staff/new'
     | '/students/import'
     | '/students/new'
+    | '/admissions'
     | '/finance'
     | '/platform'
     | '/staff'
@@ -619,7 +675,11 @@ export interface FileRouteTypes {
     | '/_app/timetable'
     | '/_app/ussd'
     | '/_app/wallet'
+    | '/_app/admissions/$applicationId'
+    | '/_app/admissions/new'
+    | '/_app/admissions/settings'
     | '/_app/finance/invoices'
+    | '/_app/finance/receipts'
     | '/_app/platform/activity'
     | '/_app/platform/analytics'
     | '/_app/platform/audit'
@@ -632,6 +692,7 @@ export interface FileRouteTypes {
     | '/_app/students/$studentId'
     | '/_app/students/import'
     | '/_app/students/new'
+    | '/_app/admissions/'
     | '/_app/finance/'
     | '/_app/platform/'
     | '/_app/staff/'
@@ -871,6 +932,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppWalletRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/admissions/': {
+      id: '/_app/admissions/'
+      path: '/admissions'
+      fullPath: '/admissions/'
+      preLoaderRoute: typeof AppAdmissionsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/admissions/$applicationId': {
+      id: '/_app/admissions/$applicationId'
+      path: '/admissions/$applicationId'
+      fullPath: '/admissions/$applicationId'
+      preLoaderRoute: typeof AppAdmissionsApplicationIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/admissions/new': {
+      id: '/_app/admissions/new'
+      path: '/admissions/new'
+      fullPath: '/admissions/new'
+      preLoaderRoute: typeof AppAdmissionsNewRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/admissions/settings': {
+      id: '/_app/admissions/settings'
+      path: '/admissions/settings'
+      fullPath: '/admissions/settings'
+      preLoaderRoute: typeof AppAdmissionsSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/finance/': {
       id: '/_app/finance/'
       path: '/finance'
@@ -883,6 +972,13 @@ declare module '@tanstack/react-router' {
       path: '/finance/invoices'
       fullPath: '/finance/invoices'
       preLoaderRoute: typeof AppFinanceInvoicesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/finance/receipts': {
+      id: '/_app/finance/receipts'
+      path: '/finance/receipts'
+      fullPath: '/finance/receipts'
+      preLoaderRoute: typeof AppFinanceReceiptsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/platform/': {
@@ -1089,7 +1185,11 @@ interface AppRouteChildren {
   AppTimetableRoute: typeof AppTimetableRoute
   AppUssdRoute: typeof AppUssdRoute
   AppWalletRoute: typeof AppWalletRoute
+  AppAdmissionsApplicationIdRoute: typeof AppAdmissionsApplicationIdRoute
+  AppAdmissionsNewRoute: typeof AppAdmissionsNewRoute
+  AppAdmissionsSettingsRoute: typeof AppAdmissionsSettingsRoute
   AppFinanceInvoicesRoute: typeof AppFinanceInvoicesRoute
+  AppFinanceReceiptsRoute: typeof AppFinanceReceiptsRoute
   AppPlatformActivityRoute: typeof AppPlatformActivityRoute
   AppPlatformAnalyticsRoute: typeof AppPlatformAnalyticsRoute
   AppPlatformAuditRoute: typeof AppPlatformAuditRoute
@@ -1100,6 +1200,7 @@ interface AppRouteChildren {
   AppStudentsStudentIdRoute: typeof AppStudentsStudentIdRouteWithChildren
   AppStudentsImportRoute: typeof AppStudentsImportRoute
   AppStudentsNewRoute: typeof AppStudentsNewRoute
+  AppAdmissionsIndexRoute: typeof AppAdmissionsIndexRoute
   AppFinanceIndexRoute: typeof AppFinanceIndexRoute
   AppPlatformIndexRoute: typeof AppPlatformIndexRoute
   AppStudentsIndexRoute: typeof AppStudentsIndexRoute
@@ -1130,7 +1231,11 @@ const AppRouteChildren: AppRouteChildren = {
   AppTimetableRoute: AppTimetableRoute,
   AppUssdRoute: AppUssdRoute,
   AppWalletRoute: AppWalletRoute,
+  AppAdmissionsApplicationIdRoute: AppAdmissionsApplicationIdRoute,
+  AppAdmissionsNewRoute: AppAdmissionsNewRoute,
+  AppAdmissionsSettingsRoute: AppAdmissionsSettingsRoute,
   AppFinanceInvoicesRoute: AppFinanceInvoicesRoute,
+  AppFinanceReceiptsRoute: AppFinanceReceiptsRoute,
   AppPlatformActivityRoute: AppPlatformActivityRoute,
   AppPlatformAnalyticsRoute: AppPlatformAnalyticsRoute,
   AppPlatformAuditRoute: AppPlatformAuditRoute,
@@ -1141,6 +1246,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppStudentsStudentIdRoute: AppStudentsStudentIdRouteWithChildren,
   AppStudentsImportRoute: AppStudentsImportRoute,
   AppStudentsNewRoute: AppStudentsNewRoute,
+  AppAdmissionsIndexRoute: AppAdmissionsIndexRoute,
   AppFinanceIndexRoute: AppFinanceIndexRoute,
   AppPlatformIndexRoute: AppPlatformIndexRoute,
   AppStudentsIndexRoute: AppStudentsIndexRoute,

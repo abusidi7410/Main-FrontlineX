@@ -10,6 +10,7 @@ const TONES: Record<string, string> = {
   published: "bg-success-soft text-success border-success/25",
   locked: "bg-success-soft text-success border-success/25",
   approved: "bg-success-soft text-success border-success/25",
+  issued: "bg-success-soft text-success border-success/25",
   present: "bg-success-soft text-success border-success/25",
   pending: "bg-warning-soft text-warning border-warning/25",
   pending_payment: "bg-warning-soft text-warning border-warning/25",
@@ -26,6 +27,7 @@ const TONES: Record<string, string> = {
   unpaid: "bg-destructive/10 text-destructive border-destructive/25",
   absent: "bg-destructive/10 text-destructive border-destructive/25",
   reversed: "bg-destructive/10 text-destructive border-destructive/25",
+  voided: "bg-destructive/10 text-destructive border-destructive/25",
 };
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {

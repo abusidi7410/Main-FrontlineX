@@ -70,6 +70,8 @@ INSTALLED_APPS = [
     'schools',
     'records',
     'billing',
+    'admissions',
+    'receipts',
     'ratelimit',
 ]
 
@@ -172,6 +174,22 @@ MEDIA_URL = 'media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 DATA_UPLOAD_MAX_MEMORY_SIZE = 6 * 1024 * 1024
 CLOUDINARY_URL = env('CLOUDINARY_URL', default='')
+
+# ── Private admission documents ─────────────────────────────────────────────
+# Applicant documents are PII and must never be served by the media handler, so
+# they live in their own root outside MEDIA_ROOT/STATIC_ROOT and are streamed
+# only through an authorised view. `cloudinary` stores them as private raw
+# resources that cannot be fetched without a signed URL. Rail/containers have an
+# ephemeral disk, so production should set DOCUMENT_STORAGE_BACKEND=cloudinary.
+PRIVATE_DOCUMENT_ROOT = env(
+    'PRIVATE_DOCUMENT_ROOT', default=os.path.join(BASE_DIR, 'private_documents'),
+)
+DOCUMENT_STORAGE_BACKEND = env(
+    'DOCUMENT_STORAGE_BACKEND', default='cloudinary' if CLOUDINARY_URL else 'filesystem',
+)
+PRIVATE_DOCUMENT_MAX_BYTES = env.int(
+    'PRIVATE_DOCUMENT_MAX_BYTES', default=10 * 1024 * 1024,
+)
 
 STORAGES = {
     'staticfiles': {

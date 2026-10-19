@@ -201,11 +201,6 @@ def _student_queryset(school_id, *, session=None):
 
 # ── Students ───────────────────────────────────────────────────────────────
 
-# An admission invoice is due 30 days out, the same window the registration
-# workflow uses, so OVERDUE means the same thing on both paths.
-ADMISSION_INVOICE_DUE_DAYS = 30
-
-
 def _filtered_students(request, *, search='', class_name='', class_id='', student_status='',
                        section='', session_id='', enrollment_status=''):
     """The student list, filtered in the database rather than in the client.
@@ -517,29 +512,11 @@ class StudentListCreateView(APIView):
                     wallet = wallet_billing.get_wallet(school)
 
             # Registration is billed separately from recurring school fees.
-            invoice = billing_service.create_invoice_from_school_fees(
-                school=school, student=student,
-                due_date=billing_service.default_due_date(None, days=ADMISSION_INVOICE_DUE_DAYS),
+            # Shared with the admission-approval path so both produce the same
+            # invoice, Registration row, parent login and opening status.
+            invoice = registration_service.finalize_admission(
+                school=school, student=student, actor=request.user,
             )
-            # The registration row is what the payment flow approves later. Without
-            # it a settled registration invoice would flip the status but never
-            # seat the student in a class roster.
-            billing_service.ensure_registration(
-                school, student, invoice, created_by=request.user,
-            )
-            # The guardian phone is how that family signs in: provision the
-            # parent login (or link this child to an existing one) inside the
-            # same transaction as the student, so the portal is never left
-            # pointing at a student who does not exist.
-            registration_service.ensure_parent_account(
-                school=school, student=student,
-                guardian_name=student.guardian_name,
-                guardian_phone=student.guardian_phone,
-            )
-            if invoice is None:
-                student.status = Student.Status.ACTIVE
-                student.save(update_fields=['status'])
-                billing_service.activate_registration(student, actor=request.user)
         except wallet_billing.InsufficientFunds as exc:
             return Response(
                 {

@@ -32,6 +32,17 @@ const SCHOOL_ADMIN: NavItem[] = [
   // One entry: the list, Admit and Import all live on the Students page
   // itself (header buttons), so the menu does not split them.
   { label: "Students", to: "/students", icon: "users", group: "People", mobile: true },
+  {
+    label: "Admissions",
+    to: "/admissions",
+    icon: "userCog",
+    group: "People",
+    children: [
+      { label: "Applications", to: "/admissions" },
+      { label: "New Application", to: "/admissions/new" },
+      { label: "Requirements", to: "/admissions/settings" },
+    ],
+  },
   // One entry, not three: staff records and login accounts are the same
   // people, so they live on one module and cross-link inside the pages
   // instead of splitting the sidebar.
@@ -70,6 +81,7 @@ const SCHOOL_ADMIN: NavItem[] = [
     children: [
       { label: "Overview", to: "/finance" },
       { label: "Invoices", to: "/finance/invoices" },
+      { label: "Receipts", to: "/finance/receipts" },
       { label: "Wallet & Billing", to: "/wallet" },
     ],
   },
@@ -120,6 +132,16 @@ const PRINCIPAL: NavItem[] = [
     ],
   },
   {
+    label: "Admissions",
+    to: "/admissions",
+    icon: "userCog",
+    group: "People",
+    children: [
+      { label: "Applications", to: "/admissions" },
+      { label: "New Application", to: "/admissions/new" },
+    ],
+  },
+  {
     label: "Academics",
     to: "/attendance",
     icon: "clipboard",
@@ -136,7 +158,17 @@ const PRINCIPAL: NavItem[] = [
       { label: "Promotion Centre", to: "/promotion" },
     ],
   },
-  { label: "Invoices", to: "/finance/invoices", icon: "wallet", group: "Finance", mobile: true },
+  {
+    label: "Finance",
+    to: "/finance/invoices",
+    icon: "wallet",
+    group: "Finance",
+    mobile: true,
+    children: [
+      { label: "Invoices", to: "/finance/invoices" },
+      { label: "Receipts", to: "/finance/receipts" },
+    ],
+  },
   {
     label: "Communication",
     to: "/communication",
@@ -208,6 +240,7 @@ const ACCOUNTANT: NavItem[] = [
     children: [
       { label: "Payment Overview", to: "/finance" },
       { label: "Invoices", to: "/finance/invoices" },
+      { label: "Receipts", to: "/finance/receipts" },
       { label: "Students", to: "/students" },
       { label: "Reports", to: "/reports" },
     ],
@@ -219,6 +252,7 @@ const ACCOUNTANT: NavItem[] = [
     group: "Support",
     mobile: true,
     children: [
+      { label: "Admission Applications", to: "/admissions" },
       { label: "Notifications", to: "/notifications" },
       { label: "AI Assistant", to: "/ai" },
       { label: "School Settings", to: "/settings" },
@@ -239,6 +273,23 @@ const SECRETARY: NavItem[] = [
       { label: "Login Accounts", to: "/accounts" },
       { label: "Take Register", to: "/attendance" },
     ],
+  },
+  {
+    label: "Admissions",
+    to: "/admissions",
+    icon: "userCog",
+    group: "People",
+    children: [
+      { label: "Applications", to: "/admissions" },
+      { label: "New Application", to: "/admissions/new" },
+    ],
+  },
+  {
+    label: "Finance",
+    to: "/finance/receipts",
+    icon: "receipt",
+    group: "Finance",
+    children: [{ label: "Receipts", to: "/finance/receipts" }],
   },
   {
     label: "Communication",

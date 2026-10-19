@@ -20,10 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ApiRequestError } from "@/api/client";
+import { ApiRequestError, downloadBlob } from "@/api/client";
 import { useSession } from "@/auth/session";
-import { usePrintDocuments } from "@/hooks/use-print-documents";
 import { dateTimeFmt, naira, titleCase } from "@/lib/format";
+import { downloadReceiptPdf, issueReceipt } from "@/services/receipts.service";
 import {
   cancelPayment,
   listInvoicePage,
@@ -59,7 +59,6 @@ const METHODS: Payment["method"][] = ["cash", "bank_transfer", "card", "pos", "u
 function PaymentsPage() {
   const { can } = useSession();
   const queryClient = useQueryClient();
-  const { printReceipt } = usePrintDocuments();
   const [paymentPage, setPaymentPage] = useState(1);
   const invoices = useQuery({
     queryKey: ["invoices", "", 1, 100],
@@ -161,6 +160,53 @@ function PaymentsPage() {
     onError: (error) => {
       toast.error(
         error instanceof ApiRequestError ? error.message : "Could not cancel this payment.",
+      );
+    },
+  });
+
+  const receipt = useMutation({
+    mutationFn: async (payment: Payment) => {
+      try {
+        const issued = await issueReceipt(payment.id);
+        return {
+          blob: await downloadReceiptPdf(issued.id),
+          filename: `${issued.receiptNumber.replace(/[^A-Za-z0-9._-]+/g, "-")}.pdf`,
+          existing: false,
+        };
+      } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 409) {
+          const id = error.fieldErrors?.["receiptId"];
+          if (id) {
+            const number = error.fieldErrors?.["receiptNumber"] ?? payment.reference;
+            return {
+              blob: await downloadReceiptPdf(id),
+              filename: `${number.replace(/[^A-Za-z0-9._-]+/g, "-")}.pdf`,
+              existing: true,
+            };
+          }
+        }
+        throw error;
+      }
+    },
+    onSuccess: async ({ blob, filename, existing }) => {
+      downloadBlob(blob, filename);
+      toast.success(
+        existing
+          ? "This payment already has a receipt, so the existing one was downloaded."
+          : "Receipt issued.",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["receipts"] });
+      await queryClient.invalidateQueries({ queryKey: ["receipt-stats"] });
+    },
+    onError: (error) => {
+      if (error instanceof ApiRequestError && error.status === 402) {
+        toast.error("Fund your wallet before issuing a receipt.", {
+          description: error.message,
+        });
+        return;
+      }
+      toast.error(
+        error instanceof ApiRequestError ? error.message : "That receipt could not be issued.",
       );
     },
   });
@@ -286,14 +332,15 @@ function PaymentsPage() {
                 </div>
                 <p className="font-medium tabular-nums">{naira(payment.amount)}</p>
                 <StatusBadge status={payment.status} />
-                {payment.status === "verified" ? (
+                {payment.status === "verified" && can("receipts.issue") ? (
                   <Button
                     variant="outline"
                     className="h-11"
-                    onClick={() => void printReceipt(payment)}
+                    disabled={receipt.isPending}
+                    onClick={() => receipt.mutate(payment)}
                   >
                     <Printer className="size-4" aria-hidden="true" />
-                    Receipt
+                    {receipt.isPending ? "Issuing…" : "Receipt"}
                   </Button>
                 ) : null}
                 {payment.status === "pending" && can("finance.verify") ? (

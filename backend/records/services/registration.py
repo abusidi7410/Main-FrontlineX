@@ -163,6 +163,36 @@ def register_student(
     }
 
 
+def finalize_admission(*, school, student, actor=None):
+    """Apply the side effects that turn a new Student row into an admission.
+
+    Manual registration (`StudentListCreateView`) and an approved admission
+    application must produce the *same* opening state. This function is that
+    single path: raise the registration invoice from the configured Payment
+    Structure, open the pending Registration, provision the parent login, and
+    release the billing hold when the school charges no registration fee.
+
+    Wallet activation is deliberately *not* here: the student-create API does it
+    inside its own transaction, and an approval does the same. Keeping the money
+    debit in the caller makes the 402 path explicit in both places.
+    """
+    invoice = billing.create_invoice_from_school_fees(
+        school=school, student=student,
+        due_date=billing.default_due_date(None, days=INVOICE_DUE_DAYS),
+    )
+    billing.ensure_registration(school, student, invoice, created_by=actor)
+    ensure_parent_account(
+        school=school, student=student,
+        guardian_name=student.guardian_name,
+        guardian_phone=student.guardian_phone,
+    )
+    if invoice is None:
+        student.status = Student.Status.ACTIVE
+        student.save(update_fields=['status'])
+        billing.activate_registration(student, actor=actor)
+    return invoice
+
+
 def ensure_parent_account(*, school, student, guardian_name: str = '', guardian_phone: str = ''):
     """Provision (or reuse) the parent login account for a student.
 

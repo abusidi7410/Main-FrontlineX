@@ -39,6 +39,15 @@ export type Permission =
   | "finance.structure"
   | "finance.invoice"
   | "finance.payment"
+  | "admissions.read"
+  | "admissions.write"
+  | "admissions.review"
+  | "admissions.settings"
+  | "receipts.read"
+  | "receipts.issue"
+  | "receipts.reprint"
+  | "receipts.void"
+  | "receipts.settings"
   | "timetable.read"
   | "timetable.write"
   | "lessonplans.read"
@@ -629,4 +638,221 @@ export interface UssdConfig {
   shortCode: string;
   fullCode: string;
   commands: UssdCommand[];
+}
+
+export type AdmissionStatus =
+  "draft" | "submitted" | "under_review" | "approved" | "rejected" | "withdrawn";
+
+export type AdmissionApplicantType = "new" | "transfer" | "returning";
+
+export type AdmissionDocumentStatus = "pending" | "verified" | "rejected";
+
+/**
+ * Mirrors `AdmissionDocument.Category` in `backend/admissions/models.py`. The
+ * server validates `requiredDocuments` against exactly this vocabulary, so the
+ * settings screen must offer no category that the API would reject.
+ */
+export const ADMISSION_DOCUMENT_CATEGORIES = [
+  "birth_certificate",
+  "passport_photo",
+  "previous_report",
+  "transfer_certificate",
+  "immunization",
+  "other",
+] as const;
+
+export type AdmissionDocumentCategory = (typeof ADMISSION_DOCUMENT_CATEGORIES)[number];
+
+export const ADMISSION_DOCUMENT_LABELS: Record<AdmissionDocumentCategory, string> = {
+  birth_certificate: "Birth certificate",
+  passport_photo: "Passport photograph",
+  previous_report: "Previous school report",
+  transfer_certificate: "Transfer certificate",
+  immunization: "Immunization record",
+  other: "Other supporting document",
+};
+
+export interface AdmissionDocument {
+  id: string;
+  category: AdmissionDocumentCategory;
+  categoryLabel: string;
+  originalFilename: string;
+  contentType: string;
+  sizeBytes: number;
+  status: AdmissionDocumentStatus;
+  uploadedAt: string;
+  uploadedBy: string;
+  reviewedBy: string;
+  reviewedAt: string | null;
+  reviewNote: string;
+  downloadUrl: string;
+  applicationId: string | null;
+  studentId: string | null;
+}
+
+export interface AdmissionApplication {
+  id: string;
+  status: AdmissionStatus;
+  applicantType: AdmissionApplicantType;
+  firstName: string;
+  middleName: string;
+  lastName: string;
+  gender: "" | "male" | "female";
+  dateOfBirth: string | null;
+  nationality: string;
+  stateOfOrigin: string;
+  lgaOfOrigin: string;
+  religion: string;
+  classId: number | null;
+  className: string;
+  levelCode: string;
+  academicSessionId: number | null;
+  academicSession: string;
+  admissionYear: number | null;
+  guardianName: string;
+  guardianRelationship: string;
+  guardianPhone: string;
+  guardianEmail: string;
+  guardianOccupation: string;
+  guardianAddress: string;
+  secondGuardianName: string;
+  secondGuardianPhone: string;
+  bloodGroup: string;
+  allergies: string;
+  medicalConditions: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  previousSchoolName: string;
+  previousSchoolAddress: string;
+  lastClassCompleted: string;
+  reasonForTransfer: string;
+  refereeName: string;
+  refereePhone: string;
+  refereeAddress: string;
+  sponsorName: string;
+  sponsorRelationship: string;
+  sponsorPhone: string;
+  sponsorEmail: string;
+  sponsorAddress: string;
+  mailingAddress: string;
+  declaredBy: string;
+  declaredAt: string | null;
+  submittedAt: string | null;
+  reviewedBy: string;
+  reviewedAt: string | null;
+  decisionReason: string;
+  admissionNumber: string;
+  studentId: string | null;
+  duplicateOf: string | null;
+  requiredDocuments: AdmissionDocumentCategory[];
+  missingDocuments: AdmissionDocumentCategory[];
+  createdBy: string;
+  createdAt: string;
+  lastSavedAt: string;
+  /** Present on the detail endpoint only. */
+  documents?: AdmissionDocument[];
+}
+
+export type AdmissionApplicationInput = Partial<
+  Omit<
+    AdmissionApplication,
+    | "id"
+    | "status"
+    | "className"
+    | "levelCode"
+    | "academicSession"
+    | "declaredAt"
+    | "submittedAt"
+    | "reviewedBy"
+    | "reviewedAt"
+    | "decisionReason"
+    | "admissionNumber"
+    | "studentId"
+    | "duplicateOf"
+    | "requiredDocuments"
+    | "missingDocuments"
+    | "createdBy"
+    | "createdAt"
+    | "lastSavedAt"
+    | "documents"
+  >
+>;
+
+export interface AdmissionSettings {
+  requiredDocuments: AdmissionDocumentCategory[];
+  refereeRequired: boolean;
+  sponsorEnabled: boolean;
+  requirePreviousSchoolForTransfer: boolean;
+  declarationText: string;
+}
+
+export interface AdmissionStats {
+  total: number;
+  draft: number;
+  submitted: number;
+  underReview: number;
+  approved: number;
+  rejected: number;
+  withdrawn: number;
+  needsReview: number;
+  approvedThisMonth: number;
+}
+
+export interface AdmissionAccess {
+  amountKobo: number;
+  periodStart: string;
+  periodEnd: string;
+  walletBalanceKobo: number;
+}
+
+export interface AdmissionApprovalResult extends AdmissionApplication {
+  studentId: string;
+  invoiceId: string;
+  invoiceTotal: string;
+  registrationFeeConfigured: boolean;
+  access: AdmissionAccess | null;
+}
+
+export type ReceiptStatus = "issued" | "voided";
+
+export interface Receipt {
+  id: string;
+  receiptNumber: string;
+  status: ReceiptStatus;
+  paymentId: string;
+  payerName: string;
+  amount: string;
+  amountInWords: string;
+  purpose: string;
+  balanceAfter: string;
+  issuedBy: string;
+  issuedAt: string;
+  reprintCount: number;
+  lastReprintedAt: string | null;
+  voidedBy: string;
+  voidedAt: string | null;
+  voidReason: string;
+  replacesId: string | null;
+  school: Record<string, unknown>;
+  student: Record<string, unknown>;
+  invoice: Record<string, unknown>;
+  payment: Record<string, unknown>;
+  studentName: string;
+  admissionNumber: string;
+  downloadUrl: string;
+}
+
+export interface ReceiptSettings {
+  prefix: string;
+  footerNote: string;
+  paperSize: "A5" | "A4";
+  showLogo: boolean;
+}
+
+export interface ReceiptStats {
+  totalIssued: number;
+  totalVoided: number;
+  issuedThisMonth: number;
+  valueThisMonth: string;
+  recent: Receipt[];
 }

@@ -51,6 +51,15 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "finance.structure",
     "finance.invoice",
     "finance.payment",
+    "admissions.read",
+    "admissions.write",
+    "admissions.review",
+    "admissions.settings",
+    "receipts.read",
+    "receipts.issue",
+    "receipts.reprint",
+    "receipts.void",
+    "receipts.settings",
     "timetable.read",
     "timetable.write",
     "lessonplans.read",
@@ -88,6 +97,12 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     // A principal signs off on fees but does not reprice the school, so
     // `finance.read` without `finance.structure`. Mirrors the backend matrix.
     "finance.read",
+    // A principal reviews and admits applicants but never reconfigures the
+    // admission requirements, and does not issue receipts.
+    "admissions.read",
+    "admissions.write",
+    "admissions.review",
+    "receipts.read",
     "reports.read",
     "settings.read",
     "ai.academic",
@@ -114,6 +129,12 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "finance.structure",
     "finance.invoice",
     "finance.payment",
+    // A bursar receipts verified payments and reprints, but does not review
+    // applications or void a receipt.
+    "admissions.read",
+    "receipts.read",
+    "receipts.issue",
+    "receipts.reprint",
     "attendance.staff",
     "reports.read",
     "ai.finance",
@@ -124,6 +145,10 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "students.register",
     "attendance.read",
     "attendance.staff",
+    "admissions.read",
+    "admissions.write",
+    "receipts.read",
+    "receipts.reprint",
     "communication.read",
     "communication.write",
     "accounts.read",

@@ -146,6 +146,69 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   return (await response.json()) as T;
 }
 
+/**
+ * Binary sibling of `apiFetch`, for endpoints that return a file (receipt and
+ * admission-document PDFs/images). It sends the same bearer token and joins the
+ * same prefix, so a private download is authorised exactly like any JSON call.
+ */
+export async function apiFetchBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+  const withSlash = path.endsWith("/") ? path : `${path}/`;
+  const url = new URL(
+    `${API_BASE_URL}${withSlash}`,
+    globalThis.location?.origin ?? "http://localhost",
+  );
+  Object.entries(options.query ?? {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
+  });
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: options.method ?? "GET",
+      ...(options.signal ? { signal: options.signal } : {}),
+      headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+      credentials: "include",
+    });
+  } catch {
+    throw new ApiRequestError(
+      "You appear to be offline. We'll retry when your connection returns.",
+      0,
+      "offline",
+    );
+  }
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    const message = payload?.detail;
+    const error = new ApiRequestError(
+      typeof message === "string" && message.trim() !== ""
+        ? message
+        : response.status >= 500
+          ? `The server failed to answer (HTTP ${response.status}). Please try again in a minute.`
+          : FRIENDLY_ERROR,
+      response.status,
+    );
+    if (response.status === 401 && accessToken && unauthorizedHandler) {
+      unauthorizedHandler(undefined);
+    }
+    throw error;
+  }
+
+  return response.blob();
+}
+
+/** Trigger a browser download for a blob the API returned. */
+export function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export interface Paginated<T> {
   results: T[];
   count: number;
