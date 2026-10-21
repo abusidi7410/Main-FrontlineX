@@ -16,7 +16,14 @@ from rest_framework.test import APIClient
 
 from accounts.models import Notification, NotificationPreference, User
 from accounts.services import notifications as notify_svc
-from records.models import Enrollment, Invoice, Payment, ResultSheet, Student
+from records.models import (
+    AttendanceRecord,
+    Enrollment,
+    Invoice,
+    Payment,
+    ResultSheet,
+    Student,
+)
 from records.services import announcements as announcement_service
 from records.services import attendance as attendance_service
 from records.services import events as event_service
@@ -693,6 +700,40 @@ class EventNotificationTests(NotificationTestCase):
         )
         event_service.payment_verified(payment)
         self.assertFalse(Notification.objects.filter(user=self.other_admin).exists())
+
+    def _submit(self, day, status):
+        return attendance_service.submit_register(
+            user=self.admin, school=self.school, class_obj=self.jss1, day=day,
+            records=[{
+                'studentId': str(self.student.public_id),
+                'status': status,
+            }],
+        )
+
+    def test_a_marked_absence_reaches_the_student_and_the_family(self):
+        self._submit(self.an_open_school_day(), AttendanceRecord.Status.ABSENT)
+
+        student_note = Notification.objects.get(user=self.student_user, type='attendance')
+        self.assertIn('absent', student_note.body.lower())
+        parent_note = Notification.objects.get(user=self.parent, type='attendance')
+        self.assertIn('absent', parent_note.body.lower())
+        self.assertIn(self.jss1.name, parent_note.body)
+
+    def test_replaying_an_absence_notice_does_not_stack_copies(self):
+        day = self.an_open_school_day()
+        result = self._submit(day, AttendanceRecord.Status.ABSENT)
+        # Re-emit the same event, as a retried request or a replayed job would.
+        event_service.attendance_registered(
+            self.school, day=day, class_obj=self.jss1,
+            records=list(AttendanceRecord.objects.filter(id__in=result.record_ids)),
+        )
+        self.assertEqual(
+            Notification.objects.filter(user=self.parent, type='attendance').count(), 1,
+        )
+
+    def test_a_present_register_stays_silent(self):
+        self._submit(self.an_open_school_day(), AttendanceRecord.Status.PRESENT)
+        self.assertFalse(Notification.objects.filter(type='attendance').exists())
 
     def _sheet(self):
         return ResultSheet.objects.create(

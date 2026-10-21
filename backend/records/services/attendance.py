@@ -358,6 +358,13 @@ def submit_register(
     result.saved = len(to_create)
     result.record_ids = [record.id for record in to_create]
     result.by_status = _count_by_status(school, class_obj, day)
+
+    # Local import: events imports this module at load time, so the reverse
+    # import has to happen per call rather than at module scope.
+    from . import events as event_service
+    event_service.attendance_registered(
+        school, day=day, class_obj=class_obj, records=to_create,
+    )
     return result
 
 
@@ -400,6 +407,13 @@ def correct_record(*, user, school: School, record_id: int, new_status: str, rea
 
     record.status = new_status
     record.save(update_fields=['status', 'updated_at'])
+
+    if new_status in (AttendanceRecord.Status.ABSENT, AttendanceRecord.Status.LATE):
+        class_obj = record.class_obj or resolve_class(school, record.class_name)
+        from . import events as event_service
+        event_service.attendance_registered(
+            school, day=record.date, class_obj=class_obj, records=[record],
+        )
     return {'changed': True, 'previousStatus': previous, 'status': new_status, 'reason': reason}
 
 

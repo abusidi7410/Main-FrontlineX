@@ -143,10 +143,13 @@ def notify_parents(students, *, type: str, title: str, body: str = '', link: str
     student_ids = [getattr(s, 'pk', s) for s in students]
     if not student_ids:
         return 0
+    guardians = User.objects.filter(
+        linked_students__id__in=student_ids, role='parent', is_active=True,
+    )
+    if school is not None:
+        guardians = guardians.filter(school=school)
     return notify(
-        User.objects.filter(
-            linked_students__id__in=student_ids, role='parent', is_active=True,
-        ).distinct(),
+        guardians.distinct(),
         type=type, title=title, body=body, link=link, dedupe_key=dedupe_key, school=school,
     )
 

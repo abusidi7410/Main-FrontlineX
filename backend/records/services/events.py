@@ -196,6 +196,63 @@ def attendance_gaps(school, on, class_names: list[str]) -> None:
     )
 
 
+def attendance_registered(school, *, day, class_obj, records) -> None:
+    """A register marked pupils absent or late: tell the child and their family.
+
+    Only the statuses a guardian can act on are sent; a register full of
+    present marks must stay silent. Notices are grouped by status so one
+    register produces at most two per class rather than one per pupil, and the
+    body never names another child. The key is per class, day and status, so a
+    replayed submit cannot stack duplicate copies.
+    """
+    from records.models import AttendanceRecord, Student
+
+    notable = [
+        record for record in records
+        if record.status in (AttendanceRecord.Status.ABSENT, AttendanceRecord.Status.LATE)
+    ]
+    if not notable or class_obj is None:
+        return
+
+    students = {
+        student.pk: student
+        for student in Student.objects.filter(
+            pk__in={record.student_id for record in notable},
+        )
+    }
+
+    for status in (AttendanceRecord.Status.ABSENT, AttendanceRecord.Status.LATE):
+        pupils = [
+            students[record.student_id]
+            for record in notable
+            if record.status == status and record.student_id in students
+        ]
+        if not pupils:
+            continue
+        label = 'absent' if status == AttendanceRecord.Status.ABSENT else 'late'
+        title = f'{label.capitalize()} recorded — {class_obj.name}'
+        when = f'{day:%d %b %Y}'
+        key = f'attendance:{class_obj.pk}:{day.isoformat()}:{status}'
+        notify_svc.notify_students(
+            pupils,
+            type='attendance',
+            title=title,
+            body=f'You were marked {label} in {class_obj.name} on {when}.',
+            link='/dashboard',
+            dedupe_key=f'{key}:student',
+            school=school,
+        )
+        notify_svc.notify_parents(
+            pupils,
+            type='attendance',
+            title=title,
+            body=f'Your child was marked {label} in {class_obj.name} on {when}.',
+            link='/children',
+            dedupe_key=f'{key}:parent',
+            school=school,
+        )
+
+
 def teacher_checkin_missed(record) -> None:
     """A teacher did not check in to a timetabled class by the grace deadline.
 
