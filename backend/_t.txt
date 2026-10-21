@@ -1,0 +1,10 @@
+Invalid line:  
+Found 6 test(s).
+Creating test database for alias 'default'...
+System check identified no issues (0 silenced).
+......
+----------------------------------------------------------------------
+Ran 6 tests in 1.912s
+
+OK
+Destroying test database for alias 'default'...
