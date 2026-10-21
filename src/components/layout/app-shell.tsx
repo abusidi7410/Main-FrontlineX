@@ -44,43 +44,46 @@ function isItemActive(pathname: string, item: NavItem) {
   return (item.children ?? []).some((child) => isActive(pathname, child.to));
 }
 
+function navKey(item: NavItem) {
+  return `${item.group ?? "Menu"}::${item.to}::${item.label}`;
+}
+
 function NavEntry({
   item,
   pathname,
   onNavigate,
+  open,
+  onToggle,
   collapsed = false,
 }: {
   item: NavItem;
   pathname: string;
   onNavigate?: (() => void) | undefined;
+  open: boolean;
+  onToggle: () => void;
   collapsed?: boolean | undefined;
 }) {
   const active = isItemActive(pathname, item);
   const hasChildren = (item.children ?? []).length > 0;
-  const [open, setOpen] = useState(active);
-
-  useEffect(() => {
-    if (active) setOpen(true);
-  }, [active, pathname]);
 
   // Collapsed rail (or childless entry): a single icon link to the main route.
   if (collapsed || !hasChildren) {
     return (
-          <li>
-            <Link
-              to={item.to}
-              onClick={onNavigate}
-              aria-current={active ? "page" : undefined}
-              aria-label={item.label}
-              title={collapsed ? item.label : undefined}
-              className={cn(
-                "group relative flex min-h-[2.75rem] items-center rounded-xl text-[13px] font-medium transition-all duration-200",
-                collapsed ? "justify-center px-0" : "gap-2.5 px-3",
-                active
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_1px_0_hsl(0_0%_100%/0.06)]"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-              )}
-            >
+      <li>
+        <Link
+          to={item.to}
+          onClick={onNavigate}
+          aria-current={active ? "page" : undefined}
+          aria-label={item.label}
+          title={collapsed ? item.label : undefined}
+          className={cn(
+            "group relative flex min-h-[2.75rem] items-center rounded-xl text-[13px] font-medium transition-all duration-200",
+            collapsed ? "justify-center px-0" : "gap-2.5 px-3",
+            active
+              ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_1px_0_hsl(0_0%_100%/0.06)]"
+              : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+          )}
+        >
           {active ? (
             <span
               aria-hidden="true"
@@ -110,7 +113,7 @@ function NavEntry({
     <li>
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={onToggle}
         aria-expanded={open}
         aria-label={`${open ? "Collapse" : "Expand"} ${item.label}`}
         className={cn(
@@ -137,18 +140,25 @@ function NavEntry({
         />
         <span className="min-w-0 flex-1 truncate text-left">
           {item.label}
-          {activeChild ? (
+          {activeChild && !open ? (
             <span className="block truncate text-[11px] font-normal text-sidebar-foreground/55">
               {activeChild.label}
             </span>
           ) : null}
         </span>
         <ChevronDown
-          className={cn("size-4 shrink-0 transition-transform duration-150", open && "rotate-180")}
+          aria-hidden="true"
+          className={cn(
+            "size-4 shrink-0 transition-all duration-200",
+            active
+              ? "text-sidebar-foreground/65"
+              : "text-sidebar-foreground/30 group-hover:text-sidebar-foreground/70",
+            open && "rotate-180",
+          )}
         />
       </button>
       {open ? (
-        <ul className="ml-6 mt-1 space-y-0.5 border-l border-sidebar-border pl-2">
+        <ul className="ml-[1.35rem] mt-1 space-y-0.5 border-l border-sidebar-border/80 pl-3 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-150">
           {(item.children ?? []).map((child) => {
             const childActive = isActive(pathname, child.to);
             return (
@@ -160,7 +170,7 @@ function NavEntry({
                   className={cn(
                     "block truncate rounded-md px-2.5 py-2 text-[13px] transition-colors duration-150",
                     childActive
-                      ? "bg-sidebar-accent/70 font-semibold text-sidebar-accent-foreground"
+                      ? "bg-sidebar-accent/80 font-semibold text-sidebar-accent-foreground shadow-[inset_0_0_0_1px_hsl(var(--sidebar-border)/0.6)]"
                       : "text-sidebar-foreground/65 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
                   )}
                 >
@@ -187,6 +197,16 @@ function NavLinks({
   collapsed?: boolean;
 }) {
   const navGroups: [string, NavItem[]][] = collapsed ? [["Menu", items]] : groupNav(items);
+  const activeModule = items.find(
+    (item) => (item.children ?? []).length > 0 && isItemActive(pathname, item),
+  );
+  const activeKey = activeModule ? navKey(activeModule) : null;
+  const [openKey, setOpenKey] = useState<string | null>(activeKey);
+
+  useEffect(() => {
+    if (activeKey) setOpenKey(activeKey);
+  }, [activeKey]);
+
   return (
     <nav aria-label="Main navigation" className="space-y-5">
       {navGroups.map(([group, groupItems]) => (
@@ -195,15 +215,20 @@ function NavLinks({
             <p className="fn-eyebrow px-3 pb-2 text-sidebar-foreground/45">{group}</p>
           ) : null}
           <ul className="space-y-1">
-            {groupItems.map((item) => (
-              <NavEntry
-                key={item.to + item.label}
-                item={item}
-                pathname={pathname}
-                onNavigate={onNavigate}
-                collapsed={collapsed}
-              />
-            ))}
+            {groupItems.map((item) => {
+              const key = navKey(item);
+              return (
+                <NavEntry
+                  key={key}
+                  item={item}
+                  pathname={pathname}
+                  onNavigate={onNavigate}
+                  open={openKey === key}
+                  onToggle={() => setOpenKey((current) => (current === key ? null : key))}
+                  collapsed={collapsed}
+                />
+              );
+            })}
           </ul>
         </div>
       ))}

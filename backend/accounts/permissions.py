@@ -16,6 +16,7 @@ from rest_framework.permissions import BasePermission
 #   finance.invoice       — create / manage invoices
 #   finance.payment       — record a payment
 #   finance.verify        — verify / reverse a payment
+#   finance.adjust        — grant/revoke a discount, scholarship or waiver
 #   finance.read          — view financial records
 #   admissions.read       — view admission applications/documents
 #   admissions.write      — start/complete an application and upload documents
@@ -43,6 +44,7 @@ ROLE_PERMISSIONS = {
         'results.read', 'results.write', 'results.approve', 'results.publish',
         'finance.read', 'finance.write', 'finance.verify',
         'finance.structure', 'finance.invoice', 'finance.payment',
+        'finance.adjust',
         'admissions.read', 'admissions.write', 'admissions.review',
         'admissions.settings',
         'receipts.read', 'receipts.issue', 'receipts.reprint',
@@ -83,6 +85,7 @@ ROLE_PERMISSIONS = {
     'accountant': [
         'students.read', 'finance.read', 'finance.write', 'finance.verify',
         'finance.structure', 'finance.invoice', 'finance.payment',
+        'finance.adjust',
         # The bursar sees an applicant's fee status and issues/reprints the
         # receipt, but does not make the admission decision.
         'admissions.read',

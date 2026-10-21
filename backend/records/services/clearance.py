@@ -47,6 +47,27 @@ def invoice_registration_fee(invoice: Invoice) -> Decimal:
     )
 
 
+def registration_discount(invoice: Invoice) -> Decimal:
+    """Adjustments that reduce the registration fee specifically.
+
+    A whole-assessment waiver (blank `fee_type`) counts here too; a tuition
+    discount does not, or a family that negotiated tuition off would silently
+    clear the admission gate.
+    """
+    from ..models import FeeStructure
+
+    from . import balances
+
+    return sum(
+        (
+            Decimal(adjustment.amount or 0)
+            for adjustment in balances.active_adjustments_for_invoice(invoice)
+            if adjustment.fee_type in ('', FeeStructure.FeeType.REGISTRATION)
+        ),
+        _zero(),
+    )
+
+
 def invoice_required_total(invoice: Invoice) -> Decimal:
     """Sum of every required fee line on the invoice."""
     return sum(
@@ -64,10 +85,11 @@ def outstanding_against(invoice: Invoice, required_only: bool) -> Decimal:
 
     `required_only=False` means the whole invoice counts, which is what the
     strict full-settlement policy needs; the lax policy only looks at the
-    registration lines.
+    registration lines. Granted adjustments reduce the obligation either way.
     """
     total = invoice_required_total(invoice) if required_only else billing.snapshot_total(invoice)
-    return max(total - billing.verified_paid_total(invoice.id), _zero())
+    discount = Decimal(invoice.discount_total or 0)
+    return max(total - discount - billing.verified_paid_total(invoice.id), _zero())
 
 
 def is_invoice_cleared(invoice: Invoice, *, requires_full_settlement: bool) -> bool:
@@ -76,7 +98,7 @@ def is_invoice_cleared(invoice: Invoice, *, requires_full_settlement: bool) -> b
         return False
     if requires_full_settlement:
         return outstanding_against(invoice, required_only=False) <= 0
-    registration = invoice_registration_fee(invoice)
+    registration = invoice_registration_fee(invoice) - registration_discount(invoice)
     if registration <= 0:
         # A school that does not charge a registration fee cannot gate on one.
         # Fall back to the whole invoice rather than clearing everyone free.
@@ -171,13 +193,14 @@ def _is_invoice_cleared_with_paid(invoice: Invoice, *, verified_paid: Decimal,
     """`is_invoice_cleared` with the payment sum already loaded."""
     if invoice.is_cancelled:
         return False
+    discount = Decimal(invoice.discount_total or 0)
     if requires_full_settlement:
         total = billing.snapshot_total(invoice)
-        return max(total - verified_paid, _zero()) <= 0
-    registration = invoice_registration_fee(invoice)
+        return max(total - discount - verified_paid, _zero()) <= 0
+    registration = invoice_registration_fee(invoice) - registration_discount(invoice)
     if registration <= 0:
         total = billing.snapshot_total(invoice)
-        return max(total - verified_paid, _zero()) <= 0
+        return max(total - discount - verified_paid, _zero()) <= 0
     return verified_paid >= registration
 
 

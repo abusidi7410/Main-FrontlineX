@@ -1,11 +1,13 @@
 import uuid
+import csv
+import io
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Max, Prefetch, Q, Sum
 from django.db.models.functions import Coalesce
-from django.http import Http404
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -34,6 +36,7 @@ from .models import (
     AttendanceRecord,
     ClassTeacherAssignment,
     Enrollment,
+    FeeAdjustment,
     FeeStructure,
     Invoice,
     LessonPlan,
@@ -53,11 +56,14 @@ from .models import (
 )
 from .services import academic as academic_service
 from .services import admission as admission_service
+from .services import adjustments as adjustment_service
 from .services import ai_tools
 from .services import announcements as announcement_service
+from .services import assessments as assessment_service
 from .services import attendance as attendance_service
 from .services import attendance_rate
 from .services import billing as billing_service
+from .services import collections as collection_service
 from .services import enrollment as enrollment_service
 from .services import events as event_service
 from .services import parent_portal as parent_portal_service
@@ -127,6 +133,7 @@ CanWriteAcademics = require_permissions('academics.write')
 # reprice the school would be blocked by a finance.write check, and a principal
 # who should see prices but not change them is correctly excluded.
 CanWriteFeeStructure = require_permissions('finance.structure')
+CanAdjustFinance = require_permissions('finance.adjust')
 # Building the timetable is a single capability covering both the bell schedule
 # and the lessons on it, because they are meaningless apart: a lesson needs a
 # period, and changing the period changes what every lesson means.
@@ -1421,6 +1428,7 @@ class FeeStructureView(APIView):
                 'label': row.label,
                 'amount': float(row.amount),
                 'term': row.term,
+                'dueDate': row.due_date.isoformat() if row.due_date else '',
                 'isRequired': row.is_required,
                 'scope': row.scope,
             })
@@ -1492,6 +1500,14 @@ class FeeStructureView(APIView):
             if amount <= 0:
                 raise ValidationError({'fees': f'Amount for "{label}" must be greater than zero.'})
             term = str(fee.get('term') or '').strip()
+            due_date = fee.get('dueDate') or None
+            if due_date:
+                parsed_due = parse_date(str(due_date))
+                if parsed_due is None:
+                    raise ValidationError({'fees': f'"{label}" has an invalid due date.'})
+                due_date = parsed_due
+            else:
+                due_date = None
             row, _created = FeeStructure.objects.update_or_create(
                 school=school,
                 academic_session=session,
@@ -1504,6 +1520,7 @@ class FeeStructureView(APIView):
                     'level': level,
                     'label': label,
                     'amount': amount,
+                    'due_date': due_date,
                     'is_required': bool(fee.get('isRequired', True)),
                     'is_active': True,
                     'created_by': actor,
@@ -1658,7 +1675,7 @@ class PaymentListView(APIView):
         try:
             with transaction.atomic():
                 invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
-                outstanding = invoice.total - invoice.paid
+                outstanding = invoice.total - invoice.discount_total - invoice.paid
                 if amount > outstanding:
                     raise ValidationError({
                         'amount': f'Amount exceeds the outstanding balance of {outstanding:.2f}.',
@@ -1760,7 +1777,9 @@ class FinanceSummaryView(APIView):
         # Aggregates run on the base filter without the student join: the
         # join is only needed for the three recent rows below, and dragging
         # it through the totals loads every student row for nothing.
-        invoice_totals = base_invoices.aggregate(total=Sum('total'), paid=Sum('paid'))
+        invoice_totals = base_invoices.aggregate(
+            total=Sum('total'), paid=Sum('paid'), discount=Sum('discount_total'),
+        )
         midnight = timezone.localtime(timezone.now()).replace(
             hour=0, minute=0, second=0, microsecond=0,
         )
@@ -1790,9 +1809,11 @@ class FinanceSummaryView(APIView):
         return Response({
             'term': school.current_term,
             'billed': float(invoice_totals['total'] or 0),
+            'discounts': float(invoice_totals['discount'] or 0),
             'paid': float(invoice_totals['paid'] or 0),
             'outstanding': float(
                 (invoice_totals['total'] or Decimal('0'))
+                - (invoice_totals['discount'] or Decimal('0'))
                 - (invoice_totals['paid'] or Decimal('0'))
             ),
             'collectedToday': float(payment_totals['collected_today'] or 0),
@@ -1857,7 +1878,7 @@ class PaymentVerifyView(APIView):
                         )
                     return Response({**PaymentSerializer(payment).data, 'studentActivated': activated})
                 invoice = Invoice.objects.select_for_update().get(pk=payment.invoice_id)
-                outstanding = invoice.total - invoice.paid
+                outstanding = invoice.total - invoice.discount_total - invoice.paid
                 if payment.amount > outstanding:
                     return Response(
                         {'detail': f'Amount exceeds the outstanding balance of {outstanding:.2f}.'},
@@ -1944,6 +1965,312 @@ class PaymentCancelView(APIView):
             payment.status = Payment.Status.CANCELLED
             payment.save(update_fields=['status'])
         return Response(PaymentSerializer(payment).data)
+
+
+# ── Class-based fee tracking ───────────────────────────────────────────────
+
+
+def _resolve_session(school, raw_id):
+    raw_id = str(raw_id or '').strip()
+    if not raw_id:
+        return academic_service.current_session(school)
+    session = AcademicSession.objects.filter(school=school, id=raw_id).first()
+    if session is None:
+        raise ValidationError({
+            'academicSessionId': 'That academic session does not belong to this school.',
+        })
+    return session
+
+
+def _term_param(request):
+    """None when the caller did not filter by a term, else the term (may be '')."""
+    value = request.query_params.get('term')
+    if value is None:
+        return None
+    return value.strip()
+
+
+def _csv_response(filename, header, rows):
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(header)
+    writer.writerows(rows)
+    response = HttpResponse(buffer.getvalue(), content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+def _adjustment_payload(adjustment):
+    return {
+        'id': str(adjustment.pk),
+        'studentId': str(adjustment.student.public_id) if adjustment.student_id else '',
+        'studentName': (
+            f'{adjustment.student.first_name} {adjustment.student.last_name}'.strip()
+            if adjustment.student_id else ''
+        ),
+        'admissionNumber': adjustment.student.admission_number if adjustment.student_id else '',
+        'sessionId': str(adjustment.academic_session_id or ''),
+        'term': adjustment.term or '',
+        'feeType': adjustment.fee_type or '',
+        'kind': adjustment.kind,
+        'amount': str(adjustment.amount),
+        'reason': adjustment.reason,
+        'isActive': adjustment.is_active,
+        'approvedBy': adjustment.approved_by.get_full_name() if adjustment.approved_by else '',
+        'approvedAt': adjustment.approved_at.isoformat() if adjustment.approved_at else '',
+        'createdAt': adjustment.created_at.isoformat(),
+    }
+
+
+def _statement_csv(statement) -> HttpResponse:
+    rows = [['Student', statement['student']['name']],
+            ['Admission number', statement['student']['admissionNumber']],
+            ['Class', statement['student']['className']],
+            ['Session', statement['session']], []]
+    rows.append(['ASSESSMENTS'])
+    rows.append(['Term', 'Fee', 'Category', 'Amount', 'Due date'])
+    for assessment in statement['assessments']:
+        if assessment['items']:
+            for item in assessment['items']:
+                rows.append([
+                    assessment['term'], item['label'], item['feeType'],
+                    item['amount'], item['dueDate'],
+                ])
+        else:
+            rows.append([assessment['term'], '(no line items)', '', assessment['total'], ''])
+    rows.append([])
+    rows.append(['ADJUSTMENTS'])
+    rows.append(['Kind', 'Category', 'Amount', 'Reason'])
+    for adjustment in statement['adjustments']:
+        rows.append([
+            adjustment['kind'], adjustment['feeType'] or 'Whole assessment',
+            adjustment['amount'], adjustment['reason'],
+        ])
+    rows.append([])
+    rows.append(['PAYMENTS'])
+    rows.append(['Date', 'Amount', 'Method', 'Status', 'Reference'])
+    for payment in statement['payments']:
+        rows.append([
+            payment['date'], payment['amount'], payment['method'],
+            payment['status'], payment['reference'],
+        ])
+    rows.append([])
+    totals = statement['totals']
+    rows.append(['TOTALS'])
+    rows.append(['Assessed', totals['assessed']])
+    rows.append(['Discounts', totals['discounts']])
+    rows.append(['Paid', totals['paid']])
+    rows.append(['Outstanding', totals['outstanding']])
+    name = statement['student']['admissionNumber'] or 'student'
+    return _csv_response(f'statement-{name}.csv', ['Field', 'Value'], rows)
+
+
+class FeeCollectionView(APIView):
+    """School-wide (or filtered) fee collection position with per-class rows."""
+
+    permission_classes = [IsAuthenticated, HasSchool, CanReadFinance]
+
+    def get(self, request):
+        if request.user.role == 'student':
+            raise PermissionDenied('Students see their own statement, not the ledger.')
+        school = request.user.school
+        session = _resolve_session(school, request.query_params.get('academicSessionId'))
+        data = collection_service.collection_overview(
+            school=school, academic_session=session,
+            term=_term_param(request),
+            class_name=(request.query_params.get('className') or '').strip(),
+        )
+        return Response(data)
+
+
+class FeeCollectionExportView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanReadFinance]
+
+    def get(self, request):
+        if request.user.role == 'student':
+            raise PermissionDenied('Students see their own statement, not the ledger.')
+        school = request.user.school
+        session = _resolve_session(school, request.query_params.get('academicSessionId'))
+        data = collection_service.collection_overview(
+            school=school, academic_session=session,
+            term=_term_param(request),
+            class_name=(request.query_params.get('className') or '').strip(),
+        )
+        rows = [
+            [
+                row['className'], row['students'], row['assessed'], row['discounts'],
+                row['paid'], row['outstanding'], row['overdueInvoices'],
+                f"{row['collectionRate']}%",
+            ]
+            for row in data['classes']
+        ]
+        rows.append([
+            'TOTAL', data['totals']['students'], data['totals']['assessed'],
+            data['totals']['discounts'], data['totals']['paid'],
+            data['totals']['outstanding'], '', '',
+        ])
+        return _csv_response(
+            'fee-collection.csv',
+            ['Class', 'Students', 'Assessed', 'Discounts', 'Collected',
+             'Outstanding', 'Overdue', 'Collection rate'],
+            rows,
+        )
+
+
+class FeeCollectionClassView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanReadFinance]
+
+    def get(self, request, class_name):
+        school = request.user.school
+        session = _resolve_session(school, request.query_params.get('academicSessionId'))
+        data = collection_service.class_fee_rows(
+            school=school, academic_session=session,
+            term=_term_param(request), class_name=class_name,
+        )
+        return Response(data)
+
+
+class AssessmentGenerateView(APIView):
+    """Issue (idempotently) the term's fee assessment for one class."""
+
+    permission_classes = [
+        IsAuthenticated, HasSchool, require_permissions('finance.invoice'),
+    ]
+
+    def post(self, request):
+        school = request.user.school
+        session = _resolve_session(school, request.data.get('academicSessionId'))
+        if session is None:
+            raise ValidationError({
+                'academicSessionId': 'Set the school academic session first.',
+            })
+        result = assessment_service.assess_class(
+            school=school,
+            academic_session=session,
+            class_name=(request.data.get('className') or '').strip(),
+            term=(request.data.get('term') or ''),
+            overwrite=bool(request.data.get('overwrite')),
+            actor=request.user,
+        )
+        log_audit(
+            request, 'assessment.generated', target='Invoice',
+            detail=(
+                f"{result['generated']} assessed, {result['updated']} refreshed "
+                f"for {result['className']} ({result['term']})"
+            ),
+            entity='school', entity_id=str(school.id),
+            after={
+                'className': result['className'], 'term': result['term'],
+                'generated': result['generated'], 'updated': result['updated'],
+                'total': str(result['total']),
+            },
+        )
+        return Response(result)
+
+
+class FeeAdjustmentListView(APIView):
+    """List fee adjustments; grant one (finance.adjust)."""
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [IsAuthenticated(), HasSchool(), CanAdjustFinance()]
+        return [IsAuthenticated(), HasSchool(), require_permissions('finance.read')()]
+
+    def get(self, request):
+        qs = (
+            FeeAdjustment.objects
+            .filter(school_id=request.user.school_id)
+            .select_related('student', 'approved_by')
+            .order_by('-created_at', '-id')
+        )
+        student_id = (request.query_params.get('studentId') or '').strip()
+        if student_id:
+            student_uid = public_refs.parse_public_id(student_id)
+            qs = qs.filter(student__public_id=student_uid) if student_uid is not None else qs.none()
+        if (request.query_params.get('active') or '').lower() in ('1', 'true'):
+            qs = qs.filter(is_active=True)
+        return Response({
+            'results': [_adjustment_payload(a) for a in qs[:500]],
+            'count': qs.count(),
+        })
+
+    def post(self, request):
+        school = request.user.school
+        student = get_object_or_404(
+            Student, school_id=school.id,
+            public_id=public_refs.required_public_id(request.data.get('studentId')),
+        )
+        session = _resolve_session(school, request.data.get('academicSessionId'))
+        adjustment = adjustment_service.create_adjustment(
+            school=school,
+            student=student,
+            academic_session=session,
+            term=(request.data.get('term') or ''),
+            fee_type=(request.data.get('feeType') or ''),
+            kind=(request.data.get('kind') or ''),
+            amount=request.data.get('amount'),
+            reason=(request.data.get('reason') or ''),
+            actor=request.user,
+        )
+        log_audit(
+            request, 'fee.adjustment_created', target='FeeAdjustment',
+            detail=(
+                f'{adjustment.kind} {adjustment.amount} for '
+                f'{student.admission_number}'
+            ),
+            entity='student', entity_id=str(student.pk),
+            after={
+                'kind': adjustment.kind, 'amount': str(adjustment.amount),
+                'feeType': adjustment.fee_type, 'term': adjustment.term,
+            },
+        )
+        return Response(_adjustment_payload(adjustment), status=status.HTTP_201_CREATED)
+
+
+class FeeAdjustmentRevokeView(APIView):
+    permission_classes = [IsAuthenticated, HasSchool, CanAdjustFinance]
+
+    def post(self, request, pk):
+        adjustment = get_object_or_404(
+            FeeAdjustment, id=pk, school_id=request.user.school_id,
+        )
+        adjustment_service.revoke_adjustment(
+            adjustment, actor=request.user,
+            reason=(request.data.get('reason') or ''),
+        )
+        log_audit(
+            request, 'fee.adjustment_revoked', target='FeeAdjustment',
+            detail=f'Revoked {adjustment.kind} {adjustment.amount}',
+            entity='student', entity_id=str(adjustment.student_id),
+            after={'reason': adjustment.revoke_reason},
+        )
+        return Response(_adjustment_payload(adjustment))
+
+
+class StudentStatementView(APIView):
+    """A student's fee statement. Staff need finance.read; a student sees self."""
+
+    permission_classes = [IsAuthenticated, HasSchool]
+
+    def get(self, request, pk):
+        school = request.user.school
+        if request.user.role == 'student':
+            own = getattr(request.user, 'student_profile', None)
+            if own is None or str(own.public_id) != str(pk):
+                raise PermissionDenied('You can only view your own statement.')
+        elif not has_permission(request.user.role, 'finance.read'):
+            raise PermissionDenied('You do not have permission to view fee statements.')
+        student = get_object_or_404(
+            Student.objects.filter(school_id=school.id),
+            public_id=public_refs.required_public_id(pk),
+        )
+        session = _resolve_session(school, request.query_params.get('academicSessionId'))
+        statement = assessment_service.student_statement(
+            school=school, student=student, academic_session=session,
+        )
+        if request.query_params.get('format') == 'csv':
+            return _statement_csv(statement)
+        return Response(statement)
 
 
 # ── Subscription ───────────────────────────────────────────────────────────

@@ -103,12 +103,29 @@ def build_invoice_snapshot(rows: list[FeeStructure]) -> tuple[list[dict], Decima
             'scope': row.scope,
             'scopeKey': row.scope_key,
             'term': row.term,
+            'dueDate': row.due_date.isoformat() if row.due_date else '',
             'isRequired': row.is_required,
         }
         for row in rows
     ]
     total = sum((invoice_item_amount(item) for item in items), Decimal('0'))
     return items, total
+
+
+def snapshot_due_date(items) -> object:
+    """Earliest per-fee due date across an invoice snapshot, if any.
+
+    A class can carry several fees with different deadlines; the bill is overdue
+    when its earliest deadline passes, so that is the date the invoice keeps.
+    """
+    dates = [
+        item.get('dueDate')
+        for item in (items or [])
+        if isinstance(item, dict) and item.get('dueDate')
+    ]
+    if not dates:
+        return None
+    return min(dates)
 
 
 def snapshot_total(invoice: Invoice) -> Decimal:
@@ -195,8 +212,12 @@ def assert_payment_within_outstanding(invoice: Invoice, amount: Decimal) -> None
 
     The project has no student-credit/advance mechanism, so overpayment is
     refused rather than silently creating money the ledger cannot represent.
+    Discounts/scholarships/waivers already granted reduce the ceiling here, so a
+    waived family cannot be asked for, or pay, the pre-discount figure.
     """
-    outstanding = _decimal(invoice.total) - verified_paid_total(invoice.id)
+    from . import balances
+
+    outstanding = balances.invoice_outstanding(invoice)
     if amount > outstanding:
         raise ValidationError({
             'amount': (
@@ -391,10 +412,19 @@ def registration_invoices(student) -> list[Invoice]:
 
 
 def registration_balance(student) -> Decimal:
-    """Unpaid registration/admission money, ignoring every other fee."""
+    """Unpaid registration/admission money, ignoring every other fee.
+
+    Discounts already granted on the registration invoice reduce the balance,
+    so a waived admission fee lets the student start school.
+    """
     outstanding = Decimal('0')
     for invoice in registration_invoices(student):
-        outstanding += max(_decimal(invoice.total) - _decimal(invoice.verified_paid), Decimal('0'))
+        outstanding += max(
+            _decimal(invoice.total)
+            - _decimal(invoice.discount_total)
+            - _decimal(invoice.verified_paid),
+            Decimal('0'),
+        )
     return outstanding
 
 
@@ -477,26 +507,13 @@ def activate_registration(
 def student_has_outstanding_balance(student) -> Decimal:
     """Unpaid money owed across a student's live invoices.
 
-    Verified payments count against the total, so a pending payment does not
-    make a student look paid (spec §10).
+    Verified payments and granted adjustments both count against the total, so a
+    pending payment does not make a student look paid (spec §10) and a waived
+    fee does not make them look owing.
     """
-    invoices = Invoice.objects.filter(
-        school_id=student.school_id,
-        student=student,
-        is_cancelled=False,
-    )
-    outstanding = Decimal('0')
-    for invoice in invoices.annotate(
-        verified_paid_total=Coalesce(
-            Sum(
-                'payments__amount',
-                filter=Q(payments__status=Payment.Status.VERIFIED),
-            ),
-            Decimal('0'),
-        ),
-    ):
-        outstanding += _decimal(invoice.total) - _decimal(invoice.verified_paid_total)
-    return max(outstanding, Decimal('0'))
+    from . import balances
+
+    return balances.student_outstanding(student)
 
 
 def activate_student_if_fully_paid(student, actor=None) -> bool:

@@ -213,6 +213,7 @@ class StudentQuerySet(models.QuerySet):
                 distinct=True,
             ),
             outstanding_total=Coalesce(Sum('invoices__total'), zero)
+            - Coalesce(Sum('invoices__discount_total'), zero)
             - Coalesce(Sum('invoices__paid'), zero),
         )
 
@@ -666,6 +667,9 @@ class FeeStructure(models.Model):
     fee_type = models.CharField(max_length=20, choices=FeeType.choices)
     label = models.CharField(max_length=100)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+    # Optional per-fee payment deadline. When several fees apply to a class the
+    # earliest one becomes the invoice's due date, so OVERDUE is meaningful.
+    due_date = models.DateField(null=True, blank=True)
     is_required = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
     effective_from = models.DateField(default=EPOCH)
@@ -767,6 +771,11 @@ class Invoice(models.Model):
     # FeeStructure (spec §8). Each entry: label, feeType, amount, scope, required.
     total = models.DecimalField(max_digits=12, decimal_places=2)
     paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # Sum of the student's active discounts/scholarships/waivers for this
+    # assessment. Denormalised so outstanding = total - discount_total - verified
+    # payments everywhere, without a per-invoice aggregate (spec: no hardcoded
+    # figures). Recomputed from `FeeAdjustment` whenever one is granted/revoked.
+    discount_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     items = models.JSONField(default=list, blank=True)
     due_date = models.DateField(null=True, blank=True)
     is_cancelled = models.BooleanField(default=False)
@@ -784,6 +793,9 @@ class Invoice(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=Q(total__gte=0), name='invoice_total_non_negative',
+            ),
+            models.CheckConstraint(
+                condition=Q(discount_total__gte=0), name='invoice_discount_non_negative',
             ),
             # Only live invoices occupy the slot. A cancelled invoice is kept as
             # history, so without the `is_cancelled=False` condition it would
@@ -821,22 +833,28 @@ class Invoice(models.Model):
         )['total'] or Decimal('0')
 
     @property
+    def net_total(self):
+        """The amount actually payable after discounts/scholarships/waivers."""
+        return max(self.total - self.discount_total, Decimal('0'))
+
+    @property
     def outstanding(self):
-        return max(self.total - self.verified_paid, Decimal('0'))
+        return max(self.net_total - self.verified_paid, Decimal('0'))
 
     @property
     def status(self):
         """Derived status with fixed precedence (spec §11).
 
         CANCELLED → PAID → OVERDUE → PARTIALLY_PAID → UNPAID. Never trusts a
-        client-supplied value.
+        client-supplied value. A fully waived invoice is PAID, because nothing
+        is owed on it.
         """
         if self.is_cancelled:
             return 'cancelled'
         paid = self.verified_paid
-        if paid >= self.total:
+        net = self.net_total
+        if paid >= net:
             return 'paid'
-        outstanding = self.total - paid
         if self.due_date and self.due_date < datetime.date.today():
             return 'overdue'
         if paid > 0:
@@ -915,9 +933,76 @@ class Payment(models.Model):
         return f'{self.reference} {self.amount} {self.status}'
 
 
+class FeeAdjustment(models.Model):
+    """A discount, scholarship or waiver applied to a student's assessment.
+
+    Adjustments reduce what a family owes without touching the invoice snapshot,
+    so the original fee configuration stays auditable. `Invoice.discount_total`
+    is the denormalised sum of the active rows for that student/session/term.
+
+    `fee_type` names the fee category the reduction targets (blank = the whole
+    assessment). `amount` is a positive figure; the sign is implied by the model
+    living only in the "reduce" direction — there are no surcharges here.
+    """
+
+    class Kind(models.TextChoices):
+        DISCOUNT = 'discount', 'Discount'
+        SCHOLARSHIP = 'scholarship', 'Scholarship'
+        WAIVER = 'waiver', 'Waiver'
+
+    school = models.ForeignKey(
+        School, on_delete=models.CASCADE, related_name='fee_adjustments',
+    )
+    student = models.ForeignKey(
+        Student, on_delete=models.CASCADE, related_name='fee_adjustments',
+    )
+    academic_session = models.ForeignKey(
+        AcademicSession, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='fee_adjustments',
+    )
+    term = models.CharField(max_length=50, blank=True, default='')
+    fee_type = models.CharField(max_length=20, blank=True, default='')
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=255, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_fee_adjustments',
+    )
+    approved_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='approved_fee_adjustments',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='revoked_fee_adjustments',
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoke_reason = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(amount__gt=0), name='fee_adjustment_amount_positive',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['school', 'student', 'is_active']),
+            models.Index(fields=['school', 'academic_session', 'term']),
+        ]
+
+    def __str__(self):
+        scope = self.fee_type or 'whole assessment'
+        return f'{self.kind} {self.amount} ({scope}) for student {self.student_id}'
+
+
 class UsageRecord(models.Model):
     """Centralized usage ledger for paid services (SMS, OTP, AI).
-
     Every paid operation must create a record here so the platform can
     calculate actual variable cost per school and enforce allowances.
     """

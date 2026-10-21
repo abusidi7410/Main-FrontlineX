@@ -170,7 +170,9 @@ class StudentSerializer(serializers.ModelSerializer):
         cached = getattr(obj, 'outstanding_total', None)
         if cached is not None:
             return float(cached)
-        return float(sum((i.total - i.paid) for i in obj.invoices.all()))
+        return float(sum(
+            (i.total - i.discount_total - i.paid) for i in obj.invoices.all()
+        ))
 
     def get_enrollmentHistory(self, obj):
         # Served from the prefetch when the view provides one, so a student's
@@ -210,12 +212,22 @@ class InvoiceSerializer(serializers.ModelSerializer):
     studentName = serializers.SerializerMethodField()
     className = serializers.SerializerMethodField()
     source = serializers.CharField(read_only=True)
+    discountTotal = serializers.DecimalField(
+        source='discount_total', max_digits=12, decimal_places=2, read_only=True,
+    )
+    netTotal = serializers.DecimalField(
+        source='net_total', max_digits=12, decimal_places=2, read_only=True,
+    )
+    outstanding = serializers.SerializerMethodField()
+    dueDate = serializers.DateField(source='due_date', format='%Y-%m-%d', read_only=True)
+    sessionId = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
         fields = [
             'id', 'studentId', 'studentName', 'className', 'term', 'source',
-            'total', 'paid', 'items', 'status',
+            'sessionId', 'total', 'discountTotal', 'netTotal', 'paid', 'outstanding',
+            'items', 'status', 'dueDate',
         ]
         read_only_fields = ['status']
 
@@ -230,6 +242,22 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
     def get_className(self, obj):
         return obj.student.class_name
+
+    def get_outstanding(self, obj):
+        # Prefer the annotation a list endpoint already fetched; otherwise read
+        # the denormalised `paid` column rather than running one aggregate per
+        # row (the finance summary renders a handful of recent invoices and its
+        # query budget is asserted by tests).
+        from decimal import Decimal
+
+        paid = getattr(obj, 'verified_paid_total', None)
+        if paid is None:
+            paid = obj.paid
+        net = obj.total - obj.discount_total
+        return str(max(net - Decimal(paid or 0), Decimal('0')))
+
+    def get_sessionId(self, obj):
+        return str(obj.academic_session_id or '')
 
 
 class PaymentSerializer(serializers.ModelSerializer):

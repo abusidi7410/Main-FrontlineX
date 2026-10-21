@@ -113,14 +113,15 @@ def _payment_snapshot(payment: Payment) -> dict:
     }
 
 
-def _invoice_snapshot(invoice: Invoice, balance_after: Decimal) -> dict:
+def _invoice_snapshot(invoice: Invoice, paid: Decimal, balance_after: Decimal) -> dict:
     return {
         'id': str(invoice.pk),
         'term': invoice.term or '',
         'source': invoice.source,
         'session': invoice.academic_session.name if invoice.academic_session_id else '',
-        'total': str(invoice.total),
-        'paid': str(Decimal(invoice.total) - balance_after),
+        'total': str(invoice.net_total),
+        'discount': str(Decimal(invoice.discount_total or 0)),
+        'paid': str(paid),
         'balanceAfter': str(balance_after),
         'items': [
             {
@@ -187,7 +188,7 @@ def issue_receipt(payment: Payment, *, actor=None, replace: bool = False):
         invoice = payment.invoice
         student = invoice.student
         paid = billing_service.verified_paid_total(invoice.pk)
-        balance_after = max(Decimal(invoice.total) - paid, Decimal('0'))
+        balance_after = max(Decimal(invoice.net_total) - paid, Decimal('0'))
         amount = Decimal(payment.amount)
         year = timezone.localtime().year
         receipt_settings = get_settings(payment.school)
@@ -207,7 +208,7 @@ def issue_receipt(payment: Payment, *, actor=None, replace: bool = False):
             balance_after=balance_after,
             school_snapshot=_school_snapshot(payment.school, receipt_settings),
             student_snapshot=_student_snapshot(student),
-            invoice_snapshot=_invoice_snapshot(invoice, balance_after),
+            invoice_snapshot=_invoice_snapshot(invoice, paid, balance_after),
             payment_snapshot=_payment_snapshot(payment),
             issued_by=actor if getattr(actor, 'school_id', None) else None,
             replaces=existing if existing is not None else None,
