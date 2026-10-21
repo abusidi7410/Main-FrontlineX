@@ -54,12 +54,16 @@ describe("hierarchical navigation", () => {
     }
   });
 
-  it("keeps attendance grouped: take-register + records under one module", () => {
+  it("keeps attendance grouped with academics", () => {
     const admin = NAV_BY_ROLE.school_admin;
-    const attendance = admin.find((i) => i.label === "Attendance");
-    expect(attendance?.children?.map((c) => c.to)).toEqual(
+    const academics = admin.find((i) => i.label === "Academics");
+    expect(academics?.children?.map((c) => c.to)).toEqual(
       expect.arrayContaining(["/attendance", "/attendance-overview"]),
     );
+  });
+
+  it("keeps the school-admin sidebar to six top-level modules", () => {
+    expect(NAV_BY_ROLE.school_admin).toHaveLength(6);
   });
 
   it("never repeats a module name as its own sub-module label", () => {

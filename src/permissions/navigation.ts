@@ -29,46 +29,37 @@ export interface NavItem {
 
 const SCHOOL_ADMIN: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: "home", group: "Overview", mobile: true },
-  // One entry: the list, Admit and Import all live on the Students page
-  // itself (header buttons), so the menu does not split them.
-  { label: "Students", to: "/students", icon: "users", group: "People", mobile: true },
+  // People, admissions and staff logins are one module: the same pupils and
+  // staff, reached from one place instead of four sidebar entries.
   {
-    label: "Admissions",
-    to: "/admissions",
-    icon: "userCog",
+    label: "People",
+    to: "/students",
+    icon: "users",
     group: "People",
+    mobile: true,
     children: [
+      { label: "All Students", to: "/students" },
+      { label: "Staff & Accounts", to: "/staff" },
       { label: "Applications", to: "/admissions" },
       { label: "New Application", to: "/admissions/new" },
-      { label: "Requirements", to: "/admissions/settings" },
+      { label: "Admission Requirements", to: "/admissions/settings" },
     ],
   },
-  // One entry, not three: staff records and login accounts are the same
-  // people, so they live on one module and cross-link inside the pages
-  // instead of splitting the sidebar.
-  { label: "Staff & Accounts", to: "/staff", icon: "userKey", group: "People", mobile: true },
+  // Attendance sits with academics: both describe what happens in a lesson.
   {
     label: "Academics",
     to: "/academics",
     icon: "graduation",
     group: "Academics",
+    mobile: true,
     children: [
       { label: "Subjects & Classes", to: "/academics" },
       { label: "Timetable", to: "/timetable" },
       { label: "Lesson Plans", to: "/lesson-plans" },
       { label: "Promotion Centre", to: "/promotion" },
       { label: "Results", to: "/results" },
-    ],
-  },
-  {
-    label: "Attendance",
-    to: "/attendance",
-    icon: "clipboard",
-    group: "Academics",
-    mobile: true,
-    children: [
       { label: "Take Register", to: "/attendance" },
-      { label: "Records & History", to: "/attendance-overview" },
+      { label: "Attendance Records", to: "/attendance-overview" },
       { label: "Teacher Check-ins", to: "/teacher-attendance" },
     ],
   },
@@ -85,22 +76,17 @@ const SCHOOL_ADMIN: NavItem[] = [
       { label: "Wallet & Billing", to: "/wallet" },
     ],
   },
+  // Announcements, notifications, reports and the assistant are all
+  // outward-facing communication, so they share one module.
   {
-    label: "Communication",
+    label: "Engagement",
     to: "/communication",
     icon: "megaphone",
     group: "Engagement",
+    mobile: true,
     children: [
       { label: "Announcements", to: "/communication" },
       { label: "Notifications", to: "/notifications" },
-    ],
-  },
-  {
-    label: "Insights",
-    to: "/reports",
-    icon: "chart",
-    group: "Engagement",
-    children: [
       { label: "Reports", to: "/reports" },
       { label: "AI Assistant", to: "/ai" },
     ],
